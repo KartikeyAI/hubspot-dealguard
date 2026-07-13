@@ -30,6 +30,21 @@ interface DodoSubscriptionRow {
   current_period_end: string | null;
 }
 
+interface ProviderScheduledChange {
+  id?: string;
+  effective_at?: string;
+  product_id?: string;
+  quantity?: number;
+}
+
+interface ProviderSubscription {
+  subscription_id?: string;
+  product_id?: string;
+  status?: string;
+  next_billing_date?: string;
+  scheduled_change?: ProviderScheduledChange | null;
+}
+
 export interface DodoPlanChangeInput {
   tier: Extract<CommercialTier, 'growth' | 'enterprise'>;
   interval: Extract<BillingInterval, 'month' | 'year'>;
@@ -148,6 +163,49 @@ async function request<T>(env: Env, path: string, init: RequestInit): Promise<T>
   return await response.json() as T;
 }
 
+async function providerSubscription(env: Env, subscriptionId: string): Promise<ProviderSubscription> {
+  return request<ProviderSubscription>(env, `/subscriptions/${encodeURIComponent(subscriptionId)}`, { method: 'GET' });
+}
+
+export function providerHasTarget(
+  provider: ProviderSubscription,
+  targetProductId: string,
+  effectiveAt: DodoPlanChangeEffectiveAt,
+): boolean {
+  return effectiveAt === 'next_billing_date'
+    ? provider.scheduled_change?.product_id === targetProductId
+    : provider.product_id === targetProductId;
+}
+
+async function saveProviderChangeState(
+  env: Env,
+  portalId: string,
+  input: DodoPlanChangeInput,
+  targetProductId: string,
+  provider: ProviderSubscription,
+): Promise<void> {
+  const now = new Date().toISOString();
+  if (input.effectiveAt === 'next_billing_date') {
+    await env.DB.prepare(
+      `UPDATE subscriptions_v2 SET scheduled_tier = ?, scheduled_interval = ?, scheduled_product_id = ?,
+       scheduled_change_at = ?, scheduled_change_provider_state = 'scheduled', updated_at = ? WHERE portal_id = ?`,
+    ).bind(
+      input.tier,
+      input.interval,
+      targetProductId,
+      provider.scheduled_change?.effective_at ?? provider.next_billing_date ?? null,
+      now,
+      portalId,
+    ).run();
+  } else {
+    await env.DB.prepare(
+      `UPDATE subscriptions_v2 SET scheduled_tier = NULL, scheduled_interval = NULL,
+       scheduled_product_id = NULL, scheduled_change_at = NULL,
+       scheduled_change_provider_state = 'awaiting_webhook', updated_at = ? WHERE portal_id = ?`,
+    ).bind(now, portalId).run();
+  }
+}
+
 export async function previewDodoPlanChange(
   env: Env,
   identity: RequestIdentity,
@@ -156,8 +214,11 @@ export async function previewDodoPlanChange(
   const current = await subscription(env, identity.portalId);
   const input = parseInput(value);
   const targetProductId = productId(env, input.tier, input.interval);
-  if (current.provider_product_id === targetProductId) {
-    throw new AppError(409, 'plan_already_selected', 'This subscription already uses the selected Dodo product.');
+  const provider = await providerSubscription(env, current.provider_subscription_id!);
+  if (providerHasTarget(provider, targetProductId, input.effectiveAt)) {
+    throw new AppError(409, 'plan_already_selected', input.effectiveAt === 'next_billing_date'
+      ? 'This Dodo product is already scheduled for the next billing date.'
+      : 'This subscription already uses the selected Dodo product.');
   }
   const preview = await request<Record<string, unknown>>(
     env,
@@ -171,7 +232,7 @@ export async function previewDodoPlanChange(
   });
   return {
     provider: 'dodo',
-    current: { tier: current.tier, interval: current.billing_interval, productId: current.provider_product_id },
+    current: { tier: current.tier, interval: current.billing_interval, productId: provider.product_id ?? current.provider_product_id },
     target: { tier: input.tier, interval: input.interval, productId: targetProductId },
     effectiveAt: input.effectiveAt,
     preview,
@@ -182,38 +243,37 @@ export async function changeDodoPlan(
   env: Env,
   identity: RequestIdentity,
   value: unknown,
-): Promise<{ accepted: true; pendingWebhook: true; effectiveAt: DodoPlanChangeEffectiveAt }> {
+): Promise<{ accepted: true; pendingWebhook: true; effectiveAt: DodoPlanChangeEffectiveAt; recovered: boolean }> {
   const current = await subscription(env, identity.portalId);
   const input = parseInput(value);
   const targetProductId = productId(env, input.tier, input.interval);
-  if (current.provider_product_id === targetProductId) {
-    throw new AppError(409, 'plan_already_selected', 'This subscription already uses the selected Dodo product.');
+  let provider = await providerSubscription(env, current.provider_subscription_id!);
+  let recovered = providerHasTarget(provider, targetProductId, input.effectiveAt);
+  if (!recovered) {
+    try {
+      await request<void>(
+        env,
+        `/subscriptions/${encodeURIComponent(current.provider_subscription_id!)}/change-plan`,
+        { method: 'POST', body: JSON.stringify(providerBody(identity, targetProductId, input)) },
+      );
+    } catch (error) {
+      provider = await providerSubscription(env, current.provider_subscription_id!);
+      if (!providerHasTarget(provider, targetProductId, input.effectiveAt)) throw error;
+      recovered = true;
+    }
+    provider = await providerSubscription(env, current.provider_subscription_id!);
+    if (!providerHasTarget(provider, targetProductId, input.effectiveAt)) {
+      throw new AppError(502, 'dodo_plan_change_unconfirmed', 'Dodo Payments accepted the request but the target plan state could not be confirmed. Retry after checking the Dodo subscription.');
+    }
   }
-  await request<void>(
-    env,
-    `/subscriptions/${encodeURIComponent(current.provider_subscription_id!)}/change-plan`,
-    { method: 'POST', body: JSON.stringify(providerBody(identity, targetProductId, input)) },
-  );
-  const now = new Date().toISOString();
-  if (input.effectiveAt === 'next_billing_date') {
-    await env.DB.prepare(
-      `UPDATE subscriptions_v2 SET scheduled_tier = ?, scheduled_interval = ?, scheduled_product_id = ?,
-       scheduled_change_at = ?, scheduled_change_provider_state = 'scheduled', updated_at = ? WHERE portal_id = ?`,
-    ).bind(input.tier, input.interval, targetProductId, current.current_period_end, now, identity.portalId).run();
-  } else {
-    await env.DB.prepare(
-      `UPDATE subscriptions_v2 SET scheduled_tier = NULL, scheduled_interval = NULL,
-       scheduled_product_id = NULL, scheduled_change_at = NULL,
-       scheduled_change_provider_state = 'awaiting_webhook', updated_at = ? WHERE portal_id = ?`,
-    ).bind(now, identity.portalId).run();
-  }
+  await saveProviderChangeState(env, identity.portalId, input, targetProductId, provider);
   await new Repository(env).audit(identity.portalId, identity.userId, identity.userEmail, 'billing.plan_change_requested', {
     provider: 'dodo', fromTier: current.tier, fromInterval: current.billing_interval,
     targetTier: input.tier, targetInterval: input.interval, targetProductId,
     effectiveAt: input.effectiveAt, prorationBillingMode: input.prorationBillingMode,
-    onPaymentFailure: input.onPaymentFailure,
+    onPaymentFailure: input.onPaymentFailure, recovered,
   });
-  return { accepted: true, pendingWebhook: true, effectiveAt: input.effectiveAt };
+  return { accepted: true, pendingWebhook: true, effectiveAt: input.effectiveAt, recovered };
 }
 
 export async function cancelScheduledDodoPlanChange(
@@ -221,15 +281,27 @@ export async function cancelScheduledDodoPlanChange(
   identity: RequestIdentity,
 ): Promise<void> {
   const current = await subscription(env, identity.portalId);
-  await request<void>(
-    env,
-    `/subscriptions/${encodeURIComponent(current.provider_subscription_id!)}/change-plan/scheduled`,
-    { method: 'DELETE' },
-  );
+  const provider = await providerSubscription(env, current.provider_subscription_id!);
+  if (provider.scheduled_change) {
+    try {
+      await request<void>(
+        env,
+        `/subscriptions/${encodeURIComponent(current.provider_subscription_id!)}/change-plan/scheduled`,
+        { method: 'DELETE' },
+      );
+    } catch (error) {
+      const refreshed = await providerSubscription(env, current.provider_subscription_id!);
+      if (refreshed.scheduled_change) throw error;
+    }
+  }
+  const refreshed = await providerSubscription(env, current.provider_subscription_id!);
+  if (refreshed.scheduled_change) {
+    throw new AppError(502, 'dodo_scheduled_change_not_cancelled', 'Dodo Payments still reports a scheduled plan change after cancellation.');
+  }
   await env.DB.prepare(
     `UPDATE subscriptions_v2 SET scheduled_tier = NULL, scheduled_interval = NULL,
      scheduled_product_id = NULL, scheduled_change_at = NULL,
-     scheduled_change_provider_state = NULL, updated_at = ? WHERE portal_id = ?`,
+     scheduled_change_provider_state = 'cancelled', updated_at = ? WHERE portal_id = ?`,
   ).bind(new Date().toISOString(), identity.portalId).run();
   await new Repository(env).audit(identity.portalId, identity.userId, identity.userEmail, 'billing.plan_change_cancelled', {
     provider: 'dodo', subscriptionId: current.provider_subscription_id,

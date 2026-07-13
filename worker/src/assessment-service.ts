@@ -1,10 +1,10 @@
 import { saveAssessmentContext } from './assessment-context.js';
 import { recordUsageAtomic } from './billing-usage.js';
 import { recordAssessmentHistory } from './enterprise-analytics-v2.js';
-import { resolveSegmentedRules } from './enterprise-policy.js';
 import { HubSpotClient } from './hubspot.js';
 import { syncAssessmentIfEnabled } from './native-sync.js';
 import { policyDimensionPropertyNames } from './policy-dimensions.js';
+import { resolveSegmentedRulesForDeal } from './policy-runtime.js';
 import { syncAssessmentRemediations } from './remediation.js';
 import { recordOperationalMetric } from './reliability.js';
 import { Repository } from './repository.js';
@@ -25,7 +25,7 @@ export async function assessDealForPortal(
   const client = await HubSpotClient.forPortal(env, portalId);
   const dimensionProperties = await policyDimensionPropertyNames(env, portalId);
   const deal = await client.getDeal(dealId, undefined, dimensionProperties);
-  const policy = await resolveSegmentedRules(env, portalId, client.settings.rules, deal);
+  const policy = await resolveSegmentedRulesForDeal(env, portalId, client.settings.rules, deal);
   const assessment = assessDeal(deal, policy.rules);
   await repository.saveAssessment(portalId, assessment);
   await saveAssessmentContext(env, portalId, assessment);

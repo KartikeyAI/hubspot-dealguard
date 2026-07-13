@@ -87,3 +87,19 @@ test('production promotion accepts only passing staging evidence for the exact r
   assert.notEqual(reject.status, 0);
   assert.match(reject.stderr, /staging commit does not match requested production commit/);
 });
+
+test('controlled deployment workflow retains enterprise release invariants', async () => {
+  const workflow = await readFile('.github/workflows/controlled-deploy.yml', 'utf8');
+  assert.match(workflow, /ref: \$\{\{ inputs\.release_sha \}\}/);
+  assert.match(workflow, /persist-credentials: false/);
+  assert.match(workflow, /backup_reference is required/);
+  assert.match(workflow, /inputs\.target == 'production'/);
+  assert.match(workflow, /gh run download/);
+  assert.match(workflow, /release:verify-staging/);
+  assert.match(workflow, /d1 migrations apply dealguard-production --remote/);
+  assert.match(workflow, /wrangler deploy --config \.release\/wrangler\.toml/);
+  assert.match(workflow, /acceptance:live/);
+  assert.match(workflow, /release:record/);
+  assert.match(workflow, /retention-days: 90/);
+  assert.doesNotMatch(workflow, /wrangler secret (put|bulk)/);
+});

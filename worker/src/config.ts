@@ -43,6 +43,10 @@ export const DEFAULT_SETTINGS: TenantSettings = {
       cooldownMinutes: 120,
     },
   },
+  nativeSync: {
+    enabled: false,
+    includeSummary: true,
+  },
 };
 
 export interface PlanLimits {
@@ -53,6 +57,7 @@ export interface PlanLimits {
   digestFrequencies: Array<'daily' | 'weekly'>;
   slackNotifications: boolean;
   workflowActions: boolean;
+  nativeSync: boolean;
 }
 
 export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
@@ -64,6 +69,7 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     digestFrequencies: ['weekly'],
     slackNotifications: false,
     workflowActions: false,
+    nativeSync: false,
   },
   growth: {
     maxDealsPerScan: 5000,
@@ -73,6 +79,7 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     digestFrequencies: ['daily', 'weekly'],
     slackNotifications: true,
     workflowActions: true,
+    nativeSync: true,
   },
   beta_growth: {
     maxDealsPerScan: 5000,
@@ -82,14 +89,17 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     digestFrequencies: ['daily', 'weekly'],
     slackNotifications: true,
     workflowActions: true,
+    nativeSync: true,
   },
 };
 
 export const REQUIRED_HUBSPOT_SCOPES = [
   'crm.objects.deals.read',
+  'crm.objects.deals.write',
   'crm.objects.contacts.read',
   'crm.objects.companies.read',
   'crm.schemas.deals.read',
+  'crm.schemas.deals.write',
 ] as const;
 
-export const APP_VERSION = '1.1.0-beta.1';
+export const APP_VERSION = '1.2.0-beta.1';

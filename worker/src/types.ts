@@ -38,6 +38,8 @@ export interface Env {
   EMAIL_FROM: string;
   SUPPORT_EMAIL: string;
   ADMIN_API_KEY?: string;
+  SLACK_CLIENT_ID?: string;
+  SLACK_CLIENT_SECRET?: string;
 }
 
 export type PlanId = 'free' | 'growth' | 'beta_growth';
@@ -74,9 +76,22 @@ export interface DigestSettings {
   hourUtc: number;
 }
 
+export interface SlackNotificationSettings {
+  enabled: boolean;
+  alertOnCritical: boolean;
+  alertOnHandoffRequired: boolean;
+  alertOnHandoffConfirmed: boolean;
+  cooldownMinutes: number;
+}
+
+export interface NotificationSettings {
+  slack: SlackNotificationSettings;
+}
+
 export interface TenantSettings {
   rules: RuleSettings;
   digest: DigestSettings;
+  notifications: NotificationSettings;
 }
 
 export interface TenantRow {

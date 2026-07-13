@@ -34,6 +34,15 @@ export const DEFAULT_SETTINGS: TenantSettings = {
     dayOfWeek: 1,
     hourUtc: 8,
   },
+  notifications: {
+    slack: {
+      enabled: false,
+      alertOnCritical: true,
+      alertOnHandoffRequired: true,
+      alertOnHandoffConfirmed: true,
+      cooldownMinutes: 120,
+    },
+  },
 };
 
 export interface PlanLimits {
@@ -42,6 +51,8 @@ export interface PlanLimits {
   historyDays: number;
   maxCustomRules: number;
   digestFrequencies: Array<'daily' | 'weekly'>;
+  slackNotifications: boolean;
+  workflowActions: boolean;
 }
 
 export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
@@ -51,6 +62,8 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     historyDays: 30,
     maxCustomRules: 3,
     digestFrequencies: ['weekly'],
+    slackNotifications: false,
+    workflowActions: false,
   },
   growth: {
     maxDealsPerScan: 5000,
@@ -58,6 +71,8 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     historyDays: 365,
     maxCustomRules: 25,
     digestFrequencies: ['daily', 'weekly'],
+    slackNotifications: true,
+    workflowActions: true,
   },
   beta_growth: {
     maxDealsPerScan: 5000,
@@ -65,6 +80,8 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     historyDays: 365,
     maxCustomRules: 25,
     digestFrequencies: ['daily', 'weekly'],
+    slackNotifications: true,
+    workflowActions: true,
   },
 };
 
@@ -75,4 +92,4 @@ export const REQUIRED_HUBSPOT_SCOPES = [
   'crm.schemas.deals.read',
 ] as const;
 
-export const APP_VERSION = '1.0.0-beta.1';
+export const APP_VERSION = '1.1.0-beta.1';

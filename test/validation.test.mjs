@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSettings } from '../dist/validation.js';
 
-
 test('limits free portals to three custom rules and weekly digest', () => {
   const settings = parseSettings({
     rules: {
@@ -21,8 +20,17 @@ test('limits free portals to three custom rules and weekly digest', () => {
   assert.equal(settings.rules.customRequiredProperties.length, 3);
   assert.equal(settings.rules.customRequiredProperties[0].weight, 30);
   assert.equal(settings.digest.frequency, 'weekly');
+  assert.equal(settings.notifications.slack.enabled, false);
 });
 
 test('rejects enabled digest without recipient', () => {
   assert.throws(() => parseSettings({ digest: { enabled: true, recipients: [] } }, 'growth'));
+});
+
+test('enables governed Slack settings only for Growth plans', () => {
+  const growth = parseSettings({ notifications: { slack: { enabled: true, cooldownMinutes: 1 } } }, 'growth');
+  assert.equal(growth.notifications.slack.enabled, true);
+  assert.equal(growth.notifications.slack.cooldownMinutes, 15);
+  const free = parseSettings({ notifications: { slack: { enabled: true } } }, 'free');
+  assert.equal(free.notifications.slack.enabled, false);
 });

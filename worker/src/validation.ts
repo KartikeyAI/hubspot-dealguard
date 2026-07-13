@@ -1,6 +1,6 @@
 import { DEFAULT_SETTINGS, PLAN_LIMITS } from './config.js';
 import { AppError } from './errors.js';
-import type { CustomPropertyRule, DigestSettings, RuleSettings, TenantSettings, PlanId, IssueSeverity } from './types.js';
+import type { CustomPropertyRule, DigestSettings, NotificationSettings, RuleSettings, TenantSettings, PlanId, IssueSeverity } from './types.js';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PROPERTY_PATTERN = /^[a-zA-Z][a-zA-Z0-9_]{0,127}$/;
@@ -27,13 +27,7 @@ function customRule(value: unknown): CustomPropertyRule | null {
   const label = typeof rule.label === 'string' ? rule.label.trim() : '';
   const severity: IssueSeverity = rule.severity === 'critical' || rule.severity === 'info' ? rule.severity : 'warning';
   if (!PROPERTY_PATTERN.test(property) || !label || label.length > 100) return null;
-  return {
-    property,
-    label,
-    weight: boundedInteger(rule.weight, 10, 1, 30),
-    severity,
-    stageIds: stringArray(rule.stageIds, 50),
-  };
+  return { property, label, weight: boundedInteger(rule.weight, 10, 1, 30), severity, stageIds: stringArray(rule.stageIds, 50) };
 }
 
 export function parseSettings(value: unknown, plan: PlanId): TenantSettings {
@@ -41,14 +35,9 @@ export function parseSettings(value: unknown, plan: PlanId): TenantSettings {
   const ruleInput = input.rules && typeof input.rules === 'object' ? (input.rules as Record<string, unknown>) : {};
   const digestInput = input.digest && typeof input.digest === 'object' ? (input.digest as Record<string, unknown>) : {};
   const limits = PLAN_LIMITS[plan];
-
   const customRequiredProperties = Array.isArray(ruleInput.customRequiredProperties)
-    ? ruleInput.customRequiredProperties
-        .map(customRule)
-        .filter((rule): rule is CustomPropertyRule => Boolean(rule))
-        .slice(0, limits.maxCustomRules)
+    ? ruleInput.customRequiredProperties.map(customRule).filter((rule): rule is CustomPropertyRule => Boolean(rule)).slice(0, limits.maxCustomRules)
     : [];
-
   const rules: RuleSettings = {
     staleDays: boundedInteger(ruleInput.staleDays, DEFAULT_SETTINGS.rules.staleDays, 1, 90),
     maxStageAgeDays: boundedInteger(ruleInput.maxStageAgeDays, DEFAULT_SETTINGS.rules.maxStageAgeDays, 1, 365),
@@ -62,7 +51,6 @@ export function parseSettings(value: unknown, plan: PlanId): TenantSettings {
     excludedStageIds: stringArray(ruleInput.excludedStageIds, 200),
     customRequiredProperties,
   };
-
   const requestedFrequency = digestInput.frequency === 'daily' ? 'daily' : 'weekly';
   const digest: DigestSettings = {
     enabled: bool(digestInput.enabled, false),
@@ -71,9 +59,17 @@ export function parseSettings(value: unknown, plan: PlanId): TenantSettings {
     dayOfWeek: boundedInteger(digestInput.dayOfWeek, 1, 0, 6),
     hourUtc: boundedInteger(digestInput.hourUtc, 8, 0, 23),
   };
-  if (digest.enabled && digest.recipients.length === 0) {
-    throw new AppError(400, 'digest_recipient_required', 'At least one valid digest recipient is required.');
-  }
-
-  return { rules, digest };
+  if (digest.enabled && digest.recipients.length === 0) throw new AppError(400, 'digest_recipient_required', 'At least one valid digest recipient is required.');
+  const notificationsInput = input.notifications && typeof input.notifications === 'object' ? input.notifications as Record<string, unknown> : {};
+  const slackInput = notificationsInput.slack && typeof notificationsInput.slack === 'object' ? notificationsInput.slack as Record<string, unknown> : {};
+  const notifications: NotificationSettings = {
+    slack: {
+      enabled: limits.slackNotifications && bool(slackInput.enabled, false),
+      alertOnCritical: bool(slackInput.alertOnCritical, DEFAULT_SETTINGS.notifications.slack.alertOnCritical),
+      alertOnHandoffRequired: bool(slackInput.alertOnHandoffRequired, DEFAULT_SETTINGS.notifications.slack.alertOnHandoffRequired),
+      alertOnHandoffConfirmed: bool(slackInput.alertOnHandoffConfirmed, DEFAULT_SETTINGS.notifications.slack.alertOnHandoffConfirmed),
+      cooldownMinutes: boundedInteger(slackInput.cooldownMinutes, DEFAULT_SETTINGS.notifications.slack.cooldownMinutes, 15, 1440),
+    },
+  };
+  return { rules, digest, notifications };
 }

@@ -1,25 +1,29 @@
 # DealGuard by Rokad
 
-DealGuard is a production-oriented HubSpot application that detects incomplete, stale, and risky deals and governs the closed-won sales-to-delivery handoff.
+DealGuard is a production-oriented HubSpot application that detects incomplete, stale, and risky deals, monitors high-signal deal changes in real time, and governs the closed-won sales-to-delivery handoff.
 
-## What ships in v1
+## What ships in v1.1
 
 - Marketplace-distributed OAuth app targeting HubSpot developer platform `2026.03`.
 - HubSpot deal-record readiness card.
-- Connected-app pipeline-health dashboard, metadata-driven rule editor, and digest controls.
+- Connected-app settings and pipeline-health view.
 - Deterministic, explainable scoring engine.
-- Background manual, installation, and scheduled portal scans with visible status.
+- Manual, installation, scheduled, and webhook-triggered assessments.
 - Closed-won handoff confirmation with critical-gap blocking.
-- Free/Growth entitlement enforcement.
+- Slack OAuth using the minimal `incoming-webhook` permission.
+- Transition-aware Slack alerts for critical deals and handoff events.
+- Deal-based HubSpot workflow action with optional Slack delivery.
+- Idempotent webhook and notification processing with bounded retention.
+- Free/Growth entitlement enforcement and beta-Growth access.
 - Optional scheduled email digests.
 - Cloudflare Worker + D1 multitenant backend.
-- AES-256-GCM encrypted OAuth token storage.
-- Request-signature validation, audit history, deletion flow, migrations, tests, and deployment runbook.
+- AES-256-GCM encrypted HubSpot and Slack credential storage.
+- Request-signature validation, audit history, complete deletion flow, migrations, tests, and deployment runbook.
 
 ## Repository layout
 
 ```text
-src/app/                 HubSpot app, card, and settings extension
+src/app/                 HubSpot app, card, settings, workflow action, and webhooks
 worker/src/              Cloudflare Worker backend
 worker/migrations/       D1 schema migrations
 test/                    Node test suite
@@ -30,15 +34,15 @@ docs/                    Product, security, deployment, beta, and Marketplace do
 
 ```bash
 npm install
-npm install --ignore-scripts --prefix src/app/cards
-npm install --ignore-scripts --prefix src/app/settings
 npm run check
+rm -rf .wrangler/state
+npm run db:migrate:local
 ```
 
 ## Deploy and test
 
-Follow [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). The release becomes installable after Rokad supplies its HubSpot app credentials, Cloudflare D1 ID, Worker secrets, and production route.
+Follow [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). A live installation requires Rokad's HubSpot credentials, Cloudflare D1 database, Worker secrets and route, plus a Slack app for the optional Slack channel integration.
 
 ## Current release
 
-`1.0.0-beta.1` — sellable external-beta feature set with production controls and a documented live-install checklist. Billing checkout, predictive AI, record mutation, and external integrations are intentionally outside v1.
+`1.1.0-beta.1` — external-beta release adding Slack operations, real-time HubSpot event processing, and a workflow action. Deterministic scoring remains the system of record; predictive AI and autonomous record mutation remain outside this release.

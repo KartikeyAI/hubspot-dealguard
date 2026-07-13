@@ -7,6 +7,7 @@ import {
   Flex,
   Heading,
   Input,
+  Link,
   LoadingSpinner,
   MultiSelect,
   NumberInput,
@@ -20,6 +21,7 @@ import {
 const API_BASE = 'https://dealguard-api.rokad.co/api/v1';
 
 type Severity = 'info' | 'warning' | 'critical';
+type Plan = 'free' | 'growth' | 'beta_growth';
 type CustomRule = { property: string; label: string; weight: number; severity: Severity; stageIds: string[] };
 type Settings = {
   rules: {
@@ -28,13 +30,19 @@ type Settings = {
     excludedPipelineIds: string[]; excludedStageIds: string[]; customRequiredProperties: CustomRule[];
   };
   digest: { enabled: boolean; frequency: 'daily' | 'weekly'; recipients: string[]; dayOfWeek: number; hourUtc: number };
+  notifications: {
+    slack: {
+      enabled: boolean; alertOnCritical: boolean; alertOnHandoffRequired: boolean;
+      alertOnHandoffConfirmed: boolean; cooldownMinutes: number;
+    };
+  };
 };
 type ProblemDeal = {
   dealId: string; dealName: string; pipelineLabel: string; stageLabel: string; score: number;
   status: 'ready' | 'at_risk' | 'critical'; readinessSummary: string; assessedAt: string;
 };
 type Dashboard = {
-  plan: 'free' | 'growth' | 'beta_growth'; totalDeals: number; readyDeals: number; atRiskDeals: number;
+  plan: Plan; totalDeals: number; readyDeals: number; atRiskDeals: number;
   criticalDeals: number; averageScore: number; incompleteHandoffs: number; lastScanAt: string | null; nextScanAt: string;
   topIssues: Array<{ code: string; label: string; count: number }>; problemDeals: ProblemDeal[];
   latestScan: null | { id: string; trigger: 'manual' | 'scheduled' | 'install'; status: 'running' | 'completed' | 'failed'; startedAt: string; completedAt: string | null; scannedCount: number; errorMessage: string | null };
@@ -43,8 +51,12 @@ type Metadata = {
   pipelines: Array<{ id: string; label: string; stages: Array<{ id: string; label: string }> }>;
   properties: Array<{ name: string; label: string; groupName: string; type: string; fieldType: string }>;
 };
-type SettingsResponse = { plan: Dashboard['plan']; settings: Settings };
-type RequestOptions = { method?: 'GET' | 'PUT' | 'POST'; body?: Record<string, unknown> };
+type SlackStatus = {
+  connected: boolean; entitled: boolean; teamName?: string; teamId?: string;
+  channelName?: string; channelId?: string; connectedAt?: string; status?: 'active' | 'revoked' | 'error';
+};
+type SettingsResponse = { plan: Plan; settings: Settings };
+type RequestOptions = { method?: 'GET' | 'PUT' | 'POST' | 'DELETE'; body?: Record<string, unknown> };
 
 hubspot.extend<'settings'>(() => <DealGuardSettings />);
 
@@ -59,7 +71,9 @@ const DealGuardSettings = () => {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [metadata, setMetadata] = useState<Metadata | null>(null);
-  const [plan, setPlan] = useState<Dashboard['plan']>('free');
+  const [slack, setSlack] = useState<SlackStatus | null>(null);
+  const [slackAuthorizeUrl, setSlackAuthorizeUrl] = useState<string | null>(null);
+  const [plan, setPlan] = useState<Plan>('free');
   const [recipients, setRecipients] = useState('');
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
@@ -78,11 +92,15 @@ const DealGuardSettings = () => {
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [settingsData, dashboardData, metadataData] = await Promise.all([
-        fetchJson('/settings') as Promise<SettingsResponse>, fetchJson('/dashboard') as Promise<Dashboard>, fetchJson('/metadata') as Promise<Metadata>,
+      const [settingsData, dashboardData, metadataData, slackData] = await Promise.all([
+        fetchJson('/settings') as Promise<SettingsResponse>,
+        fetchJson('/dashboard') as Promise<Dashboard>,
+        fetchJson('/metadata') as Promise<Metadata>,
+        fetchJson('/integrations/slack') as Promise<SlackStatus>,
       ]);
       setSettings(settingsData.settings); setPlan(settingsData.plan);
-      setRecipients(settingsData.settings.digest.recipients.join(', ')); setDashboard(dashboardData); setMetadata(metadataData);
+      setRecipients(settingsData.settings.digest.recipients.join(', '));
+      setDashboard(dashboardData); setMetadata(metadataData); setSlack(slackData); setSlackAuthorizeUrl(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'DealGuard settings could not be loaded.');
     } finally { setLoading(false); }
@@ -101,7 +119,7 @@ const DealGuardSettings = () => {
       const payload: Settings = { ...settings, digest: { ...settings.digest, recipients: recipients.split(',').map((item) => item.trim()).filter(Boolean) } };
       const response = await fetchJson('/settings', { method: 'PUT', body: payload as unknown as Record<string, unknown> }) as SettingsResponse;
       setSettings(response.settings); setRecipients(response.settings.digest.recipients.join(', '));
-      setNotice('Readiness rules and digest settings saved. New rules apply on the next scan.');
+      setNotice('Readiness, digest, and notification settings saved.');
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Settings could not be saved.'); }
     finally { setWorking(false); }
   };
@@ -130,16 +148,41 @@ const DealGuardSettings = () => {
     finally { setWorking(false); }
   };
 
+  const prepareSlackConnection = async () => {
+    setWorking(true); setError(null); setNotice(null);
+    try {
+      const response = await fetchJson('/integrations/slack/connect', { method: 'POST', body: {} }) as { authorizeUrl: string };
+      setSlackAuthorizeUrl(response.authorizeUrl);
+      setNotice('Slack authorization is ready. Open the secure Slack installation link below.');
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Slack authorization could not be started.'); }
+    finally { setWorking(false); }
+  };
+
+  const testSlack = async () => {
+    setWorking(true); setError(null); setNotice(null);
+    try { await fetchJson('/integrations/slack/test', { method: 'POST', body: {} }); setNotice('Slack test notification sent.'); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : 'Slack test notification failed.'); }
+    finally { setWorking(false); }
+  };
+
+  const disconnectSlack = async () => {
+    setWorking(true); setError(null); setNotice(null);
+    try { await fetchJson('/integrations/slack', { method: 'DELETE' }); setNotice('Slack disconnected.'); await load(); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : 'Slack could not be disconnected.'); }
+    finally { setWorking(false); }
+  };
+
   const propertyOptions = useMemo(() => (metadata?.properties ?? []).map((property) => ({ label: `${property.label} (${property.name})`, value: property.name })), [metadata]);
   const pipelineOptions = useMemo(() => (metadata?.pipelines ?? []).map((pipeline) => ({ label: pipeline.label, value: pipeline.id })), [metadata]);
   const stageOptions = useMemo(() => (metadata?.pipelines ?? []).flatMap((pipeline) => pipeline.stages.map((stage) => ({ label: `${pipeline.label} — ${stage.label}`, value: stage.id }))), [metadata]);
 
   if (loading) return <LoadingSpinner label="Loading DealGuard settings" />;
-  if (!settings || !dashboard || !metadata) return <Alert title="DealGuard unavailable" variant="danger">{error ?? 'Settings are unavailable.'}</Alert>;
+  if (!settings || !dashboard || !metadata || !slack) return <Alert title="DealGuard unavailable" variant="danger">{error ?? 'Settings are unavailable.'}</Alert>;
 
   const maxCustomRules = plan === 'free' ? 3 : 25;
   const updateRule = <K extends keyof Settings['rules']>(key: K, value: Settings['rules'][K]) => setSettings({ ...settings, rules: { ...settings.rules, [key]: value } });
   const updateDigest = <K extends keyof Settings['digest']>(key: K, value: Settings['digest'][K]) => setSettings({ ...settings, digest: { ...settings.digest, [key]: value } });
+  const updateSlack = <K extends keyof Settings['notifications']['slack']>(key: K, value: Settings['notifications']['slack'][K]) => setSettings({ ...settings, notifications: { ...settings.notifications, slack: { ...settings.notifications.slack, [key]: value } } });
   const updateCustomRule = (index: number, patch: Partial<CustomRule>) => updateRule('customRequiredProperties', settings.rules.customRequiredProperties.map((rule, ruleIndex) => ruleIndex === index ? { ...rule, ...patch } : rule));
   const addCustomRule = () => {
     if (settings.rules.customRequiredProperties.length >= maxCustomRules) return;
@@ -154,7 +197,7 @@ const DealGuardSettings = () => {
       {error && <Alert title="Action failed" variant="danger">{error}</Alert>}
       {notice && <Alert title="DealGuard update" variant="success">{notice}</Alert>}
       <Flex direction="row" justify="between" align="center" gap="medium">
-        <Flex direction="column" gap="extra-small"><Heading>DealGuard pipeline health</Heading><Text>Explainable readiness checks for active deals and closed-won sales-to-delivery handoffs.</Text></Flex>
+        <Flex direction="column" gap="extra-small"><Heading>DealGuard pipeline health</Heading><Text>Explainable readiness checks, real-time deal monitoring, and governed sales-to-delivery handoffs.</Text></Flex>
         <StatusTag variant={plan === 'free' ? 'default' : 'success'}>{plan === 'beta_growth' ? 'Beta Growth' : plan}</StatusTag>
       </Flex>
       <Flex direction="row" gap="medium" wrap="wrap">
@@ -204,6 +247,24 @@ const DealGuardSettings = () => {
         <Button variant="secondary" onClick={() => removeCustomRule(index)} disabled={working}>Remove rule</Button>
       </Flex></Card>)}
       <Button variant="secondary" onClick={addCustomRule} disabled={working || settings.rules.customRequiredProperties.length >= maxCustomRules}>Add required-property rule</Button>
+
+      <Divider /><Heading>Slack operations</Heading>
+      {!slack.entitled && <Alert title="Growth feature" variant="info">Slack alerts and the HubSpot workflow action are available on Growth. Beta Growth portals receive full access during testing.</Alert>}
+      {slack.connected ? <Card><Flex direction="column" gap="small">
+        <Flex direction="row" justify="between" align="center" gap="small"><Text format={{ fontWeight: 'bold' }}>{slack.teamName} · {slack.channelName}</Text><StatusTag variant={slack.status === 'active' ? 'success' : 'warning'}>{slack.status ?? 'connected'}</StatusTag></Flex>
+        <Text>DealGuard will post only the notification types enabled below.</Text>
+        <Toggle label="Enable Slack notifications" checked={settings.notifications.slack.enabled} onChange={(value) => updateSlack('enabled', value)} />
+        <Toggle label="Alert when a deal becomes critical" checked={settings.notifications.slack.alertOnCritical} onChange={(value) => updateSlack('alertOnCritical', value)} />
+        <Toggle label="Alert when a closed-won handoff is required" checked={settings.notifications.slack.alertOnHandoffRequired} onChange={(value) => updateSlack('alertOnHandoffRequired', value)} />
+        <Toggle label="Alert when a handoff is confirmed" checked={settings.notifications.slack.alertOnHandoffConfirmed} onChange={(value) => updateSlack('alertOnHandoffConfirmed', value)} />
+        <NumberInput name="slackCooldown" label="Repeat-alert cooldown (minutes)" value={settings.notifications.slack.cooldownMinutes} min={15} max={1440} onChange={(value) => updateSlack('cooldownMinutes', Number(value))} />
+        <Flex direction="row" gap="small" wrap="wrap"><Button variant="secondary" onClick={() => void testSlack()} disabled={working}>Send test alert</Button><Button variant="secondary" onClick={() => void disconnectSlack()} disabled={working}>Disconnect Slack</Button></Flex>
+      </Flex></Card> : <Flex direction="column" gap="small">
+        <Text>Connect one Slack workspace and channel using Slack's minimal incoming-webhook permission.</Text>
+        <Button variant="secondary" onClick={() => void prepareSlackConnection()} disabled={working || !slack.entitled}>Prepare Slack connection</Button>
+        {slackAuthorizeUrl && <Link href={{ url: slackAuthorizeUrl, external: true }}>Open secure Slack authorization</Link>}
+        <Button variant="secondary" onClick={() => void load()} disabled={working}>Refresh connection status</Button>
+      </Flex>}
 
       <Divider /><Heading>Pipeline digest</Heading>
       <Toggle label="Enable scheduled email digest" checked={settings.digest.enabled} onChange={(value) => updateDigest('enabled', value)} />

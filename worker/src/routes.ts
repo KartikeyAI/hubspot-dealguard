@@ -1,10 +1,28 @@
+import { saveAssessmentContext } from './assessment-context.js';
 import { assessDealForPortal } from './assessment-service.js';
+import { exportAuditCsv, searchAuditEvents } from './audit.js';
 import { PLAN_LIMITS, REQUIRED_HUBSPOT_SCOPES } from './config.js';
 import { randomToken, sha256Hex } from './crypto.js';
 import { dashboardForPortal } from './dashboard.js';
 import { finalizePortalDeletion } from './data-deletion.js';
 import { sendEmail } from './email.js';
+import { enterpriseOverview } from './enterprise-analytics.js';
 import { AppError } from './errors.js';
+import {
+  assignRole,
+  createPolicyDraft,
+  createPolicySimulation,
+  decidePolicy,
+  enableGovernance,
+  getPolicy,
+  governanceContext,
+  listPolicies,
+  listRoles,
+  publishPolicy,
+  runPolicySimulation,
+  submitPolicy,
+  updatePolicyDraft,
+} from './governance.js';
 import { normalizeHubSpotWebhookEvents, processHubSpotWebhookEvents } from './hubspot-events.js';
 import { HubSpotClient } from './hubspot.js';
 import { html, json, methodNotAllowed, readJson, redirect } from './http.js';
@@ -16,18 +34,26 @@ import { scanPortal } from './scanner.js';
 import { completeSlackAuthorization, createSlackAuthorization, disconnectSlack, getSlackStatus, notifyHandoffConfirmed, sendSlackTest } from './slack.js';
 import { validateHubSpotRequest, validateHubSpotSignature } from './signature.js';
 import type { Env, PlanId } from './types.js';
+import { parseSettings } from './validation.js';
 import { executeWorkflowAction } from './workflow-action.js';
 
 function dealIdFromPath(pathname: string): string | null {
   return pathname.match(/^\/api\/v1\/deals\/(\d+)\/(assessment|review|handoff)$/)?.[1] ?? null;
 }
+
 function routeAction(pathname: string): string | null {
   return pathname.match(/^\/api\/v1\/deals\/\d+\/(assessment|review|handoff)$/)?.[1] ?? null;
+}
+
+function policyPath(pathname: string): { id: string; action: string | null } | null {
+  const match = pathname.match(/^\/api\/v1\/governance\/policies\/([^/]+)(?:\/(submit|approve|reject|publish|rollback|simulate))?$/);
+  return match ? { id: match[1]!, action: match[2] ?? null } : null;
 }
 
 export async function route(request: Request, env: Env, ctx: { waitUntil(promise: Promise<unknown>): void }): Promise<Response> {
   const url = new URL(request.url);
   const repository = new Repository(env);
+
   if (url.pathname === '/' && request.method === 'GET') return html(landingPage(env));
   if (url.pathname === '/health' && request.method === 'GET') return json({ status: 'ok', service: 'dealguard-api' });
   if (url.pathname === '/docs' && request.method === 'GET') return html(docsPage(env));
@@ -48,6 +74,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     authorize.searchParams.set('state', state);
     return redirect(authorize.toString());
   }
+
   if (url.pathname === '/oauth/callback') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
     const error = url.searchParams.get('error');
@@ -58,11 +85,14 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     await repository.consumeOAuthState(await sha256Hex(state));
     const tokens = await HubSpotClient.exchangeCode(env, code);
     const info = await HubSpotClient.tokenInfo(tokens.access_token);
-    if (env.HUBSPOT_APP_ID && env.HUBSPOT_APP_ID !== 'REPLACE_WITH_HUBSPOT_APP_ID' && String(info.app_id) !== env.HUBSPOT_APP_ID) throw new AppError(401, 'oauth_app_mismatch', 'OAuth token belongs to a different HubSpot app.');
+    if (env.HUBSPOT_APP_ID && env.HUBSPOT_APP_ID !== 'REPLACE_WITH_HUBSPOT_APP_ID' && String(info.app_id) !== env.HUBSPOT_APP_ID) {
+      throw new AppError(401, 'oauth_app_mismatch', 'OAuth token belongs to a different HubSpot app.');
+    }
     await repository.upsertTenant(tokens, info);
     ctx.waitUntil(scanPortal(env, String(info.hub_id), 'install'));
     return redirect(`${env.APP_BASE_URL}/install/success`);
   }
+
   if (url.pathname === '/oauth/slack/callback') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
     const error = url.searchParams.get('error');
@@ -73,6 +103,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     await completeSlackAuthorization(env, code, state);
     return redirect(`${env.APP_BASE_URL}/integrations/slack/success`);
   }
+
   if (url.pathname === '/webhooks/hubspot') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     await validateHubSpotSignature(request, env);
@@ -80,6 +111,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     if (events.length > 0) ctx.waitUntil(processHubSpotWebhookEvents(env, events));
     return json({ accepted: events.length }, 202);
   }
+
   if (url.pathname === '/integrations/hubspot/workflow-actions/assess-deal') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     await validateHubSpotSignature(request, env);
@@ -103,28 +135,106 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
 
   if (!url.pathname.startsWith('/api/v1/')) throw new AppError(404, 'not_found', 'Endpoint not found.');
   const identity = await validateHubSpotRequest(request, env);
+
+  if (url.pathname === '/api/v1/enterprise/overview') {
+    if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    return json(await enterpriseOverview(env, identity));
+  }
+
+  if (url.pathname === '/api/v1/governance/me') {
+    if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    return json(await governanceContext(env, identity));
+  }
+
+  if (url.pathname === '/api/v1/governance/enable') {
+    if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    return json(await enableGovernance(env, identity));
+  }
+
+  if (url.pathname === '/api/v1/governance/policies') {
+    if (request.method === 'GET') return json({ policies: await listPolicies(env, identity.portalId) });
+    if (request.method === 'POST') return json(await createPolicyDraft(env, identity, await readJson<unknown>(request)), 201);
+    return methodNotAllowed(['GET', 'POST']);
+  }
+
+  const policyRoute = policyPath(url.pathname);
+  if (policyRoute) {
+    if (!policyRoute.action) {
+      if (request.method === 'GET') {
+        const policy = await getPolicy(env, identity.portalId, policyRoute.id);
+        if (!policy) throw new AppError(404, 'policy_not_found', 'The requested policy does not exist.');
+        return json(policy);
+      }
+      if (request.method === 'PUT') return json(await updatePolicyDraft(env, identity, policyRoute.id, await readJson<unknown>(request)));
+      return methodNotAllowed(['GET', 'PUT']);
+    }
+    if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    if (policyRoute.action === 'submit') return json(await submitPolicy(env, identity, policyRoute.id));
+    if (policyRoute.action === 'approve' || policyRoute.action === 'reject') {
+      const body = await readJson<{ comment?: string }>(request);
+      return json(await decidePolicy(env, identity, policyRoute.id, policyRoute.action === 'approve' ? 'approved' : 'rejected', body.comment ?? ''));
+    }
+    if (policyRoute.action === 'publish') return json(await publishPolicy(env, identity, policyRoute.id));
+    if (policyRoute.action === 'rollback') {
+      const body = await readJson<unknown>(request);
+      return json(await createPolicyDraft(env, identity, body, policyRoute.id), 201);
+    }
+    if (policyRoute.action === 'simulate') {
+      const simulation = await createPolicySimulation(env, identity, policyRoute.id);
+      ctx.waitUntil(runPolicySimulation(env, identity.portalId, policyRoute.id, simulation.id));
+      return json(simulation, 202);
+    }
+  }
+
+  if (url.pathname === '/api/v1/governance/roles') {
+    if (request.method === 'GET') return json({ roles: await listRoles(env, identity) });
+    if (request.method === 'PUT') {
+      await assignRole(env, identity, await readJson<unknown>(request));
+      return json({ ok: true });
+    }
+    return methodNotAllowed(['GET', 'PUT']);
+  }
+
+  if (url.pathname === '/api/v1/governance/audit') {
+    if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    return json({ events: await searchAuditEvents(env, identity, url) });
+  }
+
+  if (url.pathname === '/api/v1/governance/audit/export') {
+    if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    return exportAuditCsv(env, identity);
+  }
+
   if (url.pathname === '/api/v1/integrations/slack') {
     if (request.method === 'GET') return json(await getSlackStatus(env, identity.portalId));
-    if (request.method === 'DELETE') { await disconnectSlack(env, identity); return json({ ok: true }); }
+    if (request.method === 'DELETE') {
+      await disconnectSlack(env, identity);
+      return json({ ok: true });
+    }
     return methodNotAllowed(['GET', 'DELETE']);
   }
+
   if (url.pathname === '/api/v1/integrations/slack/connect') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     return json({ authorizeUrl: await createSlackAuthorization(env, identity) });
   }
+
   if (url.pathname === '/api/v1/integrations/slack/test') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     await sendSlackTest(env, identity);
     return json({ ok: true });
   }
+
   if (url.pathname === '/api/v1/native-sync') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
     return json(await getNativeSyncStatus(env, identity.portalId));
   }
+
   if (url.pathname === '/api/v1/native-sync/provision') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     return json(await provisionNativeSync(env, identity));
   }
+
   if (url.pathname === '/api/v1/native-sync/backfill') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     const status = await getNativeSyncStatus(env, identity.portalId);
@@ -136,21 +246,42 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     }));
     return json({ ok: true, status: 'backfilling' }, 202);
   }
+
   if (url.pathname === '/api/v1/metadata') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
     const client = await HubSpotClient.forPortal(env, identity.portalId);
     const [pipelines, properties] = await Promise.all([client.getPipelines(), client.getDealProperties()]);
-    return json({ pipelines: pipelines.map((pipeline) => ({ id: pipeline.id, label: pipeline.label, stages: pipeline.stages.map((stage) => ({ id: stage.id, label: stage.label })) })), properties: properties.map((property) => ({ name: property.name, label: property.label, groupName: property.groupName, type: property.type, fieldType: property.fieldType })) });
+    return json({
+      pipelines: pipelines.map((pipeline) => ({ id: pipeline.id, label: pipeline.label, stages: pipeline.stages.map((stage) => ({ id: stage.id, label: stage.label })) })),
+      properties: properties.map((property) => ({ name: property.name, label: property.label, groupName: property.groupName, type: property.type, fieldType: property.fieldType })),
+    });
   }
+
   if (url.pathname === '/api/v1/dashboard') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
     return json(await dashboardForPortal(env, identity.portalId));
   }
+
   if (url.pathname === '/api/v1/settings') {
-    if (request.method === 'GET') { const credentials = await repository.getCredentials(identity.portalId); return json({ plan: credentials.tenant.plan, settings: credentials.settings }); }
-    if (request.method === 'PUT') return json({ ok: true, settings: await repository.saveSettings(identity, await readJson(request)) });
+    if (request.method === 'GET') {
+      const credentials = await repository.getCredentials(identity.portalId);
+      return json({ plan: credentials.tenant.plan, settings: credentials.settings });
+    }
+    if (request.method === 'PUT') {
+      const credentials = await repository.getCredentials(identity.portalId);
+      const raw = await readJson<unknown>(request);
+      const parsed = parseSettings(raw, credentials.tenant.plan);
+      if (credentials.settings.governance.enabled) {
+        if (!parsed.governance.enabled) throw new AppError(409, 'governance_disable_forbidden', 'Enterprise governance cannot be disabled through general settings.');
+        if (JSON.stringify(parsed.rules) !== JSON.stringify(credentials.settings.rules)) {
+          throw new AppError(409, 'published_policy_required', 'Scoring rules are governed. Create, approve, and publish a policy version instead of editing live rules directly.');
+        }
+      }
+      return json({ ok: true, settings: await repository.saveSettings(identity, raw) });
+    }
     return methodNotAllowed(['GET', 'PUT']);
   }
+
   if (url.pathname === '/api/v1/scans') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     const tenant = await repository.getTenant(identity.portalId);
@@ -160,9 +291,12 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
       return json({ error: { code: 'scan_too_frequent', message: `Your ${tenant.plan === 'free' ? 'Free' : 'Growth'} plan allows a portal scan every ${PLAN_LIMITS[tenant.plan].minScanIntervalMinutes} minutes.`, retryAfterSeconds } }, 429, { 'retry-after': String(retryAfterSeconds) });
     }
     const scanId = await repository.startScan(identity.portalId, 'manual');
-    ctx.waitUntil(scanPortal(env, identity.portalId, 'manual', scanId).catch((error) => console.error(JSON.stringify({ level: 'error', task: 'manual_scan', portalId: identity.portalId, scanId, error: error instanceof Error ? error.message : String(error) }))));
+    ctx.waitUntil(scanPortal(env, identity.portalId, 'manual', scanId).catch((error) => {
+      console.error(JSON.stringify({ level: 'error', task: 'manual_scan', portalId: identity.portalId, scanId, error: error instanceof Error ? error.message : String(error) }));
+    }));
     return json({ ok: true, scanId, status: 'running' }, 202);
   }
+
   if (url.pathname === '/api/v1/digest/test') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     const credentials = await repository.getCredentials(identity.portalId);
@@ -173,6 +307,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     await repository.audit(identity.portalId, identity.userId, identity.userEmail, 'digest.test_sent', { recipients });
     return json({ ok: true });
   }
+
   if (url.pathname === '/api/v1/data') {
     if (request.method !== 'DELETE') return methodNotAllowed(['DELETE']);
     const body = await readJson<{ confirmation?: string }>(request);
@@ -187,7 +322,10 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   if (dealId && action) {
     if (action === 'assessment') {
       if (!['GET', 'POST'].includes(request.method)) return methodNotAllowed(['GET', 'POST']);
-      if (request.method === 'GET') { const cached = await repository.getAssessment(identity.portalId, dealId); if (cached && Date.now() - Date.parse(cached.assessedAt) < 15 * 60_000) return json(cached); }
+      if (request.method === 'GET') {
+        const cached = await repository.getAssessment(identity.portalId, dealId);
+        if (cached && Date.now() - Date.parse(cached.assessedAt) < 15 * 60_000) return json(cached);
+      }
       return json(await assessDealForPortal(env, identity.portalId, dealId, 'record'));
     }
     if (action === 'review') {
@@ -200,11 +338,17 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
       const client = await HubSpotClient.forPortal(env, identity.portalId);
       const assessment = assessDeal(await client.getDeal(dealId), client.settings.rules);
       await repository.saveAssessment(identity.portalId, assessment);
+      await saveAssessmentContext(env, identity.portalId, assessment);
       await repository.confirmHandoff(identity, dealId, assessment);
-      ctx.waitUntil(notifyHandoffConfirmed(env, identity.portalId, assessment, client.settings, client.plan).catch((error) => console.error(JSON.stringify({ level: 'error', task: 'slack_handoff_confirmation', portalId: identity.portalId, dealId, error: error instanceof Error ? error.message : String(error) }))));
-      ctx.waitUntil(syncAssessmentIfEnabled(env, client, assessment, 'confirmed').catch((error) => console.error(JSON.stringify({ level: 'error', task: 'native_handoff_sync', portalId: identity.portalId, dealId, error: error instanceof Error ? error.message : String(error) }))));
+      ctx.waitUntil(notifyHandoffConfirmed(env, identity.portalId, assessment, client.settings, client.plan).catch((error) => {
+        console.error(JSON.stringify({ level: 'error', task: 'slack_handoff_confirmation', portalId: identity.portalId, dealId, error: error instanceof Error ? error.message : String(error) }));
+      }));
+      ctx.waitUntil(syncAssessmentIfEnabled(env, client, assessment, 'confirmed').catch((error) => {
+        console.error(JSON.stringify({ level: 'error', task: 'native_handoff_sync', portalId: identity.portalId, dealId, error: error instanceof Error ? error.message : String(error) }));
+      }));
       return json({ ok: true, handoffStatus: 'confirmed', confirmedAt: new Date().toISOString() });
     }
   }
+
   throw new AppError(404, 'not_found', 'Endpoint not found.');
 }

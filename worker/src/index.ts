@@ -1,5 +1,6 @@
 import { promoteLegacyAuditEvents } from './audit-chain.js';
-import { applyScheduledPlanChanges, retryUsageReports } from './billing.js';
+import { applyScheduledPlanChanges } from './billing.js';
+import { retryAtomicUsageReports } from './billing-usage.js';
 import { applyComplianceRetention, dispatchSiemEvents } from './compliance.js';
 import { sendDueDigests } from './email.js';
 import { expirePolicyExceptions } from './enterprise-policy.js';
@@ -10,7 +11,7 @@ import { dispatchEnterpriseAlerts, escalateUnacknowledgedAlerts } from './alerti
 import { escalateOverdueRemediations } from './remediation.js';
 import { runDueSyntheticChecks } from './reliability.js';
 import { Repository } from './repository.js';
-import { route } from './routes-v3.js';
+import { route } from './routes-v4.js';
 import { scanPortal } from './scanner.js';
 import { deleteExpiredSecureDownloads } from './secure-downloads.js';
 import type { Env, ExecutionContext, ScheduledEvent } from './types.js';
@@ -40,7 +41,7 @@ export default {
     ctx.waitUntil(dispatchOutbox(env));
     ctx.waitUntil(dispatchSiemEvents(env));
     ctx.waitUntil(runDueSyntheticChecks(env));
-    ctx.waitUntil(retryUsageReports(env));
+    ctx.waitUntil(retryAtomicUsageReports(env));
     ctx.waitUntil(applyScheduledPlanChanges(env));
     ctx.waitUntil(expirePolicyExceptions(env));
     ctx.waitUntil(sendDueDigests(env));

@@ -25,13 +25,14 @@ test('acceptance booleans and evidence redaction are deterministic', () => {
   });
 });
 
-test('acceptance client produces HubSpot v3 signatures for the exact URL and body', () => {
+test('acceptance client produces HubSpot v3 signatures for the exact decoded URL and body', () => {
   const client = new AcceptanceClient(config);
   const url = client.identityUrl('/api/v1/billing?view=summary');
   const body = JSON.stringify({ tier: 'enterprise' });
   const headers = client.hubSpotHeaders('POST', url, body);
   const timestamp = headers['x-hubspot-request-timestamp'];
-  const source = `POST${url.toString()}${body}${timestamp}`;
+  const decodedUrl = url.toString().replaceAll('%40', '@').replaceAll('%40'.toLowerCase(), '@');
+  const source = `POST${decodedUrl}${body}${timestamp}`;
   const expected = createHmac('sha256', config.clientSecret).update(source).digest('base64');
   assert.equal(headers['x-hubspot-signature-v3'], expected);
   assert.equal(url.searchParams.get('portalId'), '12345');

@@ -1,4 +1,4 @@
-import { REQUIRED_HUBSPOT_SCOPES } from './config.js';
+import { PLAN_LIMITS, REQUIRED_HUBSPOT_SCOPES } from './config.js';
 import { randomToken, sha256Hex } from './crypto.js';
 import { sendEmail } from './email.js';
 import { AppError } from './errors.js';
@@ -120,8 +120,20 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   if (url.pathname === '/api/v1/scans') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     const tenant = await repository.getTenant(identity.portalId);
-    if (tenant.last_scan_at && Date.now() - Date.parse(tenant.last_scan_at) < 5 * 60_000) {
-      throw new AppError(429, 'scan_too_frequent', 'A portal scan was completed recently. Try again in a few minutes.');
+    const minimumIntervalMs = PLAN_LIMITS[tenant.plan].minScanIntervalMinutes * 60_000;
+    if (tenant.last_scan_at && Date.now() - Date.parse(tenant.last_scan_at) < minimumIntervalMs) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((Date.parse(tenant.last_scan_at) + minimumIntervalMs - Date.now()) / 1000));
+      return json(
+        {
+          error: {
+            code: 'scan_too_frequent',
+            message: `Your ${tenant.plan === 'free' ? 'Free' : 'Growth'} plan allows a portal scan every ${PLAN_LIMITS[tenant.plan].minScanIntervalMinutes} minutes.`,
+            retryAfterSeconds,
+          },
+        },
+        429,
+        { 'retry-after': String(retryAfterSeconds) },
+      );
     }
     const scanId = await repository.startScan(identity.portalId, 'manual');
     ctx.waitUntil(scanPortal(env, identity.portalId, 'manual', scanId).catch((error) => {

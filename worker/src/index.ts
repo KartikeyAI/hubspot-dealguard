@@ -1,3 +1,4 @@
+import { promoteLegacyAuditEvents } from './audit-chain.js';
 import { applyScheduledPlanChanges, retryUsageReports } from './billing.js';
 import { applyComplianceRetention, dispatchSiemEvents } from './compliance.js';
 import { sendDueDigests } from './email.js';
@@ -9,8 +10,9 @@ import { dispatchEnterpriseAlerts, escalateUnacknowledgedAlerts } from './alerti
 import { escalateOverdueRemediations } from './remediation.js';
 import { runDueSyntheticChecks } from './reliability.js';
 import { Repository } from './repository.js';
-import { route } from './routes-v2.js';
+import { route } from './routes-v3.js';
 import { scanPortal } from './scanner.js';
+import { deleteExpiredSecureDownloads } from './secure-downloads.js';
 import type { Env, ExecutionContext, ScheduledEvent } from './types.js';
 
 export default {
@@ -43,6 +45,8 @@ export default {
     ctx.waitUntil(expirePolicyExceptions(env));
     ctx.waitUntil(sendDueDigests(env));
     ctx.waitUntil(applyComplianceRetention(env));
+    ctx.waitUntil(promoteLegacyAuditEvents(env));
+    ctx.waitUntil(deleteExpiredSecureDownloads(env));
     ctx.waitUntil(runMaintenance(env));
   },
 };

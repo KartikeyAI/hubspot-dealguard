@@ -1,34 +1,33 @@
 # DealGuard by Rokad
 
-DealGuard is an enterprise-oriented HubSpot revenue-governance application that detects incomplete, stale, and risky deals, makes readiness signals available natively inside HubSpot, monitors high-signal changes in real time, and governs the closed-won sales-to-delivery handoff.
+DealGuard is an enterprise HubSpot revenue-governance application that detects incomplete, stale, and risky deals, governs scoring policy, makes readiness signals native inside HubSpot, manages remediation SLAs, and delivers operational events reliably across customer systems.
 
-## What ships in v1.3
+## What ships in v1.4
 
 - Marketplace-distributed OAuth app targeting HubSpot developer platform `2026.03`.
-- HubSpot deal-record readiness card, connected-app settings, and dedicated App Home.
-- Deterministic, explainable scoring engine.
-- Manual, installation, scheduled, and webhook-triggered assessments.
-- Seven fixed `dealguard_*` deal properties for native HubSpot lists, views, filters, reports, and workflows.
-- Reusable workflow outputs for score, status, grade, issue count, handoff state, summary, and assessment time.
-- Enterprise policy lifecycle: draft, edit, submit, approve, reject, publish, supersede, simulate, and rollback.
-- Two-person approval controls and prevention of policy self-approval.
-- Governance roles for administrators, policy administrators, approvers, managers, and viewers.
-- Direct live-rule editing lock after governance is enabled.
-- Pipeline amount-at-risk, readiness, handoff, owner, pipeline, and trend analytics.
-- Searchable audit API and CSV export.
-- Slack OAuth and governed alerts for critical deals and handoff events.
-- Closed-won handoff confirmation with critical-gap blocking.
-- Cloudflare Worker + D1 multitenant backend with encrypted HubSpot and Slack credentials.
-- Request-signature validation, complete deletion flow, migrations, tests, and deployment runbook.
+- HubSpot deal-record readiness card, connected-app settings, and Enterprise App Home.
+- Deterministic, explainable scoring engine with scheduled, manual, workflow, and webhook assessments.
+- Seven fixed `dealguard_*` deal properties and reusable workflow outputs.
+- Enterprise policy lifecycle with simulation, two-person approval, publication, history, and rollback.
+- Role-controlled administration, searchable audit events, and CSV export.
+- Durable remediation cases with severity, priority, ownership, SLA, status history, escalation, and auto-resolution.
+- Optional HubSpot remediation tasks associated with affected deals.
+- DealGuard workflow action for creating remediation cases from customer-owned workflows.
+- Slack alerts plus Microsoft Teams Workflow, email, and signed webhook destinations.
+- Routing by event type, minimum severity, and pipeline.
+- Durable delivery outbox with processing leases, exponential backoff, dead-letter state, replay, and delivery history.
+- Per-portal service health for scans, webhooks, delivery, dead letters, and overdue remediations.
+- Stripe-hosted subscription Checkout, Stripe Customer Portal, signed/idempotent billing webhooks, grace periods, and manual Enterprise contracts.
+- Cloudflare Worker + D1 multitenant backend with AES-256-GCM encrypted HubSpot, Slack, Teams, and webhook credentials.
 
 ## Repository layout
 
 ```text
-src/app/                 HubSpot app, App Home, card, settings, workflow action, and webhooks
+src/app/                 HubSpot app, App Home, card, settings, workflow actions, and webhooks
 worker/src/              Cloudflare Worker backend
 worker/migrations/       D1 schema migrations
 test/                    Node test suite
-docs/                    Product, security, deployment, beta, and Marketplace documentation
+docs/                    Product, security, deployment, and Marketplace documentation
 ```
 
 ## Validate
@@ -42,8 +41,8 @@ npm run db:migrate:local
 
 ## Deploy and test
 
-Follow [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). Existing installations must reauthorize for DealGuard-owned deal and schema write scopes introduced in v1.2. Enterprise governance remains disabled until an eligible portal administrator captures and publishes the baseline policy.
+Follow [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). Existing installations must reauthorize for the HubSpot task-write scope added in v1.4. Configure Stripe price IDs and webhook signing, then apply the v1.4 migration before enabling paid Enterprise operations.
 
 ## Current release
 
-`1.3.0-beta.1` — enterprise-governance release adding App Home, policy lifecycle controls, role-based administration, two-person approval, simulations, rollback, commercial-risk analytics, and audit export. Predictive AI, autonomous stage changes, and writes to customer-owned non-DealGuard fields remain outside this release.
+`1.4.0-beta.1` — enterprise-operations release adding remediation SLAs, HubSpot tasks, routed delivery destinations, durable retries/dead letters, health visibility, and commercial subscription infrastructure. Deterministic policy remains the system of record; predictive AI and autonomous changes to core deal fields remain outside this release.

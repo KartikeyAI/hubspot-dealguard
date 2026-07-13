@@ -244,10 +244,10 @@ export interface DealAssessment {
   dealName: string;
   pipelineLabel: string;
   stageLabel: string;
-  pipelineId: string;
-  stageId: string;
-  ownerId: string | null;
-  dealAmount: number | null;
+  pipelineId?: string;
+  stageId?: string;
+  ownerId?: string | null;
+  dealAmount?: number | null;
   score: number;
   grade: 'A' | 'B' | 'C' | 'D' | 'F';
   status: AssessmentStatus;

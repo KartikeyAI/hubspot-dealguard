@@ -6,16 +6,30 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Apply one-time strict source corrections
+        if: github.event_name == 'pull_request'
+        run: |
+          node scripts/bootstrap-v2-source-fixes.mjs
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "Apply strict v2 source corrections"
+            git push origin HEAD:${GITHUB_HEAD_REF}
+          fi
       - run: npm install --ignore-scripts --silent
       - run: npm install --ignore-scripts --silent --prefix src/app/cards
       - run: npm install --ignore-scripts --silent --prefix src/app/settings

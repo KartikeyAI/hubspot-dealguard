@@ -19,7 +19,14 @@ jobs:
       - run: npm install --ignore-scripts
       - run: npm install --ignore-scripts --prefix src/app/cards
       - run: npm install --ignore-scripts --prefix src/app/settings
-      - run: npm run check
+      - name: Typecheck Worker
+        run: npm run typecheck
+      - name: Typecheck deal card
+        run: npm run typecheck --prefix src/app/cards
+      - name: Typecheck settings extension
+        run: npm run typecheck --prefix src/app/settings
+      - name: Run automated tests
+        run: npm test
       - name: Validate HubSpot manifests
         run: node -e "const fs=require('fs'); for (const f of ['src/app/app-hsmeta.json','src/app/webhooks/deal-events-hsmeta.json','src/app/workflow-actions/assess-deal-hsmeta.json']) JSON.parse(fs.readFileSync(f,'utf8'));"
       - run: npx wrangler d1 migrations apply dealguard-production --local

@@ -2,6 +2,16 @@ import { saveAssessmentContext } from './assessment-context.js';
 import { assessDealForPortal } from './assessment-service.js';
 import { exportAuditCsv, searchAuditEvents } from './audit.js';
 import { requireOperationalPermission } from './authorization.js';
+import {
+  createCheckoutSession,
+  createCustomerPortalSession,
+  getBillingStatus,
+  processStripeWebhook,
+  requireCommercialTier,
+  setManualSubscription,
+  verifyStripeWebhook,
+  type CommercialTier,
+} from './billing.js';
 import { PLAN_LIMITS, REQUIRED_HUBSPOT_SCOPES } from './config.js';
 import { randomToken, sha256Hex } from './crypto.js';
 import { dashboardForPortal } from './dashboard.js';
@@ -24,11 +34,37 @@ import {
   submitPolicy,
   updatePolicyDraft,
 } from './governance.js';
+import { serviceHealth } from './health.js';
 import { normalizeHubSpotWebhookEvents, processHubSpotWebhookEvents } from './hubspot-events.js';
 import { HubSpotClient } from './hubspot.js';
 import { html, json, methodNotAllowed, readJson, redirect } from './http.js';
 import { backfillNativeSync, getNativeSyncStatus, provisionNativeSync, syncAssessmentIfEnabled } from './native-sync.js';
-import { docsPage, installSuccessPage, landingPage, privacyPage, slackSuccessPage, supportPage, termsPage } from './pages.js';
+import {
+  createDestination,
+  deleteDestination,
+  listDestinations,
+  listOutbox,
+  replayOutboxEvent,
+  updateDestination,
+} from './outbox.js';
+import {
+  billingCanceledPage,
+  billingSuccessPage,
+  docsPage,
+  installSuccessPage,
+  landingPage,
+  privacyPage,
+  slackSuccessPage,
+  supportPage,
+  termsPage,
+} from './pages.js';
+import {
+  createRemediationCase,
+  listRemediationCases,
+  remediationSummary,
+  transitionRemediationCase,
+} from './remediation.js';
+import { executeRemediationWorkflow } from './remediation-workflow.js';
 import { Repository } from './repository.js';
 import { assessDeal } from './scoring.js';
 import { scanPortal } from './scanner.js';
@@ -51,6 +87,19 @@ function policyPath(pathname: string): { id: string; action: string | null } | n
   return match ? { id: match[1]!, action: match[2] ?? null } : null;
 }
 
+function remediationPath(pathname: string): { id: string; action: string } | null {
+  const match = pathname.match(/^\/api\/v1\/remediations\/([^/]+)\/(acknowledge|start|resolve|waive|close|reopen|assign)$/);
+  return match ? { id: match[1]!, action: match[2]! } : null;
+}
+
+function destinationId(pathname: string): string | null {
+  return pathname.match(/^\/api\/v1\/operations\/destinations\/([^/]+)$/)?.[1] ?? null;
+}
+
+function replayId(pathname: string): string | null {
+  return pathname.match(/^\/api\/v1\/operations\/outbox\/([^/]+)\/replay$/)?.[1] ?? null;
+}
+
 export async function route(request: Request, env: Env, ctx: { waitUntil(promise: Promise<unknown>): void }): Promise<Response> {
   const url = new URL(request.url);
   const repository = new Repository(env);
@@ -63,6 +112,8 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   if (url.pathname === '/support' && request.method === 'GET') return html(supportPage(env));
   if (url.pathname === '/install/success' && request.method === 'GET') return html(installSuccessPage(env));
   if (url.pathname === '/integrations/slack/success' && request.method === 'GET') return html(slackSuccessPage(env));
+  if (url.pathname === '/billing/success' && request.method === 'GET') return html(billingSuccessPage(env));
+  if (url.pathname === '/billing/canceled' && request.method === 'GET') return html(billingCanceledPage(env));
 
   if (url.pathname === '/oauth/install') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
@@ -105,6 +156,15 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     return redirect(`${env.APP_BASE_URL}/integrations/slack/success`);
   }
 
+  if (url.pathname === '/webhooks/stripe') {
+    if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    const rawBody = await verifyStripeWebhook(request, env);
+    ctx.waitUntil(processStripeWebhook(env, rawBody).catch((error) => {
+      console.error(JSON.stringify({ level: 'error', task: 'stripe_webhook', error: error instanceof Error ? error.message : String(error) }));
+    }));
+    return json({ accepted: true }, 202);
+  }
+
   if (url.pathname === '/webhooks/hubspot') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     await validateHubSpotSignature(request, env);
@@ -119,6 +179,12 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     return json(await executeWorkflowAction(env, await readJson<unknown>(request)));
   }
 
+  if (url.pathname === '/integrations/hubspot/workflow-actions/create-remediation') {
+    if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    await validateHubSpotSignature(request, env);
+    return json(await executeRemediationWorkflow(env, await readJson<unknown>(request)));
+  }
+
   if (url.pathname.startsWith('/internal/')) {
     const expected = env.ADMIN_API_KEY;
     const actual = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
@@ -131,11 +197,35 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
       await repository.setPlan(planMatch[1]!, body.plan);
       return json({ ok: true, portalId: planMatch[1], plan: body.plan });
     }
+    const subscriptionMatch = url.pathname.match(/^\/internal\/portals\/(\d+)\/subscription$/);
+    if (subscriptionMatch) {
+      if (request.method !== 'PUT') return methodNotAllowed(['PUT']);
+      const body = await readJson<{ tier?: CommercialTier; currentPeriodEnd?: string | null }>(request);
+      if (!body.tier) throw new AppError(400, 'subscription_tier_required', 'A commercial tier is required.');
+      await setManualSubscription(env, subscriptionMatch[1]!, body.tier, body.currentPeriodEnd ?? null);
+      return json({ ok: true, portalId: subscriptionMatch[1], tier: body.tier });
+    }
     throw new AppError(404, 'not_found', 'Endpoint not found.');
   }
 
   if (!url.pathname.startsWith('/api/v1/')) throw new AppError(404, 'not_found', 'Endpoint not found.');
   const identity = await validateHubSpotRequest(request, env);
+
+  if (url.pathname === '/api/v1/billing') {
+    if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    return json(await getBillingStatus(env, identity.portalId));
+  }
+  if (url.pathname === '/api/v1/billing/checkout') {
+    if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    await requireOperationalPermission(env, identity, 'billing.manage');
+    const body = await readJson<{ tier?: CommercialTier; interval?: 'month' | 'year' }>(request);
+    return json(await createCheckoutSession(env, identity, body.tier ?? 'growth', body.interval === 'year' ? 'year' : 'month'));
+  }
+  if (url.pathname === '/api/v1/billing/portal') {
+    if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    await requireOperationalPermission(env, identity, 'billing.manage');
+    return json(await createCustomerPortalSession(env, identity));
+  }
 
   if (url.pathname === '/api/v1/enterprise/overview') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
@@ -146,15 +236,17 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
     return json(await governanceContext(env, identity));
   }
-
   if (url.pathname === '/api/v1/governance/enable') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    await requireCommercialTier(env, identity.portalId, 'enterprise');
     return json(await enableGovernance(env, identity));
   }
-
   if (url.pathname === '/api/v1/governance/policies') {
     if (request.method === 'GET') return json({ policies: await listPolicies(env, identity.portalId) });
-    if (request.method === 'POST') return json(await createPolicyDraft(env, identity, await readJson<unknown>(request)), 201);
+    if (request.method === 'POST') {
+      await requireCommercialTier(env, identity.portalId, 'enterprise');
+      return json(await createPolicyDraft(env, identity, await readJson<unknown>(request)), 201);
+    }
     return methodNotAllowed(['GET', 'POST']);
   }
 
@@ -166,20 +258,21 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
         if (!policy) throw new AppError(404, 'policy_not_found', 'The requested policy does not exist.');
         return json(policy);
       }
-      if (request.method === 'PUT') return json(await updatePolicyDraft(env, identity, policyRoute.id, await readJson<unknown>(request)));
+      if (request.method === 'PUT') {
+        await requireCommercialTier(env, identity.portalId, 'enterprise');
+        return json(await updatePolicyDraft(env, identity, policyRoute.id, await readJson<unknown>(request)));
+      }
       return methodNotAllowed(['GET', 'PUT']);
     }
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    await requireCommercialTier(env, identity.portalId, 'enterprise');
     if (policyRoute.action === 'submit') return json(await submitPolicy(env, identity, policyRoute.id));
     if (policyRoute.action === 'approve' || policyRoute.action === 'reject') {
       const body = await readJson<{ comment?: string }>(request);
       return json(await decidePolicy(env, identity, policyRoute.id, policyRoute.action === 'approve' ? 'approved' : 'rejected', body.comment ?? ''));
     }
     if (policyRoute.action === 'publish') return json(await publishPolicy(env, identity, policyRoute.id));
-    if (policyRoute.action === 'rollback') {
-      const body = await readJson<unknown>(request);
-      return json(await createPolicyDraft(env, identity, body, policyRoute.id), 201);
-    }
+    if (policyRoute.action === 'rollback') return json(await createPolicyDraft(env, identity, await readJson<unknown>(request), policyRoute.id), 201);
     if (policyRoute.action === 'simulate') {
       const simulation = await createPolicySimulation(env, identity, policyRoute.id);
       ctx.waitUntil(runPolicySimulation(env, identity.portalId, policyRoute.id, simulation.id));
@@ -190,20 +283,77 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   if (url.pathname === '/api/v1/governance/roles') {
     if (request.method === 'GET') return json({ roles: await listRoles(env, identity) });
     if (request.method === 'PUT') {
+      await requireCommercialTier(env, identity.portalId, 'enterprise');
       await assignRole(env, identity, await readJson<unknown>(request));
       return json({ ok: true });
     }
     return methodNotAllowed(['GET', 'PUT']);
   }
-
   if (url.pathname === '/api/v1/governance/audit') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
     return json({ events: await searchAuditEvents(env, identity, url) });
   }
-
   if (url.pathname === '/api/v1/governance/audit/export') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
     return exportAuditCsv(env, identity);
+  }
+
+  if (url.pathname === '/api/v1/remediations') {
+    if (request.method === 'GET') return json({ cases: await listRemediationCases(env, identity.portalId, url) });
+    if (request.method === 'POST') {
+      await requireCommercialTier(env, identity.portalId, 'enterprise');
+      await requireOperationalPermission(env, identity, 'remediation.manage');
+      return json(await createRemediationCase(env, identity, await readJson<unknown>(request)), 201);
+    }
+    return methodNotAllowed(['GET', 'POST']);
+  }
+  if (url.pathname === '/api/v1/remediations/summary') {
+    if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    return json(await remediationSummary(env, identity.portalId));
+  }
+  const remediationRoute = remediationPath(url.pathname);
+  if (remediationRoute) {
+    if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    await requireCommercialTier(env, identity.portalId, 'enterprise');
+    await requireOperationalPermission(env, identity, 'remediation.manage');
+    return json(await transitionRemediationCase(env, identity, remediationRoute.id, remediationRoute.action, await readJson<unknown>(request)));
+  }
+
+  if (url.pathname === '/api/v1/operations/health') {
+    if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    return json(await serviceHealth(env, identity.portalId));
+  }
+  if (url.pathname === '/api/v1/operations/destinations') {
+    if (request.method === 'GET') return json({ destinations: await listDestinations(env, identity.portalId) });
+    if (request.method === 'POST') {
+      await requireCommercialTier(env, identity.portalId, 'enterprise');
+      await requireOperationalPermission(env, identity, 'delivery.manage');
+      return json(await createDestination(env, identity, await readJson<unknown>(request)), 201);
+    }
+    return methodNotAllowed(['GET', 'POST']);
+  }
+  const destinationRoute = destinationId(url.pathname);
+  if (destinationRoute) {
+    await requireCommercialTier(env, identity.portalId, 'enterprise');
+    await requireOperationalPermission(env, identity, 'delivery.manage');
+    if (request.method === 'PUT') return json(await updateDestination(env, identity, destinationRoute, await readJson<unknown>(request)));
+    if (request.method === 'DELETE') {
+      await deleteDestination(env, identity, destinationRoute);
+      return json({ ok: true });
+    }
+    return methodNotAllowed(['PUT', 'DELETE']);
+  }
+  if (url.pathname === '/api/v1/operations/outbox') {
+    if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    return json({ events: await listOutbox(env, identity.portalId, url.searchParams.get('status'), Number(url.searchParams.get('limit') ?? 100)) });
+  }
+  const outboxReplay = replayId(url.pathname);
+  if (outboxReplay) {
+    if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    await requireCommercialTier(env, identity.portalId, 'enterprise');
+    await requireOperationalPermission(env, identity, 'outbox.replay');
+    await replayOutboxEvent(env, identity, outboxReplay);
+    return json({ ok: true });
   }
 
   if (url.pathname === '/api/v1/integrations/slack') {
@@ -215,13 +365,11 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     }
     return methodNotAllowed(['GET', 'DELETE']);
   }
-
   if (url.pathname === '/api/v1/integrations/slack/connect') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     await requireOperationalPermission(env, identity, 'integration.manage');
     return json({ authorizeUrl: await createSlackAuthorization(env, identity) });
   }
-
   if (url.pathname === '/api/v1/integrations/slack/test') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     await requireOperationalPermission(env, identity, 'integration.manage');
@@ -233,20 +381,16 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
     return json(await getNativeSyncStatus(env, identity.portalId));
   }
-
   if (url.pathname === '/api/v1/native-sync/provision') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     await requireOperationalPermission(env, identity, 'native_sync.manage');
     return json(await provisionNativeSync(env, identity));
   }
-
   if (url.pathname === '/api/v1/native-sync/backfill') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     await requireOperationalPermission(env, identity, 'native_sync.manage');
     const status = await getNativeSyncStatus(env, identity.portalId);
-    if (!status.entitled || !status.enabled || status.status !== 'ready') {
-      throw new AppError(409, 'native_sync_not_ready', 'Provision and enable native HubSpot property sync before starting a backfill.');
-    }
+    if (!status.entitled || !status.enabled || status.status !== 'ready') throw new AppError(409, 'native_sync_not_ready', 'Provision and enable native HubSpot property sync before starting a backfill.');
     ctx.waitUntil(backfillNativeSync(env, identity.portalId).catch((error) => {
       console.error(JSON.stringify({ level: 'error', task: 'native_sync_backfill', portalId: identity.portalId, error: error instanceof Error ? error.message : String(error) }));
     }));
@@ -262,12 +406,10 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
       properties: properties.map((property) => ({ name: property.name, label: property.label, groupName: property.groupName, type: property.type, fieldType: property.fieldType })),
     });
   }
-
   if (url.pathname === '/api/v1/dashboard') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
     return json(await dashboardForPortal(env, identity.portalId));
   }
-
   if (url.pathname === '/api/v1/settings') {
     if (request.method === 'GET') {
       const credentials = await repository.getCredentials(identity.portalId);
@@ -279,12 +421,8 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
       const raw = await readJson<unknown>(request);
       const parsed = parseSettings(raw, credentials.tenant.plan);
       if (credentials.settings.governance.enabled) {
-        if (JSON.stringify(parsed.governance) !== JSON.stringify(credentials.settings.governance)) {
-          throw new AppError(409, 'governance_settings_locked', 'Governance approval controls cannot be changed through general settings.');
-        }
-        if (JSON.stringify(parsed.rules) !== JSON.stringify(credentials.settings.rules)) {
-          throw new AppError(409, 'published_policy_required', 'Scoring rules are governed. Create, approve, and publish a policy version instead of editing live rules directly.');
-        }
+        if (JSON.stringify(parsed.governance) !== JSON.stringify(credentials.settings.governance)) throw new AppError(409, 'governance_settings_locked', 'Governance approval controls cannot be changed through general settings.');
+        if (JSON.stringify(parsed.rules) !== JSON.stringify(credentials.settings.rules)) throw new AppError(409, 'published_policy_required', 'Scoring rules are governed. Create, approve, and publish a policy version instead of editing live rules directly.');
       }
       return json({ ok: true, settings: await repository.saveSettings(identity, raw) });
     }
@@ -298,7 +436,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     const minimumIntervalMs = PLAN_LIMITS[tenant.plan].minScanIntervalMinutes * 60_000;
     if (tenant.last_scan_at && Date.now() - Date.parse(tenant.last_scan_at) < minimumIntervalMs) {
       const retryAfterSeconds = Math.max(1, Math.ceil((Date.parse(tenant.last_scan_at) + minimumIntervalMs - Date.now()) / 1000));
-      return json({ error: { code: 'scan_too_frequent', message: `Your ${tenant.plan === 'free' ? 'Free' : 'Growth'} plan allows a portal scan every ${PLAN_LIMITS[tenant.plan].minScanIntervalMinutes} minutes.`, retryAfterSeconds } }, 429, { 'retry-after': String(retryAfterSeconds) });
+      return json({ error: { code: 'scan_too_frequent', message: `Your plan allows a portal scan every ${PLAN_LIMITS[tenant.plan].minScanIntervalMinutes} minutes.`, retryAfterSeconds } }, 429, { 'retry-after': String(retryAfterSeconds) });
     }
     const scanId = await repository.startScan(identity.portalId, 'manual');
     ctx.waitUntil(scanPortal(env, identity.portalId, 'manual', scanId).catch((error) => {

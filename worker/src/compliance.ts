@@ -1,3 +1,4 @@
+import { appendAuditChainEvent, canonicalAuditValue, type AuditChainInput } from './audit-chain.js';
 import { decryptSecret, encryptSecret, randomToken, sha256Hex } from './crypto.js';
 import { requireEnterprisePermission } from './enterprise-access.js';
 import { AppError } from './errors.js';
@@ -5,63 +6,10 @@ import type { Env, RequestIdentity } from './types.js';
 
 const encoder = new TextEncoder();
 
-export interface ImmutableAuditInput {
-  portalId: string;
-  action: string;
-  resourceType?: string | null;
-  resourceId?: string | null;
-  actorUserId?: string | null;
-  actorEmail?: string | null;
-  source?: string;
-  requestId?: string | null;
-  ip?: string | null;
-  userAgent?: string | null;
-  before?: unknown;
-  after?: unknown;
-  metadata?: unknown;
-}
-
-function stable(value: unknown): string {
-  if (value === undefined) return 'null';
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
-  const object = value as Record<string, unknown>;
-  return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${stable(object[key])}`).join(',')}}`;
-}
+export type ImmutableAuditInput = AuditChainInput;
 
 export async function appendImmutableAudit(env: Env, input: ImmutableAuditInput): Promise<string> {
-  const tail = await env.DB.prepare(`SELECT sequence_number, event_hash FROM audit_events_v2 WHERE portal_id = ? ORDER BY sequence_number DESC LIMIT 1`)
-    .bind(input.portalId).first<{ sequence_number: number; event_hash: string }>();
-  const sequence = Number(tail?.sequence_number ?? 0) + 1;
-  const id = crypto.randomUUID();
-  const createdAt = new Date().toISOString();
-  const previousHash = tail?.event_hash ?? null;
-  const ipHash = input.ip ? await sha256Hex(input.ip) : null;
-  const userAgentHash = input.userAgent ? await sha256Hex(input.userAgent) : null;
-  const canonical = stable({
-    id, portalId: input.portalId, sequence, action: input.action, resourceType: input.resourceType ?? null,
-    resourceId: input.resourceId ?? null, actorUserId: input.actorUserId ?? null,
-    actorEmail: input.actorEmail ?? null, source: input.source ?? 'application',
-    requestId: input.requestId ?? null, ipHash, userAgentHash,
-    before: input.before ?? null, after: input.after ?? null, metadata: input.metadata ?? {},
-    previousHash, createdAt,
-  });
-  const eventHash = await sha256Hex(canonical);
-  await env.DB.prepare(
-    `INSERT INTO audit_events_v2 (
-      id, portal_id, sequence_number, action, resource_type, resource_id, actor_user_id, actor_email,
-      source, request_id, ip_hash, user_agent_hash, before_json, after_json, metadata_json,
-      previous_hash, event_hash, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(
-    id, input.portalId, sequence, input.action.slice(0, 160), input.resourceType?.slice(0, 100) ?? null,
-    input.resourceId?.slice(0, 255) ?? null, input.actorUserId ?? null, input.actorEmail ?? null,
-    (input.source ?? 'application').slice(0, 80), input.requestId ?? null, ipHash, userAgentHash,
-    input.before === undefined ? null : JSON.stringify(input.before),
-    input.after === undefined ? null : JSON.stringify(input.after),
-    JSON.stringify(input.metadata ?? {}), previousHash, eventHash, createdAt,
-  ).run();
-  return id;
+  return appendAuditChainEvent(env, input);
 }
 
 export async function verifyAuditChain(env: Env, identity: RequestIdentity): Promise<Record<string, unknown>> {
@@ -73,7 +21,7 @@ export async function verifyAuditChain(env: Env, identity: RequestIdentity): Pro
   const failures: Array<{ id: string; sequence: number; reason: string }> = [];
   for (const row of rows.results ?? []) {
     if ((row.previous_hash ?? null) !== previous) failures.push({ id: String(row.id), sequence: Number(row.sequence_number), reason: 'previous_hash_mismatch' });
-    const canonical = stable({
+    const canonical = canonicalAuditValue({
       id: row.id, portalId: row.portal_id, sequence: Number(row.sequence_number), action: row.action,
       resourceType: row.resource_type ?? null, resourceId: row.resource_id ?? null,
       actorUserId: row.actor_user_id ?? null, actorEmail: row.actor_email ?? null,

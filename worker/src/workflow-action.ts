@@ -1,7 +1,7 @@
 import { assessDealForPortal } from './assessment-service.js';
 import { AppError } from './errors.js';
 import { Repository } from './repository.js';
-import type { Env } from './types.js';
+import type { DealAssessment, Env } from './types.js';
 
 interface WorkflowPayload {
   callbackId?: string;
@@ -23,18 +23,36 @@ export function parseWorkflowActionPayload(value: unknown): { portalId: string; 
   return { portalId, dealId, notifySlack, callbackId: payload.callbackId ? String(payload.callbackId) : null };
 }
 
+export function workflowOutputFields(
+  assessment: DealAssessment & { handoffStatus?: string | null },
+): Record<string, string | number> {
+  return {
+    readinessScore: assessment.score,
+    readinessStatus: assessment.status,
+    readinessGrade: assessment.grade,
+    issueCount: assessment.issues.length,
+    handoffStatus: assessment.isWon
+      ? assessment.handoffStatus === 'confirmed' ? 'confirmed' : 'required'
+      : 'not_applicable',
+    readinessSummary: assessment.readinessSummary,
+    assessedAt: assessment.assessedAt,
+  };
+}
+
 export async function executeWorkflowAction(env: Env, value: unknown): Promise<Record<string, unknown>> {
   const parsed = parseWorkflowActionPayload(value);
-  const tenant = await new Repository(env).getTenant(parsed.portalId);
+  const repository = new Repository(env);
+  const tenant = await repository.getTenant(parsed.portalId);
   if (tenant.plan === 'free') throw new AppError(403, 'growth_plan_required', 'The DealGuard workflow action requires DealGuard Growth.');
   const assessment = await assessDealForPortal(env, parsed.portalId, parsed.dealId, 'workflow', parsed.notifySlack);
   if (!assessment) throw new AppError(500, 'assessment_not_saved', 'DealGuard could not persist the workflow assessment.');
-  await new Repository(env).audit(parsed.portalId, null, null, 'workflow.assessment_completed', {
+  const outputFields = workflowOutputFields(assessment);
+  await repository.audit(parsed.portalId, null, null, 'workflow.assessment_completed', {
     dealId: parsed.dealId,
     callbackId: parsed.callbackId,
     score: assessment.score,
     status: assessment.status,
     notifySlack: parsed.notifySlack,
   });
-  return { ok: true, callbackId: parsed.callbackId };
+  return { ok: true, callbackId: parsed.callbackId, outputFields };
 }

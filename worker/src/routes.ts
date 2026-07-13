@@ -8,6 +8,7 @@ import { AppError } from './errors.js';
 import { normalizeHubSpotWebhookEvents, processHubSpotWebhookEvents } from './hubspot-events.js';
 import { HubSpotClient } from './hubspot.js';
 import { html, json, methodNotAllowed, readJson, redirect } from './http.js';
+import { backfillNativeSync, getNativeSyncStatus, provisionNativeSync, syncAssessmentIfEnabled } from './native-sync.js';
 import { docsPage, installSuccessPage, landingPage, privacyPage, slackSuccessPage, supportPage, termsPage } from './pages.js';
 import { Repository } from './repository.js';
 import { assessDeal } from './scoring.js';
@@ -116,6 +117,25 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     await sendSlackTest(env, identity);
     return json({ ok: true });
   }
+  if (url.pathname === '/api/v1/native-sync') {
+    if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    return json(await getNativeSyncStatus(env, identity.portalId));
+  }
+  if (url.pathname === '/api/v1/native-sync/provision') {
+    if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    return json(await provisionNativeSync(env, identity));
+  }
+  if (url.pathname === '/api/v1/native-sync/backfill') {
+    if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    const status = await getNativeSyncStatus(env, identity.portalId);
+    if (!status.entitled || !status.enabled || status.status !== 'ready') {
+      throw new AppError(409, 'native_sync_not_ready', 'Provision and enable native HubSpot property sync before starting a backfill.');
+    }
+    ctx.waitUntil(backfillNativeSync(env, identity.portalId).catch((error) => {
+      console.error(JSON.stringify({ level: 'error', task: 'native_sync_backfill', portalId: identity.portalId, error: error instanceof Error ? error.message : String(error) }));
+    }));
+    return json({ ok: true, status: 'backfilling' }, 202);
+  }
   if (url.pathname === '/api/v1/metadata') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
     const client = await HubSpotClient.forPortal(env, identity.portalId);
@@ -182,6 +202,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
       await repository.saveAssessment(identity.portalId, assessment);
       await repository.confirmHandoff(identity, dealId, assessment);
       ctx.waitUntil(notifyHandoffConfirmed(env, identity.portalId, assessment, client.settings, client.plan).catch((error) => console.error(JSON.stringify({ level: 'error', task: 'slack_handoff_confirmation', portalId: identity.portalId, dealId, error: error instanceof Error ? error.message : String(error) }))));
+      ctx.waitUntil(syncAssessmentIfEnabled(env, client, assessment, 'confirmed').catch((error) => console.error(JSON.stringify({ level: 'error', task: 'native_handoff_sync', portalId: identity.portalId, dealId, error: error instanceof Error ? error.message : String(error) }))));
       return json({ ok: true, handoffStatus: 'confirmed', confirmedAt: new Date().toISOString() });
     }
   }

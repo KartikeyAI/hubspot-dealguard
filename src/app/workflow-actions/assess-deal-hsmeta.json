@@ -1,0 +1,47 @@
+{
+  "uid": "dealguard_assess_deal",
+  "type": "workflow-action",
+  "config": {
+    "actionUrl": "https://dealguard-api.rokad.co/integrations/hubspot/workflow-actions/assess-deal",
+    "isPublished": true,
+    "supportedClients": [
+      { "client": "WORKFLOWS" }
+    ],
+    "inputFields": [
+      {
+        "typeDefinition": {
+          "name": "notifySlack",
+          "type": "enumeration",
+          "fieldType": "select",
+          "options": [
+            { "value": "no", "label": "Assess only" },
+            { "value": "yes", "label": "Assess and notify Slack" }
+          ]
+        },
+        "supportedValueTypes": ["STATIC_VALUE"],
+        "isRequired": true
+      }
+    ],
+    "labels": {
+      "en": {
+        "appDisplayName": "DealGuard by Rokad",
+        "actionName": "Assess deal with DealGuard",
+        "actionDescription": "Runs the configured deal-readiness rules and optionally sends the result to the connected Slack channel.",
+        "actionCardContent": "Assess deal; Slack notification: {{notifySlack}}",
+        "inputFieldLabels": {
+          "notifySlack": "Slack notification"
+        },
+        "inputFieldDescriptions": {
+          "notifySlack": "Choose whether this workflow execution should also send the assessment to Slack."
+        },
+        "inputFieldOptionLabels": {
+          "notifySlack": {
+            "no": "Assess only",
+            "yes": "Assess and notify Slack"
+          }
+        }
+      }
+    },
+    "objectTypes": ["DEAL"]
+  }
+}

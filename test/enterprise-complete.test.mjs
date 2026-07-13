@@ -216,7 +216,7 @@ test('release source uses hardened Dodo, approval, dimension and simulation runt
   assert.match(planChange, /on_payment_failure/);
   assert.match(scheduler, /provider = 'manual'/);
   assert.doesNotMatch(scheduler, /provider = 'dodo'/);
-  assert.match(index, /routes-v9/);
+  assert.match(index, /routes-v10/);
   assert.match(index, /applyManualScheduledPlanChanges/);
   assert.doesNotMatch(index, /applyScheduledPlanChanges/);
   assert.match(index, /retryAtomicUsageReports/);

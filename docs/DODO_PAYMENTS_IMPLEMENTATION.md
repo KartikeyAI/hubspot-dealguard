@@ -19,12 +19,16 @@ Create four subscription products:
 - Enterprise monthly
 - Enterprise annual
 
-Attach usage meters to products intended for metered overage. Configure each meter to aggregate the numeric `quantity` metadata property and use event names matching the Worker secrets or defaults:
+Attach usage meters to products intended for metered overage. Each meter reads the numeric `quantity` metadata property. Configure the aggregation deliberately:
 
-- `dealguard_ai_credit`
-- `dealguard_active_deal_overage`
-- `dealguard_event_overage`
-- `dealguard_retention_gb_month`
+| Event name | Aggregation | Meaning |
+|---|---|---|
+| `dealguard_ai_credit` | `sum` | Cumulative consumed AI credits |
+| `dealguard_event_overage` | `sum` | Cumulative billable events |
+| `dealguard_active_deal_overage` | `max` | Maximum active-deal gauge reached in the billing period |
+| `dealguard_retention_gb_month` | `max` | Maximum retained-data gauge reached in the billing period |
+
+DealGuard sends absolute values to `max` meters and increments to `sum` meters. The local D1 ledger uses the same semantics, so hard-cap enforcement, customer-visible usage and Dodo invoicing cannot diverge merely because a scan runs repeatedly.
 
 Create the webhook endpoint:
 
@@ -60,11 +64,23 @@ The handler persists and applies the small subscription-state transaction before
 
 Only `subscription.*` events can mutate entitlement. Payments, refunds, disputes, credits, grants and recovery events cannot activate, downgrade or cancel a DealGuard plan.
 
+## Plan changes
+
+DealGuard uses Dodo's provider-backed plan-change endpoints:
+
+- Preview: `POST /subscriptions/{id}/change-plan/preview`
+- Apply or schedule: `POST /subscriptions/{id}/change-plan`
+- Cancel scheduled change: `DELETE /subscriptions/{id}/change-plan/scheduled`
+
+Requests include product, quantity, proration mode, effective time and payment-failure behavior. DealGuard reads provider state before applying a change and re-reads it after an ambiguous provider failure, preventing duplicate plan mutations. Entitlements change only when the verified subscription webhook confirms provider state. Local scheduled changes are reserved for manual Enterprise contracts; Dodo plans are never changed by DealGuard's cron worker.
+
 ## Usage reporting
 
 Usage is first reserved atomically in D1 using the portal, metric, billing-period start and idempotency key. The reservation and usage row are committed together, so concurrent scans cannot exceed a hard cap and duplicate calls cannot increment consumption twice.
 
-For metered subscriptions with administrator-enabled overage, DealGuard submits an idempotent event to Dodo's `/events/ingest` endpoint. The event includes `quantity` in metadata for the configured meter aggregation. Failed provider reports remain locally counted and are retried by the scheduled Worker using the same Dodo event ID.
+A capped scan reserves its active-deal and event capacity before assessments, alerts or HubSpot writes begin. A Dodo reporting outage does not take DealGuard offline: the local reservation remains authoritative and the scheduled Worker retries the same idempotent provider event.
+
+For metered subscriptions with administrator-enabled overage, DealGuard submits an idempotent event to Dodo's `/events/ingest` endpoint. Failed provider reports remain locally counted and are retried using the same Dodo event ID.
 
 ## Manual Enterprise contracts
 
@@ -91,7 +107,7 @@ Before release, complete:
 5. On-hold grace, recovery, failed mandate, cancellation and expiration.
 6. Out-of-order event delivery and stale-state rejection.
 7. Payment, refund and dispute events verified as entitlement no-ops.
-8. Metered event ingestion, quantity aggregation and idempotent retry.
-9. Concurrent hard-cap enforcement.
-10. Manual contract activation, expiry and allowance enforcement.
-11. Upgrade, downgrade and scheduled plan-change tests.
+8. Metered `sum` and `max` event ingestion, quantity aggregation and idempotent retry.
+9. Repeated-scan gauge validation and concurrent hard-cap enforcement.
+10. Provider plan preview, immediate change, scheduled change, ambiguous-response recovery and cancellation.
+11. Manual contract activation, expiry and allowance enforcement.

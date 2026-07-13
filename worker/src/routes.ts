@@ -1,6 +1,7 @@
 import { saveAssessmentContext } from './assessment-context.js';
 import { assessDealForPortal } from './assessment-service.js';
 import { exportAuditCsv, searchAuditEvents } from './audit.js';
+import { requireOperationalPermission } from './authorization.js';
 import { PLAN_LIMITS, REQUIRED_HUBSPOT_SCOPES } from './config.js';
 import { randomToken, sha256Hex } from './crypto.js';
 import { dashboardForPortal } from './dashboard.js';
@@ -208,6 +209,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   if (url.pathname === '/api/v1/integrations/slack') {
     if (request.method === 'GET') return json(await getSlackStatus(env, identity.portalId));
     if (request.method === 'DELETE') {
+      await requireOperationalPermission(env, identity, 'integration.manage');
       await disconnectSlack(env, identity);
       return json({ ok: true });
     }
@@ -216,11 +218,13 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
 
   if (url.pathname === '/api/v1/integrations/slack/connect') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    await requireOperationalPermission(env, identity, 'integration.manage');
     return json({ authorizeUrl: await createSlackAuthorization(env, identity) });
   }
 
   if (url.pathname === '/api/v1/integrations/slack/test') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    await requireOperationalPermission(env, identity, 'integration.manage');
     await sendSlackTest(env, identity);
     return json({ ok: true });
   }
@@ -232,11 +236,13 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
 
   if (url.pathname === '/api/v1/native-sync/provision') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    await requireOperationalPermission(env, identity, 'native_sync.manage');
     return json(await provisionNativeSync(env, identity));
   }
 
   if (url.pathname === '/api/v1/native-sync/backfill') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    await requireOperationalPermission(env, identity, 'native_sync.manage');
     const status = await getNativeSyncStatus(env, identity.portalId);
     if (!status.entitled || !status.enabled || status.status !== 'ready') {
       throw new AppError(409, 'native_sync_not_ready', 'Provision and enable native HubSpot property sync before starting a backfill.');
@@ -268,11 +274,14 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
       return json({ plan: credentials.tenant.plan, settings: credentials.settings });
     }
     if (request.method === 'PUT') {
+      await requireOperationalPermission(env, identity, 'settings.manage');
       const credentials = await repository.getCredentials(identity.portalId);
       const raw = await readJson<unknown>(request);
       const parsed = parseSettings(raw, credentials.tenant.plan);
       if (credentials.settings.governance.enabled) {
-        if (!parsed.governance.enabled) throw new AppError(409, 'governance_disable_forbidden', 'Enterprise governance cannot be disabled through general settings.');
+        if (JSON.stringify(parsed.governance) !== JSON.stringify(credentials.settings.governance)) {
+          throw new AppError(409, 'governance_settings_locked', 'Governance approval controls cannot be changed through general settings.');
+        }
         if (JSON.stringify(parsed.rules) !== JSON.stringify(credentials.settings.rules)) {
           throw new AppError(409, 'published_policy_required', 'Scoring rules are governed. Create, approve, and publish a policy version instead of editing live rules directly.');
         }
@@ -284,6 +293,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
 
   if (url.pathname === '/api/v1/scans') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    await requireOperationalPermission(env, identity, 'scan.run');
     const tenant = await repository.getTenant(identity.portalId);
     const minimumIntervalMs = PLAN_LIMITS[tenant.plan].minScanIntervalMinutes * 60_000;
     if (tenant.last_scan_at && Date.now() - Date.parse(tenant.last_scan_at) < minimumIntervalMs) {
@@ -299,6 +309,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
 
   if (url.pathname === '/api/v1/digest/test') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    await requireOperationalPermission(env, identity, 'digest.test');
     const credentials = await repository.getCredentials(identity.portalId);
     const recipients = credentials.settings.digest.recipients;
     if (recipients.length === 0) throw new AppError(400, 'digest_recipient_required', 'Configure at least one digest recipient first.');
@@ -310,6 +321,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
 
   if (url.pathname === '/api/v1/data') {
     if (request.method !== 'DELETE') return methodNotAllowed(['DELETE']);
+    await requireOperationalPermission(env, identity, 'data.delete');
     const body = await readJson<{ confirmation?: string }>(request);
     if (body.confirmation !== 'DELETE DEALGUARD DATA') throw new AppError(400, 'confirmation_required', 'Enter the exact deletion confirmation phrase.');
     await repository.softDeletePortal(identity);

@@ -1,0 +1,100 @@
+name: Live acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Acceptance profile
+        required: true
+        default: read-only
+        type: choice
+        options: [read-only, full]
+      base_url:
+        description: Deployed DealGuard Worker base URL
+        required: true
+        default: https://dealguard-api.rokad.co
+        type: string
+      portal_id:
+        description: HubSpot developer test portal ID
+        required: true
+        type: string
+      app_id:
+        description: HubSpot app ID
+        required: true
+        type: string
+      user_id:
+        description: HubSpot acceptance user ID
+        required: false
+        type: string
+      user_email:
+        description: HubSpot acceptance user email
+        required: true
+        type: string
+      expected_tier:
+        description: Expected commercial tier
+        required: false
+        type: choice
+        options: ['', free, growth, enterprise]
+      test_deal_id:
+        description: Existing test deal ID for live assessment
+        required: false
+        type: string
+      checkout_tier:
+        description: Checkout tier used by full profile
+        required: true
+        default: enterprise
+        type: choice
+        options: [growth, enterprise]
+      checkout_interval:
+        description: Checkout interval used by full profile
+        required: true
+        default: year
+        type: choice
+        options: [month, year]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dealguard-live-acceptance-${{ inputs.portal_id }}
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    environment: dealguard-acceptance
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run signed live acceptance
+        env:
+          ACCEPTANCE_PROFILE: ${{ inputs.profile }}
+          ACCEPTANCE_BASE_URL: ${{ inputs.base_url }}
+          ACCEPTANCE_PORTAL_ID: ${{ inputs.portal_id }}
+          ACCEPTANCE_USER_ID: ${{ inputs.user_id }}
+          ACCEPTANCE_USER_EMAIL: ${{ inputs.user_email }}
+          ACCEPTANCE_EXPECT_TIER: ${{ inputs.expected_tier }}
+          ACCEPTANCE_TEST_DEAL_ID: ${{ inputs.test_deal_id }}
+          ACCEPTANCE_CHECKOUT_TIER: ${{ inputs.checkout_tier }}
+          ACCEPTANCE_CHECKOUT_INTERVAL: ${{ inputs.checkout_interval }}
+          ACCEPTANCE_OPERATOR: ${{ github.actor }}
+          HUBSPOT_APP_ID: ${{ inputs.app_id }}
+          HUBSPOT_CLIENT_SECRET: ${{ secrets.HUBSPOT_CLIENT_SECRET }}
+          DODO_WEBHOOK_SECRET: ${{ secrets.DODO_WEBHOOK_SECRET }}
+        run: npm run acceptance:live
+      - name: Publish acceptance summary
+        if: always()
+        run: |
+          file=$(find artifacts/acceptance -name '*.md' -type f | head -1)
+          if [ -n "$file" ]; then cat "$file" >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dealguard-live-acceptance-${{ github.run_id }}
+          path: artifacts/acceptance/
+          if-no-files-found: error
+          retention-days: 30

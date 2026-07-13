@@ -11,7 +11,7 @@ import { dispatchEnterpriseAlerts, escalateUnacknowledgedAlerts } from './alerti
 import { escalateOverdueRemediations } from './remediation.js';
 import { runDueSyntheticChecks } from './reliability.js';
 import { Repository } from './repository.js';
-import { route } from './routes-v5.js';
+import { route } from './routes-v6.js';
 import { scanPortal } from './scanner.js';
 import { deleteExpiredSecureDownloads } from './secure-downloads.js';
 import type { Env, ExecutionContext, ScheduledEvent } from './types.js';

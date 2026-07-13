@@ -4,7 +4,10 @@ export const CORE_DEAL_PROPERTIES = [
   'dealname',
   'pipeline',
   'dealstage',
+  'dealtype',
   'hubspot_owner_id',
+  'hs_team_id',
+  'region',
   'amount',
   'closedate',
   'hs_next_step',
@@ -138,4 +141,4 @@ export const REQUIRED_HUBSPOT_SCOPES = [
   'crm.schemas.deals.write',
 ] as const;
 
-export const APP_VERSION = '1.4.0-beta.1';
+export const APP_VERSION = '2.0.0-rc.1';

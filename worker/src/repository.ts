@@ -1,3 +1,4 @@
+import { appendAuditChainEvent } from './audit-chain.js';
 import { DEFAULT_SETTINGS, PLAN_LIMITS } from './config.js';
 import { decryptSecret, encryptSecret } from './crypto.js';
 import { AppError } from './errors.js';
@@ -382,10 +383,18 @@ export class Repository {
   }
 
   async audit(portalId: string, userId: string | null, userEmail: string | null, action: string, metadata: unknown): Promise<void> {
+    const legacyEventId = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
     await this.env.DB.prepare(
       `INSERT INTO audit_events (id, portal_id, user_id, user_email, action, metadata_json, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).bind(crypto.randomUUID(), portalId, userId, userEmail, action, JSON.stringify(metadata ?? {}), new Date().toISOString()).run();
+    ).bind(legacyEventId, portalId, userId, userEmail, action, JSON.stringify(metadata ?? {}), createdAt).run();
+    const immutableEventId = await appendAuditChainEvent(this.env, {
+      portalId, action, actorUserId: userId, actorEmail: userEmail, source: 'repository',
+      metadata: { ...(metadata && typeof metadata === 'object' ? metadata as Record<string, unknown> : { value: metadata }), legacyEventId, legacyCreatedAt: createdAt },
+    });
+    await this.env.DB.prepare(`INSERT OR IGNORE INTO legacy_audit_promotions (legacy_event_id, immutable_event_id, promoted_at) VALUES (?, ?, ?)`)
+      .bind(legacyEventId, immutableEventId, new Date().toISOString()).run();
   }
 
   async softDeletePortal(identity: RequestIdentity): Promise<void> {

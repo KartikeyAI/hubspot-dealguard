@@ -6,11 +6,12 @@ import {
   createCheckoutSession,
   createCustomerPortalSession,
   getBillingStatus,
-  processStripeWebhook,
+  processDodoWebhook,
   requireCommercialTier,
   setManualSubscription,
-  verifyStripeWebhook,
+  verifyDodoWebhook,
   type CommercialTier,
+  type UsageMode,
 } from './billing.js';
 import { PLAN_LIMITS, REQUIRED_HUBSPOT_SCOPES } from './config.js';
 import { randomToken, sha256Hex } from './crypto.js';
@@ -18,6 +19,9 @@ import { dashboardForPortal } from './dashboard.js';
 import { finalizePortalDeletion } from './data-deletion.js';
 import { sendEmail } from './email.js';
 import { enterpriseOverview } from './enterprise-analytics.js';
+import { routeEnterpriseApi } from './enterprise-routes.js';
+import { resolveSegmentedRules } from './enterprise-policy.js';
+import { recordAssessmentHistory } from './enterprise-analytics-v2.js';
 import { AppError } from './errors.js';
 import {
   assignRole,
@@ -62,9 +66,10 @@ import {
   createRemediationCase,
   listRemediationCases,
   remediationSummary,
-  transitionRemediationCase,
 } from './remediation.js';
+import { transitionEnterpriseRemediation } from './remediation-enterprise.js';
 import { executeRemediationWorkflow } from './remediation-workflow.js';
+import { publicStatus } from './reliability.js';
 import { Repository } from './repository.js';
 import { assessDeal } from './scoring.js';
 import { scanPortal } from './scanner.js';
@@ -105,7 +110,8 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   const repository = new Repository(env);
 
   if (url.pathname === '/' && request.method === 'GET') return html(landingPage(env));
-  if (url.pathname === '/health' && request.method === 'GET') return json({ status: 'ok', service: 'dealguard-api' });
+  if (url.pathname === '/health' && request.method === 'GET') return json({ status: 'ok', service: 'dealguard-api', version: '2.0.0-rc.1' });
+  if (url.pathname === '/status' && request.method === 'GET') return json(await publicStatus(env));
   if (url.pathname === '/docs' && request.method === 'GET') return html(docsPage(env));
   if (url.pathname === '/privacy' && request.method === 'GET') return html(privacyPage(env));
   if (url.pathname === '/terms' && request.method === 'GET') return html(termsPage(env));
@@ -156,13 +162,12 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     return redirect(`${env.APP_BASE_URL}/integrations/slack/success`);
   }
 
-  if (url.pathname === '/webhooks/stripe') {
+  if (url.pathname === '/webhooks/dodo') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
-    const rawBody = await verifyStripeWebhook(request, env);
-    ctx.waitUntil(processStripeWebhook(env, rawBody).catch((error) => {
-      console.error(JSON.stringify({ level: 'error', task: 'stripe_webhook', error: error instanceof Error ? error.message : String(error) }));
-    }));
-    return json({ accepted: true }, 202);
+    const verified = await verifyDodoWebhook(request, env);
+    // Process before returning success so Dodo retries transient failures.
+    await processDodoWebhook(env, verified.rawBody, verified.webhookId);
+    return json({ accepted: true });
   }
 
   if (url.pathname === '/webhooks/hubspot') {
@@ -200,9 +205,18 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     const subscriptionMatch = url.pathname.match(/^\/internal\/portals\/(\d+)\/subscription$/);
     if (subscriptionMatch) {
       if (request.method !== 'PUT') return methodNotAllowed(['PUT']);
-      const body = await readJson<{ tier?: CommercialTier; currentPeriodEnd?: string | null }>(request);
+      const body = await readJson<{
+        tier?: CommercialTier; currentPeriodEnd?: string | null; contractReference?: string | null;
+        purchaseOrderReference?: string | null; currency?: string; usageMode?: UsageMode; overageEnabled?: boolean;
+      }>(request);
       if (!body.tier) throw new AppError(400, 'subscription_tier_required', 'A commercial tier is required.');
-      await setManualSubscription(env, subscriptionMatch[1]!, body.tier, body.currentPeriodEnd ?? null);
+      await setManualSubscription(env, subscriptionMatch[1]!, body.tier, body.currentPeriodEnd ?? null, {
+        ...(body.contractReference !== undefined ? { contractReference: body.contractReference } : {}),
+        ...(body.purchaseOrderReference !== undefined ? { purchaseOrderReference: body.purchaseOrderReference } : {}),
+        ...(body.currency !== undefined ? { currency: body.currency } : {}),
+        ...(body.usageMode !== undefined ? { usageMode: body.usageMode } : {}),
+        ...(body.overageEnabled !== undefined ? { overageEnabled: body.overageEnabled } : {}),
+      });
       return json({ ok: true, portalId: subscriptionMatch[1], tier: body.tier });
     }
     throw new AppError(404, 'not_found', 'Endpoint not found.');
@@ -211,6 +225,9 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   if (!url.pathname.startsWith('/api/v1/')) throw new AppError(404, 'not_found', 'Endpoint not found.');
   const identity = await validateHubSpotRequest(request, env);
 
+  const enterpriseResponse = await routeEnterpriseApi(request, env, identity, ctx);
+  if (enterpriseResponse) return enterpriseResponse;
+
   if (url.pathname === '/api/v1/billing') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
     return json(await getBillingStatus(env, identity.portalId));
@@ -218,8 +235,17 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   if (url.pathname === '/api/v1/billing/checkout') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     await requireOperationalPermission(env, identity, 'billing.manage');
-    const body = await readJson<{ tier?: CommercialTier; interval?: 'month' | 'year' }>(request);
-    return json(await createCheckoutSession(env, identity, body.tier ?? 'growth', body.interval === 'year' ? 'year' : 'month'));
+    const body = await readJson<{ tier?: CommercialTier; interval?: 'month' | 'year'; usageMode?: UsageMode; overageEnabled?: boolean }>(request);
+    return json(await createCheckoutSession(
+      env,
+      identity,
+      body.tier ?? 'growth',
+      body.interval === 'year' ? 'year' : 'month',
+      {
+        ...(body.usageMode !== undefined ? { usageMode: body.usageMode } : {}),
+        ...(body.overageEnabled !== undefined ? { overageEnabled: body.overageEnabled } : {}),
+      },
+    ));
   }
   if (url.pathname === '/api/v1/billing/portal') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
@@ -315,8 +341,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   if (remediationRoute) {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     await requireCommercialTier(env, identity.portalId, 'enterprise');
-    await requireOperationalPermission(env, identity, 'remediation.manage');
-    return json(await transitionRemediationCase(env, identity, remediationRoute.id, remediationRoute.action, await readJson<unknown>(request)));
+    return json(await transitionEnterpriseRemediation(env, identity, remediationRoute.id, remediationRoute.action, await readJson<unknown>(request)));
   }
 
   if (url.pathname === '/api/v1/operations/health') {
@@ -486,9 +511,12 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     if (action === 'handoff') {
       if (request.method !== 'POST') return methodNotAllowed(['POST']);
       const client = await HubSpotClient.forPortal(env, identity.portalId);
-      const assessment = assessDeal(await client.getDeal(dealId), client.settings.rules);
+      const deal = await client.getDeal(dealId);
+      const resolved = await resolveSegmentedRules(env, identity.portalId, client.settings.rules, deal);
+      const assessment = assessDeal(deal, resolved.rules);
       await repository.saveAssessment(identity.portalId, assessment);
       await saveAssessmentContext(env, identity.portalId, assessment);
+      await recordAssessmentHistory(env, identity.portalId, assessment, { trigger: 'handoff', properties: deal.properties, policyId: resolved.policyId });
       await repository.confirmHandoff(identity, dealId, assessment);
       ctx.waitUntil(notifyHandoffConfirmed(env, identity.portalId, assessment, client.settings, client.plan).catch((error) => {
         console.error(JSON.stringify({ level: 'error', task: 'slack_handoff_confirmation', portalId: identity.portalId, dealId, error: error instanceof Error ? error.message : String(error) }));

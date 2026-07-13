@@ -17,6 +17,7 @@ import type {
 
 const API_BASE = 'https://api.hubapi.com';
 const ALLOWED_NATIVE_PROPERTY_NAMES = new Set<string>(DEALGUARD_NATIVE_PROPERTY_NAMES);
+const PROPERTY_PATTERN = /^[a-zA-Z][a-zA-Z0-9_]{0,127}$/;
 
 interface AssociationBatchResponse {
   results?: Array<{ from: { id: string }; to: Array<{ toObjectId: number }> }>;
@@ -24,6 +25,14 @@ interface AssociationBatchResponse {
 
 interface AssociationLabelResponse {
   results?: Array<{ category: string; typeId: number; label: string | null }>;
+}
+
+function validatedReadProperties(properties: string[]): string[] {
+  const invalid = properties.filter((property) => !PROPERTY_PATTERN.test(property));
+  if (invalid.length > 0) {
+    throw new AppError(500, 'hubspot_property_read_blocked', 'DealGuard blocked invalid HubSpot property names.', { invalid });
+  }
+  return [...new Set(properties)].slice(0, 500);
 }
 
 export class HubSpotClient {
@@ -203,6 +212,9 @@ export class HubSpotClient {
     const labels = await this.request<AssociationLabelResponse>('/crm/v4/associations/tasks/deals/labels');
     const association = (labels.results ?? []).find((item) => item.category === 'HUBSPOT_DEFINED' && item.label === null)
       ?? (labels.results ?? []).find((item) => item.category === 'HUBSPOT_DEFINED');
+    if (!association) {
+      throw new AppError(409, 'task_deal_association_missing', 'HubSpot did not expose a task-to-deal association definition. DealGuard will not create an unassociated remediation task.');
+    }
     const properties: Record<string, string> = {
       hs_timestamp: input.dueAt,
       hs_task_subject: input.subject.slice(0, 255),
@@ -216,12 +228,10 @@ export class HubSpotClient {
       method: 'POST',
       body: JSON.stringify({
         properties,
-        ...(association ? {
-          associations: [{
-            to: { id: input.dealId },
-            types: [{ associationCategory: association.category, associationTypeId: association.typeId }],
-          }],
-        } : {}),
+        associations: [{
+          to: { id: input.dealId },
+          types: [{ associationCategory: association.category, associationTypeId: association.typeId }],
+        }],
       }),
     });
     return task.id;
@@ -248,11 +258,20 @@ export class HubSpotClient {
     return map;
   }
 
-  async getDeal(dealId: string, stageMap?: Map<string, StageInfo>): Promise<NormalizedDeal> {
+  async getDeal(
+    dealId: string,
+    stageMap?: Map<string, StageInfo>,
+    extraProperties: string[] = [],
+  ): Promise<NormalizedDeal> {
     const map = stageMap ?? await this.buildStageMap();
     const stageProperties = [...map.values()].map((stage) => stage.enteredAtProperty);
     const customProperties = this.settings.rules.customRequiredProperties.map((rule) => rule.property);
-    const properties = [...new Set([...CORE_DEAL_PROPERTIES, ...stageProperties, ...customProperties])].join(',');
+    const properties = validatedReadProperties([
+      ...CORE_DEAL_PROPERTIES,
+      ...stageProperties,
+      ...customProperties,
+      ...extraProperties,
+    ]).join(',');
     const result = await this.request<HubSpotObject>(
       `/crm/v3/objects/deals/${encodeURIComponent(dealId)}?properties=${encodeURIComponent(properties)}&associations=contacts,companies&archived=false`,
     );
@@ -266,11 +285,16 @@ export class HubSpotClient {
     };
   }
 
-  async listDeals(maxDeals: number): Promise<NormalizedDeal[]> {
+  async listDeals(maxDeals: number, extraProperties: string[] = []): Promise<NormalizedDeal[]> {
     const stageMap = await this.buildStageMap();
     const stageProperties = [...stageMap.values()].map((stage) => stage.enteredAtProperty);
     const customProperties = this.settings.rules.customRequiredProperties.map((rule) => rule.property);
-    const properties = [...new Set([...CORE_DEAL_PROPERTIES, ...stageProperties, ...customProperties])];
+    const properties = validatedReadProperties([
+      ...CORE_DEAL_PROPERTIES,
+      ...stageProperties,
+      ...customProperties,
+      ...extraProperties,
+    ]);
     const closedLostStageIds = [...stageMap.values()].filter((stage) => stage.isClosed && !stage.isWon).map((stage) => stage.id);
     const deals: HubSpotObject[] = [];
     let after: string | undefined;

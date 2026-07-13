@@ -2,7 +2,7 @@
   "uid": "dealguard-enterprise-home",
   "type": "page",
   "config": {
-    "entrypoint": "/app/pages/EnterpriseHome.tsx",
+    "entrypoint": "/app/pages/EnterpriseHomeV3.tsx",
     "location": "home"
   }
 }

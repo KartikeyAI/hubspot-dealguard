@@ -1,14 +1,59 @@
 import { saveAssessmentContext } from './assessment-context.js';
+import { recordUsageAtomic } from './billing-usage.js';
 import { PLAN_LIMITS } from './config.js';
 import { captureAnalyticsSnapshot } from './enterprise-analytics.js';
+import { recordAssessmentHistory } from './enterprise-analytics-v2.js';
+import { AppError } from './errors.js';
 import { recordServiceFailure, recordServiceSuccess } from './health.js';
 import { HubSpotClient } from './hubspot.js';
 import { syncAssessmentBatchIfEnabled } from './native-sync.js';
+import { policyDimensionPropertyNames } from './policy-dimensions.js';
+import { resolveSegmentedRulesForDeal } from './policy-runtime.js';
 import { syncAssessmentRemediations } from './remediation.js';
+import { getScanCheckpoint, recordOperationalMetric, saveScanCheckpoint } from './reliability.js';
 import { Repository } from './repository.js';
 import { assessDeal } from './scoring.js';
 import { notifyAssessmentTransition } from './slack.js';
 import type { DealAssessment, Env } from './types.js';
+
+interface ScanCheckpointState {
+  ready?: number;
+  atRisk?: number;
+  critical?: number;
+  incompleteHandoffs?: number;
+  processedDealIds?: string[];
+}
+
+async function reserveScanUsage(
+  env: Env,
+  portalId: string,
+  scanId: string,
+  trigger: string,
+  activeDealCount: number,
+  eventCount: number,
+): Promise<void> {
+  for (const item of [
+    { metric: 'active_deal_overage' as const, quantity: activeDealCount, key: `scan-deals:${scanId}` },
+    { metric: 'event_overage' as const, quantity: eventCount, key: `scan-events:${scanId}` },
+  ]) {
+    try {
+      await recordUsageAtomic(env, portalId, item.metric, item.quantity, item.key, {
+        trigger,
+        scan_id: scanId,
+      });
+    } catch (error) {
+      if (error instanceof AppError && error.status === 402) throw error;
+      console.error(JSON.stringify({
+        level: 'error',
+        task: 'scan_usage_reporting',
+        portalId,
+        scanId,
+        metric: item.metric,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }
+}
 
 export async function scanPortal(
   env: Env,
@@ -16,21 +61,48 @@ export async function scanPortal(
   trigger: 'manual' | 'scheduled' | 'install',
   existingScanId?: string,
 ) {
+  const startedAt = Date.now();
   const repository = new Repository(env);
   const client = await HubSpotClient.forPortal(env, portalId);
   const scanId = existingScanId ?? await repository.startScan(portalId, trigger);
+  const leaseOwner = crypto.randomUUID();
   try {
-    const deals = await client.listDeals(PLAN_LIMITS[client.plan].maxDealsPerScan);
+    const dimensionProperties = await policyDimensionPropertyNames(env, portalId);
+    const deals = await client.listDeals(PLAN_LIMITS[client.plan].maxDealsPerScan, dimensionProperties);
+    const activeDealCount = deals.filter((deal) => !deal.stage?.isClosed).length;
+    await reserveScanUsage(env, portalId, scanId, trigger, activeDealCount, deals.length);
+
+    const checkpoint = await getScanCheckpoint(env, scanId, portalId);
+    const state = checkpoint?.state && typeof checkpoint.state === 'object'
+      ? checkpoint.state as ScanCheckpointState
+      : {};
+    const processedDealIds = new Set((state.processedDealIds ?? []).filter((id) => typeof id === 'string'));
     const nativeUpdates: Array<{ assessment: DealAssessment; handoffStatus?: string | null }> = [];
-    let ready = 0;
-    let atRisk = 0;
-    let critical = 0;
-    let incompleteHandoffs = 0;
+    let ready = Number(state.ready ?? 0);
+    let atRisk = Number(state.atRisk ?? 0);
+    let critical = Number(state.critical ?? 0);
+    let incompleteHandoffs = Number(state.incompleteHandoffs ?? 0);
+    let processedSinceCheckpoint = 0;
+    await saveScanCheckpoint(env, scanId, portalId, {
+      processedCount: processedDealIds.size,
+      lastDealId: checkpoint?.lastDealId ? String(checkpoint.lastDealId) : null,
+      state: { ready, atRisk, critical, incompleteHandoffs, processedDealIds: [...processedDealIds] },
+      leaseOwner,
+      leaseSeconds: 600,
+    });
+
     for (const deal of deals) {
+      if (processedDealIds.has(deal.id)) continue;
       const previous = await repository.getAssessment(portalId, deal.id);
-      const assessment = assessDeal(deal, client.settings.rules);
+      const policy = await resolveSegmentedRulesForDeal(env, portalId, client.settings.rules, deal);
+      const assessment = assessDeal(deal, policy.rules);
       await repository.saveAssessment(portalId, assessment);
       await saveAssessmentContext(env, portalId, assessment);
+      await recordAssessmentHistory(env, portalId, assessment, {
+        trigger,
+        properties: deal.properties,
+        policyId: policy.policyId,
+      });
       const stored = await repository.getAssessment(portalId, deal.id);
       nativeUpdates.push({ assessment, ...(stored ? { handoffStatus: stored.handoffStatus } : {}) });
       try {
@@ -47,22 +119,39 @@ export async function scanPortal(
       if (assessment.status === 'at_risk') atRisk += 1;
       if (assessment.status === 'critical') critical += 1;
       if (assessment.isWon && stored?.handoffStatus !== 'confirmed') incompleteHandoffs += 1;
+      processedDealIds.add(deal.id);
+      processedSinceCheckpoint += 1;
+      if (processedSinceCheckpoint >= 25 || processedDealIds.size === deals.length) {
+        await saveScanCheckpoint(env, scanId, portalId, {
+          processedCount: processedDealIds.size,
+          lastDealId: deal.id,
+          state: { ready, atRisk, critical, incompleteHandoffs, processedDealIds: [...processedDealIds] },
+          leaseOwner,
+          leaseSeconds: 600,
+        });
+        processedSinceCheckpoint = 0;
+      }
     }
     try {
       await syncAssessmentBatchIfEnabled(env, client, nativeUpdates);
     } catch (error) {
       console.error(JSON.stringify({ level: 'error', task: 'native_scan_sync', portalId, scanId, error: error instanceof Error ? error.message : String(error) }));
     }
-    const counts = { scanned: deals.length, ready, atRisk, critical, incompleteHandoffs };
+    const counts = { scanned: processedDealIds.size, ready, atRisk, critical, incompleteHandoffs };
     await repository.completeScan(scanId, portalId, client.plan, counts);
+    await env.DB.prepare(`DELETE FROM scan_checkpoints WHERE scan_id = ? AND portal_id = ?`).bind(scanId, portalId).run();
     await captureAnalyticsSnapshot(env, portalId);
     await recordServiceSuccess(env, portalId, 'scan');
+    await recordOperationalMetric(env, { portalId, service: 'scan', metric: 'success', value: 1, dimensions: { trigger } });
+    await recordOperationalMetric(env, { portalId, service: 'scan', metric: 'latency_ms', value: Date.now() - startedAt, dimensions: { trigger, scanned: processedDealIds.size } });
     await repository.audit(portalId, null, null, 'scan.completed', { scanId, trigger, ...counts });
     return { scanId, ...counts };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unexpected scan failure';
     await repository.failScan(scanId, portalId, message);
     await recordServiceFailure(env, portalId, error);
+    await recordOperationalMetric(env, { portalId, service: 'scan', metric: 'success', value: 0, dimensions: { trigger, error: message.slice(0, 500) } });
+    await recordOperationalMetric(env, { portalId, service: 'scan', metric: 'latency_ms', value: Date.now() - startedAt, dimensions: { trigger } });
     throw error;
   }
 }

@@ -1,37 +1,134 @@
-# Deployment and HubSpot enterprise test setup
+# Deployment and enterprise release operations
 
-## 1. Install tools
+DealGuard `2.0.0-rc.1` uses Cloudflare Workers and D1, HubSpot developer platform `2026.03`, Dodo Payments, Slack, Resend, and optional customer-managed delivery/SIEM endpoints.
 
-```bash
-npm install
-npm install -g @hubspot/cli@latest
+Repository CI proves source consistency. It does not replace authenticated HubSpot upload, Dodo test-mode validation, remote migration evidence, or production acceptance.
+
+## 1. Release environments
+
+Create protected GitHub Environments:
+
+- `dealguard-staging`
+- `dealguard-production`
+- `dealguard-acceptance`
+
+Production should require an approving reviewer. Do not expose environment secrets to pull-request workflows from untrusted forks.
+
+### Environment variables
+
+Configure these GitHub Environment variables for staging and production:
+
+```text
+APP_BASE_URL
+HUBSPOT_APP_ID
+HUBSPOT_CLIENT_ID
+D1_DATABASE_ID
+SLACK_CLIENT_ID
+DODO_ENVIRONMENT
+DODO_GROWTH_MONTHLY_PRODUCT_ID
+DODO_GROWTH_YEARLY_PRODUCT_ID
+DODO_ENTERPRISE_MONTHLY_PRODUCT_ID
+DODO_ENTERPRISE_YEARLY_PRODUCT_ID
+DODO_AI_CREDIT_EVENT_NAME
+DODO_ACTIVE_DEAL_EVENT_NAME
+DODO_EVENT_OVERAGE_EVENT_NAME
+DODO_RETENTION_EVENT_NAME
 ```
 
-The repository targets HubSpot developer platform `2026.03`.
+`DODO_ENVIRONMENT` must be `test` in staging and `live` only after Dodo production approval.
 
-## 2. Create and migrate D1
+### Environment secrets
+
+Configure:
+
+```text
+CLOUDFLARE_ACCOUNT_ID
+CLOUDFLARE_API_TOKEN
+HUBSPOT_CLIENT_SECRET
+HUBSPOT_CLI_CONFIG_B64
+TOKEN_ENCRYPTION_KEY
+ADMIN_API_KEY
+RESEND_API_KEY
+SLACK_CLIENT_SECRET
+DODO_API_KEY
+DODO_WEBHOOK_SECRET
+```
+
+The Cloudflare token must be restricted to the required Workers and D1 resources. `TOKEN_ENCRYPTION_KEY` must contain at least 32 characters. Store the HubSpot CLI configuration as base64 only in the protected environment; never commit it.
+
+The `dealguard-acceptance` environment requires at minimum:
+
+```text
+HUBSPOT_CLIENT_SECRET
+DODO_WEBHOOK_SECRET
+```
+
+## 2. Release readiness workflow
+
+Run **Release readiness** from GitHub Actions before any account mutation.
+
+The workflow:
+
+1. runs Worker and all HubSpot-extension typechecks;
+2. runs the automated test suite;
+3. validates required environment configuration by presence only;
+4. validates package/runtime version consistency;
+5. validates HubSpot manifest domains and marketplace distribution;
+6. verifies migrations are contiguous through `0013_policy_dimension_mappings.sql`;
+7. rejects stale Stripe deployment references;
+8. renders an ephemeral Wrangler configuration;
+9. builds the Worker with `wrangler deploy --dry-run`;
+10. publishes only non-sensitive checksums and preflight evidence.
+
+The workflow never writes secret values into artifacts and does not deploy or mutate D1.
+
+Equivalent local command:
+
+```bash
+npm run release:preflight
+npm run release:bundle
+```
+
+## 3. Database preparation
+
+Create the production database once:
 
 ```bash
 npx wrangler d1 create dealguard-production
 ```
 
-Copy the database ID into `wrangler.toml`, then apply all migrations through enterprise operations:
+Store the returned database ID in the protected environment and production Wrangler configuration. DealGuard requires all migrations from `0001_initial.sql` through:
 
-```bash
-npm run db:migrate:remote
+```text
+0007_enterprise_complete_dodo.sql
+0008_secure_exports_and_audit_promotion.sql
+0009_dodo_event_ordering_and_usage_counters.sql
+0010_dodo_plan_change_state.sql
+0011_preserve_dodo_scheduled_plan_state.sql
+0012_change_approval_execution.sql
+0013_policy_dimension_mappings.sql
 ```
 
-Confirm `0004_native_sync.sql`, `0005_enterprise_governance.sql`, and `0006_enterprise_operations.sql` are applied before exposing v1.4 controls.
+Before remote migration:
 
-## 3. Configure Worker secrets
+1. create an encrypted D1 export or verified Cloudflare backup;
+2. record the current Worker deployment/version;
+3. apply migrations in staging;
+4. execute staging acceptance;
+5. apply migrations in production only after review.
 
-Generate an encryption key:
+Apply migrations with the rendered deployment configuration:
 
 ```bash
-openssl rand -base64 32
+npx wrangler d1 migrations apply dealguard-production --remote \
+  --config .release/wrangler.toml
 ```
 
-Set core and integration secrets:
+Never attempt automatic destructive database rollback. Restore into an isolated database first, verify integrity, and switch bindings only through an approved incident procedure.
+
+## 4. Worker secrets and variables
+
+Set Worker secrets without storing them in shell history or repository files:
 
 ```bash
 npx wrangler secret put HUBSPOT_CLIENT_ID
@@ -41,118 +138,175 @@ npx wrangler secret put ADMIN_API_KEY
 npx wrangler secret put RESEND_API_KEY
 npx wrangler secret put SLACK_CLIENT_ID
 npx wrangler secret put SLACK_CLIENT_SECRET
-npx wrangler secret put STRIPE_SECRET_KEY
-npx wrangler secret put STRIPE_WEBHOOK_SECRET
+npx wrangler secret put DODO_API_KEY
+npx wrangler secret put DODO_WEBHOOK_SECRET
+npx wrangler secret put DODO_ENVIRONMENT
+npx wrangler secret put DODO_GROWTH_MONTHLY_PRODUCT_ID
+npx wrangler secret put DODO_GROWTH_YEARLY_PRODUCT_ID
+npx wrangler secret put DODO_ENTERPRISE_MONTHLY_PRODUCT_ID
+npx wrangler secret put DODO_ENTERPRISE_YEARLY_PRODUCT_ID
+npx wrangler secret put DODO_AI_CREDIT_EVENT_NAME
+npx wrangler secret put DODO_ACTIVE_DEAL_EVENT_NAME
+npx wrangler secret put DODO_EVENT_OVERAGE_EVENT_NAME
+npx wrangler secret put DODO_RETENTION_EVENT_NAME
 ```
 
-Configure these non-secret Worker variables or secrets according to the deployment policy:
+The repository template intentionally retains placeholder app and D1 identifiers. Release preflight renders temporary values into `.release/wrangler.toml`; do not commit the rendered file.
+
+## 5. Dodo Payments setup
+
+Create four recurring products:
+
+- Growth monthly
+- Growth annual
+- Enterprise monthly
+- Enterprise annual
+
+Configure the Dodo customer portal and the webhook endpoint:
 
 ```text
-STRIPE_GROWTH_MONTHLY_PRICE_ID
-STRIPE_GROWTH_YEARLY_PRICE_ID
-STRIPE_ENTERPRISE_MONTHLY_PRICE_ID
-STRIPE_ENTERPRISE_YEARLY_PRICE_ID
+https://dealguard-api.rokad.co/webhooks/dodo
 ```
 
-`RESEND_API_KEY`, Slack, and Stripe can remain unset only while their features are disabled. Enterprise release acceptance requires them.
+The Worker accepts only verified Dodo Standard Webhooks. Only `subscription.*` events can mutate commercial entitlement. Payment, refund, and dispute events are retained or ignored according to their operational purpose but cannot activate or downgrade access.
 
-## 4. Configure Stripe
+Validate in test mode:
 
-1. Create four recurring Prices: Growth monthly/yearly and Enterprise monthly/yearly.
-2. Configure the Stripe Customer Portal for subscription, payment-method, invoice, and cancellation management.
-3. Add webhook endpoint `https://dealguard-api.rokad.co/webhooks/stripe`.
-4. Subscribe to:
-   - `checkout.session.completed`
-   - `customer.subscription.created`
-   - `customer.subscription.updated`
-   - `customer.subscription.deleted`
-5. Store the webhook signing secret in `STRIPE_WEBHOOK_SECRET`.
-6. Confirm portal and tier metadata is visible on Checkout and Subscription objects.
+1. all four hosted checkouts;
+2. Customer Portal access;
+3. activation, renewal, `past_due`, hold, recovery, cancellation, and expiry;
+4. immediate and next-billing-date plan changes;
+5. cancellation of a scheduled change;
+6. stale/out-of-order event rejection;
+7. event idempotency;
+8. `sum` meters for events and AI credits;
+9. `max` meters for active deals and retained storage;
+10. capped mode, hard limits, and optional overage;
+11. manual Enterprise contracts and expiry.
 
-DealGuard uses Stripe-hosted Checkout and Customer Portal. It does not collect or store card data.
+Do not enable live Dodo products until test-mode evidence is attached to the release record.
 
-## 5. Deploy backend
+## 6. Worker deployment
+
+Deploy only from a reviewed commit that passed release readiness:
 
 ```bash
-npm run deploy:worker
+npx wrangler deploy --config .release/wrangler.toml
 ```
 
-Map the Worker to `dealguard-api.rokad.co`, then verify:
+Verify:
 
 ```bash
-curl https://dealguard-api.rokad.co/health
+curl --fail https://dealguard-api.rokad.co/health
+curl --fail https://dealguard-api.rokad.co/status
 ```
 
-Confirm the scheduled trigger is enabled because scanning, overdue-case escalation, outbox delivery, retry, digests, and maintenance depend on cron execution.
+The `/health` version must exactly match `package.json`. Confirm the 15-minute cron is enabled because scans, SLA escalation, outbox dispatch, SIEM delivery, synthetic checks, billing retries, digests, retention, audit promotion, secure-download cleanup, and maintenance depend on scheduled execution.
 
-## 6. Upload HubSpot project
+## 7. HubSpot project upload
+
+Authenticate locally or load the protected HubSpot CLI configuration, then run:
 
 ```bash
-hs account auth
+npm install -g @hubspot/cli@latest
 npm run hubspot:deps
 npm run hubspot:upload
 hs project open
 ```
 
-Copy the generated app ID, client ID, and client secret into Worker configuration. Validate both workflow action schemas and App Home during authenticated upload; JSON validation in CI is not HubSpot platform-schema validation.
+Authenticated upload must validate:
 
-## 7. Reauthorize installations
+- App Home V3
+- deal readiness card
+- settings extension
+- webhook subscriptions
+- **Assess deal with DealGuard** workflow action
+- **Create DealGuard remediation** workflow action
+- OAuth redirects and permitted fetch URL
 
-v1.4 requires:
+JSON parsing in repository CI is not HubSpot platform-schema approval.
 
-- `crm.objects.deals.read`
-- `crm.objects.deals.write`
-- `crm.objects.contacts.read`
-- `crm.objects.companies.read`
-- `crm.objects.tasks.write`
-- `crm.schemas.deals.read`
-- `crm.schemas.deals.write`
+## 8. HubSpot scopes and reauthorization
 
-The task-write scope is used only when an administrator, assessment rule, or workflow explicitly creates a DealGuard remediation task. DealGuard does not modify core deal fields.
+Current required scopes:
 
-## 8. Validate native reporting and governance
+```text
+crm.objects.deals.read
+crm.objects.deals.write
+crm.objects.contacts.read
+crm.objects.companies.read
+crm.objects.tasks.write
+crm.schemas.deals.read
+crm.schemas.deals.write
+```
 
-1. Provision all seven `dealguard_*` properties.
-2. Enable native write-back and run a controlled backfill.
-3. Verify lists, saved views, reports, workflow branches, and both workflow actions.
-4. Enable enterprise governance under an active manual or Stripe Enterprise entitlement.
-5. Assign separate policy-creator and policy-approver users.
-6. Simulate, approve, publish, and roll back a policy revision.
-7. Verify direct live-rule editing is blocked.
+Existing installations must reauthorize after scope changes. DealGuard writes only its namespaced derived properties and explicitly requested remediation tasks; it does not autonomously rewrite core commercial fields.
 
-## 9. Validate remediation
+## 9. Signed live acceptance
 
-1. Create a critical deal issue and run an assessment.
-2. Confirm one active remediation case is created for the deal and issue code.
-3. Confirm the associated HubSpot task has subject, body, due time, priority, owner, and deal association.
-4. Acknowledge, start, resolve, and reopen cases from App Home.
-5. Allow a test SLA to expire and confirm scheduled escalation to `overdue`.
-6. Remove the underlying assessment issue and confirm an assessment-created case resolves automatically.
-7. Execute **Create DealGuard remediation** from a deal-based workflow and validate outputs.
+After deployment and HubSpot installation, run **Live acceptance** using the protected `dealguard-acceptance` environment.
 
-## 10. Validate delivery reliability
+Use `read-only` first, then `full`. The full profile can create an uncompleted checkout session, run a scan, assess a test deal, preview a plan change, validate Dodo signature isolation, and verify single-use exports. It does not pay, cancel, delete tenant data, publish policy, change roles, or mutate a subscription plan.
 
-1. Create a Microsoft Teams Workflow using the Teams webhook trigger and configure its HTTPS URL as a DealGuard destination.
-2. Create an email destination.
-3. Create a generic webhook destination and verify `X-DealGuard-Signature` using the configured secret.
-4. Route events by event type, severity, and pipeline.
-5. Force endpoint failures and confirm retries use increasing delay.
-6. Confirm the eighth failure becomes a dead letter.
-7. Restore the endpoint and replay the dead letter from App Home.
-8. Inspect delivery-attempt history and per-portal health.
+Evidence artifacts are redacted and retained for 30 days. Attach the successful workflow run to the release record.
 
-## 11. Validate billing
+## 10. Manual enterprise acceptance
 
-1. Start Growth and Enterprise monthly/annual Checkout sessions.
-2. Confirm signed webhooks update subscription state and internal entitlements.
-3. Open Stripe Customer Portal and test payment method, invoice, cancellation, and renewal behavior.
-4. Simulate `past_due` and confirm the seven-day grace window.
-5. Simulate cancellation or unpaid status and confirm Enterprise-only mutations are blocked.
-6. Apply a manual Enterprise contract through the authenticated internal endpoint and confirm entitlement.
+Complete the remaining account-bound tests:
 
-## 12. Data ownership and removal
+### Governance and analytics
 
-Deleting DealGuard data removes Rokad-hosted tenant data, assessments, remediation cases, destinations, subscriptions, integration credentials, delivery history, and operational records. DealGuard property values and tasks already written to HubSpot remain customer-controlled CRM data.
+- configure team, region, and deal-type mappings;
+- simulate with production-equivalent segmentation;
+- submit with user A and approve with user B;
+- publish and roll back;
+- verify scoped roles and redacted App Home reads;
+- export analytics and policy packages through single-use links.
+
+### Remediation
+
+- create cases from assessments and workflow actions;
+- add comments and evidence;
+- bulk assign and create HubSpot tasks;
+- resolve, waive, close, and reopen;
+- verify SLA escalation and MTTR.
+
+### Delivery
+
+- configure multiple Slack, Teams, email, and signed webhook channels;
+- test pipeline/team/owner/region routing;
+- test quiet hours and calendars;
+- force retries, dead letters, acknowledgement, and replay;
+- verify SIEM delivery.
+
+### Compliance and reliability
+
+- verify the audit hash chain;
+- export CSV, JSON, and JSONL;
+- create and release a legal hold through two-person approval;
+- run synthetic checks;
+- interrupt and resume a scan;
+- recover stale leases;
+- restore a backup into an isolated environment;
+- execute the disaster-recovery procedure;
+- verify customer-visible incident history.
+
+## 11. Rollback and incident boundary
+
+For application regression:
+
+1. stop further releases;
+2. identify the previous known-good Worker deployment;
+3. roll back Worker code through Cloudflare deployment history;
+4. do not reverse D1 migrations automatically;
+5. run read-only acceptance;
+6. open an incident and preserve logs/evidence.
+
+For data integrity issues, restore only into an isolated D1 database, verify portal counts, audit continuity, subscription state, and policy state, then switch production bindings through an approved change.
+
+## 12. Data ownership
+
+Deleting Rokad-hosted DealGuard data removes tenant configuration, derived assessments, remediation records, destinations, subscriptions, credentials, delivery history, and operational data subject to active legal holds. DealGuard values and tasks already written into HubSpot remain customer-controlled CRM data.
 
 ## 13. Local development
 
@@ -163,4 +317,4 @@ npm run db:migrate:local
 npm run dev:worker
 ```
 
-HubSpot UI extensions cannot permit localhost directly. Use `hs project dev` with the HubSpot local proxy or a temporary HTTPS Worker preview URL listed under `permittedUrls.fetch`.
+HubSpot UI extensions cannot fetch arbitrary localhost origins. Use `hs project dev` with HubSpot’s local proxy or an approved temporary HTTPS Worker URL included in the app’s permitted fetch URLs.

@@ -9,3 +9,5 @@ dist/
 .DS_Store
 src/app/**/node_modules/
 package-lock.json
+artifacts/acceptance/
+.release/

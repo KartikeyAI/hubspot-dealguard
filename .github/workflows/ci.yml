@@ -16,12 +16,25 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --ignore-scripts
-      - run: npm install --ignore-scripts --prefix src/app/cards
-      - run: npm install --ignore-scripts --prefix src/app/settings
-      - run: npm install --ignore-scripts --prefix src/app/pages
+      - run: npm install --ignore-scripts --silent
+      - run: npm install --ignore-scripts --silent --prefix src/app/cards
+      - run: npm install --ignore-scripts --silent --prefix src/app/settings
+      - run: npm install --ignore-scripts --silent --prefix src/app/pages
       - name: Typecheck Worker
-        run: npm run typecheck
+        id: worker_typecheck
+        continue-on-error: true
+        run: npm run typecheck > worker-typecheck.log 2>&1
+      - name: Upload Worker diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: worker-typecheck-${{ github.sha }}
+          path: worker-typecheck.log
+          if-no-files-found: error
+          retention-days: 7
+      - name: Enforce Worker typecheck
+        if: steps.worker_typecheck.outcome == 'failure'
+        run: cat worker-typecheck.log && exit 1
       - name: Typecheck deal card
         run: npm run typecheck --prefix src/app/cards
       - name: Typecheck settings extension

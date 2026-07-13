@@ -1,11 +1,19 @@
+import { promoteLegacyAuditEvents } from './audit-chain.js';
+import { applyManualScheduledPlanChanges } from './billing-scheduler.js';
+import { retryAtomicUsageReports } from './billing-usage.js';
+import { applyComplianceRetention, dispatchSiemEvents } from './compliance.js';
 import { sendDueDigests } from './email.js';
+import { expirePolicyExceptions } from './enterprise-policy.js';
 import { errorResponse, requestId } from './http.js';
 import { runMaintenance } from './maintenance.js';
 import { dispatchOutbox } from './outbox.js';
+import { dispatchEnterpriseAlerts, escalateUnacknowledgedAlerts } from './alerting-enterprise.js';
 import { escalateOverdueRemediations } from './remediation.js';
+import { runDueSyntheticChecks } from './reliability.js';
 import { Repository } from './repository.js';
-import { route } from './routes.js';
+import { route } from './routes-v10.js';
 import { scanPortal } from './scanner.js';
+import { deleteExpiredSecureDownloads } from './secure-downloads.js';
 import type { Env, ExecutionContext, ScheduledEvent } from './types.js';
 
 export default {
@@ -28,8 +36,18 @@ export default {
       }));
     }
     ctx.waitUntil(escalateOverdueRemediations(env));
+    ctx.waitUntil(dispatchEnterpriseAlerts(env));
+    ctx.waitUntil(escalateUnacknowledgedAlerts(env));
     ctx.waitUntil(dispatchOutbox(env));
+    ctx.waitUntil(dispatchSiemEvents(env));
+    ctx.waitUntil(runDueSyntheticChecks(env));
+    ctx.waitUntil(retryAtomicUsageReports(env));
+    ctx.waitUntil(applyManualScheduledPlanChanges(env));
+    ctx.waitUntil(expirePolicyExceptions(env));
     ctx.waitUntil(sendDueDigests(env));
+    ctx.waitUntil(applyComplianceRetention(env));
+    ctx.waitUntil(promoteLegacyAuditEvents(env));
+    ctx.waitUntil(deleteExpiredSecureDownloads(env));
     ctx.waitUntil(runMaintenance(env));
   },
 };

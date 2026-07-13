@@ -27,17 +27,22 @@ async function acceptEvent(env: Env, event: HubSpotWebhookEvent): Promise<boolea
     ? `${portalId}:${event.eventId}`
     : `${portalId}:${event.subscriptionId ?? ''}:${event.subscriptionType ?? ''}:${objectId}:${event.propertyName ?? ''}:${event.occurredAt ?? ''}`;
   const eventKey = await sha256Hex(rawKey);
-  const existing = await env.DB.prepare(`SELECT event_key, status FROM inbound_events WHERE event_key = ?`).bind(eventKey).first<{ event_key: string; status: string }>();
-  if (existing?.status === 'processed' || existing?.status === 'accepted') return false;
-  if (existing?.status === 'failed') {
-    await env.DB.prepare(`UPDATE inbound_events SET status = 'accepted', error_message = NULL, processed_at = NULL WHERE event_key = ?`).bind(eventKey).run();
+  const existing = await env.DB.prepare(`SELECT event_key, status, created_at FROM inbound_events WHERE event_key = ?`)
+    .bind(eventKey).first<{ event_key: string; status: string; created_at: string }>();
+  if (existing?.status === 'processed') return false;
+  const now = new Date();
+  const staleLease = existing?.status === 'accepted' && Date.parse(existing.created_at) <= now.getTime() - 10 * 60_000;
+  if (existing?.status === 'accepted' && !staleLease) return false;
+  if (existing?.status === 'failed' || staleLease) {
+    await env.DB.prepare(`UPDATE inbound_events SET status = 'accepted', error_message = NULL, processed_at = NULL, created_at = ? WHERE event_key = ?`)
+      .bind(now.toISOString(), eventKey).run();
     return true;
   }
-  const occurredAt = event.occurredAt ? new Date(event.occurredAt).toISOString() : new Date().toISOString();
+  const occurredAt = event.occurredAt ? new Date(event.occurredAt).toISOString() : now.toISOString();
   await env.DB.prepare(
     `INSERT INTO inbound_events (event_key, portal_id, event_type, object_id, status, occurred_at, created_at)
      VALUES (?, ?, ?, ?, 'accepted', ?, ?)`
-  ).bind(eventKey, portalId, event.subscriptionType ?? 'deal.change', objectId, occurredAt, new Date().toISOString()).run();
+  ).bind(eventKey, portalId, event.subscriptionType ?? 'deal.change', objectId, occurredAt, now.toISOString()).run();
   return true;
 }
 

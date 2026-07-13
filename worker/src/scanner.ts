@@ -13,7 +13,6 @@ export async function scanPortal(
   const repository = new Repository(env);
   const client = await HubSpotClient.forPortal(env, portalId);
   const scanId = existingScanId ?? await repository.startScan(portalId, trigger);
-  const snapshotStartedAt = new Date().toISOString();
   try {
     const deals = await client.listDeals(PLAN_LIMITS[client.plan].maxDealsPerScan);
     let ready = 0;
@@ -32,7 +31,7 @@ export async function scanPortal(
       }
     }
     const counts = { scanned: deals.length, ready, atRisk, critical, incompleteHandoffs };
-    await repository.completeScan(scanId, portalId, client.plan, snapshotStartedAt, counts);
+    await repository.completeScan(scanId, portalId, client.plan, counts);
     await repository.audit(portalId, null, null, 'scan.completed', { scanId, trigger, ...counts });
     return { scanId, ...counts };
   } catch (error) {

@@ -4,6 +4,12 @@ import { HubSpotClient } from './hubspot.js';
 import { Repository } from './repository.js';
 import type { Env, RequestIdentity } from './types.js';
 
+function hubSpotPriority(priority: string): 'LOW' | 'MEDIUM' | 'HIGH' {
+  if (priority === 'low') return 'LOW';
+  if (priority === 'urgent' || priority === 'high') return 'HIGH';
+  return 'MEDIUM';
+}
+
 export async function attachTaskToExistingRemediation(
   env: Env,
   identity: RequestIdentity,
@@ -33,8 +39,8 @@ export async function attachTaskToExistingRemediation(
     subject: `[DealGuard ${item.severity}] ${item.title}`,
     body: `${item.description}\n\nDealGuard remediation case: ${item.id}\nPriority: ${item.priority}`,
     ownerId: item.owner_id,
-    dueAt: item.due_at,
-    priority: item.priority,
+    dueAt: item.due_at ?? new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
+    priority: hubSpotPriority(item.priority),
   });
   const now = new Date().toISOString();
   const result = await env.DB.prepare(

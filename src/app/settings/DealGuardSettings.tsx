@@ -36,6 +36,7 @@ type Settings = {
       alertOnHandoffConfirmed: boolean; cooldownMinutes: number;
     };
   };
+  nativeSync: { enabled: boolean; includeSummary: boolean };
 };
 type ProblemDeal = {
   dealId: string; dealName: string; pipelineLabel: string; stageLabel: string; score: number;
@@ -55,6 +56,12 @@ type SlackStatus = {
   connected: boolean; entitled: boolean; teamName?: string; teamId?: string;
   channelName?: string; channelId?: string; connectedAt?: string; status?: 'active' | 'revoked' | 'error';
 };
+type NativeSyncStatus = {
+  entitled: boolean; enabled: boolean;
+  status: 'not_provisioned' | 'provisioning' | 'ready' | 'backfilling' | 'error';
+  propertyVersion: number; provisionedAt: string | null; lastBackfillAt: string | null;
+  lastBackfillCount: number; lastError: string | null;
+};
 type SettingsResponse = { plan: Plan; settings: Settings };
 type RequestOptions = { method?: 'GET' | 'PUT' | 'POST' | 'DELETE'; body?: Record<string, unknown> };
 
@@ -66,12 +73,19 @@ function statusVariant(status: ProblemDeal['status']): 'success' | 'warning' | '
   if (status === 'at_risk') return 'warning';
   return 'danger';
 }
+function nativeStatusVariant(status: NativeSyncStatus['status']): 'success' | 'warning' | 'danger' | 'default' {
+  if (status === 'ready') return 'success';
+  if (status === 'error') return 'danger';
+  if (status === 'provisioning' || status === 'backfilling') return 'warning';
+  return 'default';
+}
 
 const DealGuardSettings = () => {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [metadata, setMetadata] = useState<Metadata | null>(null);
   const [slack, setSlack] = useState<SlackStatus | null>(null);
+  const [nativeSync, setNativeSync] = useState<NativeSyncStatus | null>(null);
   const [slackAuthorizeUrl, setSlackAuthorizeUrl] = useState<string | null>(null);
   const [plan, setPlan] = useState<Plan>('free');
   const [recipients, setRecipients] = useState('');
@@ -92,15 +106,16 @@ const DealGuardSettings = () => {
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [settingsData, dashboardData, metadataData, slackData] = await Promise.all([
+      const [settingsData, dashboardData, metadataData, slackData, nativeData] = await Promise.all([
         fetchJson('/settings') as Promise<SettingsResponse>,
         fetchJson('/dashboard') as Promise<Dashboard>,
         fetchJson('/metadata') as Promise<Metadata>,
         fetchJson('/integrations/slack') as Promise<SlackStatus>,
+        fetchJson('/native-sync') as Promise<NativeSyncStatus>,
       ]);
       setSettings(settingsData.settings); setPlan(settingsData.plan);
       setRecipients(settingsData.settings.digest.recipients.join(', '));
-      setDashboard(dashboardData); setMetadata(metadataData); setSlack(slackData); setSlackAuthorizeUrl(null);
+      setDashboard(dashboardData); setMetadata(metadataData); setSlack(slackData); setNativeSync(nativeData); setSlackAuthorizeUrl(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'DealGuard settings could not be loaded.');
     } finally { setLoading(false); }
@@ -111,15 +126,24 @@ const DealGuardSettings = () => {
   const refreshDashboard = async (): Promise<Dashboard> => {
     const next = await fetchJson('/dashboard') as Dashboard; setDashboard(next); return next;
   };
+  const refreshNativeSync = async (): Promise<NativeSyncStatus> => {
+    const next = await fetchJson('/native-sync') as NativeSyncStatus; setNativeSync(next); return next;
+  };
+
+  const settingsPayload = (): Settings | null => settings ? {
+    ...settings,
+    digest: { ...settings.digest, recipients: recipients.split(',').map((item) => item.trim()).filter(Boolean) },
+  } : null;
 
   const save = async () => {
-    if (!settings) return;
+    const payload = settingsPayload();
+    if (!payload) return;
     setWorking(true); setError(null); setNotice(null);
     try {
-      const payload: Settings = { ...settings, digest: { ...settings.digest, recipients: recipients.split(',').map((item) => item.trim()).filter(Boolean) } };
       const response = await fetchJson('/settings', { method: 'PUT', body: payload as unknown as Record<string, unknown> }) as SettingsResponse;
       setSettings(response.settings); setRecipients(response.settings.digest.recipients.join(', '));
-      setNotice('Readiness, digest, and notification settings saved.');
+      await refreshNativeSync();
+      setNotice('Readiness, native sync, digest, and notification settings saved.');
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Settings could not be saved.'); }
     finally { setWorking(false); }
   };
@@ -172,17 +196,50 @@ const DealGuardSettings = () => {
     finally { setWorking(false); }
   };
 
+  const provisionNative = async () => {
+    setWorking(true); setError(null); setNotice(null);
+    try {
+      const next = await fetchJson('/native-sync/provision', { method: 'POST', body: {} }) as NativeSyncStatus;
+      setNativeSync(next);
+      setNotice('DealGuard reporting properties are ready in HubSpot. Enable sync and save settings before backfilling.');
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'DealGuard properties could not be provisioned.'); }
+    finally { setWorking(false); }
+  };
+
+  const backfillNative = async () => {
+    const payload = settingsPayload();
+    if (!payload) return;
+    setWorking(true); setError(null); setNotice(null);
+    try {
+      const saved = await fetchJson('/settings', { method: 'PUT', body: payload as unknown as Record<string, unknown> }) as SettingsResponse;
+      setSettings(saved.settings);
+      await fetchJson('/native-sync/backfill', { method: 'POST', body: {} });
+      setNativeSync((current) => current ? { ...current, enabled: true, status: 'backfilling' } : current);
+      setNotice('Native property backfill started.');
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        await delay(2000);
+        const next = await refreshNativeSync();
+        if (next.status !== 'backfilling') {
+          setNotice(next.status === 'ready' ? `Backfill completed for ${next.lastBackfillCount} deals.` : next.lastError ?? 'Backfill did not complete.');
+          break;
+        }
+      }
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Native property backfill failed.'); }
+    finally { setWorking(false); }
+  };
+
   const propertyOptions = useMemo(() => (metadata?.properties ?? []).map((property) => ({ label: `${property.label} (${property.name})`, value: property.name })), [metadata]);
   const pipelineOptions = useMemo(() => (metadata?.pipelines ?? []).map((pipeline) => ({ label: pipeline.label, value: pipeline.id })), [metadata]);
   const stageOptions = useMemo(() => (metadata?.pipelines ?? []).flatMap((pipeline) => pipeline.stages.map((stage) => ({ label: `${pipeline.label} — ${stage.label}`, value: stage.id }))), [metadata]);
 
   if (loading) return <LoadingSpinner label="Loading DealGuard settings" />;
-  if (!settings || !dashboard || !metadata || !slack) return <Alert title="DealGuard unavailable" variant="danger">{error ?? 'Settings are unavailable.'}</Alert>;
+  if (!settings || !dashboard || !metadata || !slack || !nativeSync) return <Alert title="DealGuard unavailable" variant="danger">{error ?? 'Settings are unavailable.'}</Alert>;
 
   const maxCustomRules = plan === 'free' ? 3 : 25;
   const updateRule = <K extends keyof Settings['rules']>(key: K, value: Settings['rules'][K]) => setSettings({ ...settings, rules: { ...settings.rules, [key]: value } });
   const updateDigest = <K extends keyof Settings['digest']>(key: K, value: Settings['digest'][K]) => setSettings({ ...settings, digest: { ...settings.digest, [key]: value } });
   const updateSlack = <K extends keyof Settings['notifications']['slack']>(key: K, value: Settings['notifications']['slack'][K]) => setSettings({ ...settings, notifications: { ...settings.notifications, slack: { ...settings.notifications.slack, [key]: value } } });
+  const updateNative = <K extends keyof Settings['nativeSync']>(key: K, value: Settings['nativeSync'][K]) => setSettings({ ...settings, nativeSync: { ...settings.nativeSync, [key]: value } });
   const updateCustomRule = (index: number, patch: Partial<CustomRule>) => updateRule('customRequiredProperties', settings.rules.customRequiredProperties.map((rule, ruleIndex) => ruleIndex === index ? { ...rule, ...patch } : rule));
   const addCustomRule = () => {
     if (settings.rules.customRequiredProperties.length >= maxCustomRules) return;
@@ -197,7 +254,7 @@ const DealGuardSettings = () => {
       {error && <Alert title="Action failed" variant="danger">{error}</Alert>}
       {notice && <Alert title="DealGuard update" variant="success">{notice}</Alert>}
       <Flex direction="row" justify="between" align="center" gap="medium">
-        <Flex direction="column" gap="extra-small"><Heading>DealGuard pipeline health</Heading><Text>Explainable readiness checks, real-time deal monitoring, and governed sales-to-delivery handoffs.</Text></Flex>
+        <Flex direction="column" gap="extra-small"><Heading>DealGuard pipeline health</Heading><Text>Explainable readiness checks, native reporting, real-time monitoring, and governed sales-to-delivery handoffs.</Text></Flex>
         <StatusTag variant={plan === 'free' ? 'default' : 'success'}>{plan === 'beta_growth' ? 'Beta Growth' : plan}</StatusTag>
       </Flex>
       <Flex direction="row" gap="medium" wrap="wrap">
@@ -247,6 +304,22 @@ const DealGuardSettings = () => {
         <Button variant="secondary" onClick={() => removeCustomRule(index)} disabled={working}>Remove rule</Button>
       </Flex></Card>)}
       <Button variant="secondary" onClick={addCustomRule} disabled={working || settings.rules.customRequiredProperties.length >= maxCustomRules}>Add required-property rule</Button>
+
+      <Divider /><Heading>HubSpot-native reporting and automation</Heading>
+      {!nativeSync.entitled && <Alert title="Growth feature" variant="info">Native DealGuard properties, reporting filters, and workflow outputs are available on Growth.</Alert>}
+      <Card><Flex direction="column" gap="small">
+        <Flex direction="row" justify="between" align="center" gap="small"><Text format={{ fontWeight: 'bold' }}>DealGuard deal properties</Text><StatusTag variant={nativeStatusVariant(nativeSync.status)}>{nativeSync.status.replace('_', ' ')}</StatusTag></Flex>
+        <Text>DealGuard provisions only namespaced fields for score, status, grade, issue count, handoff state, assessment time, and summary. Existing HubSpot properties are never overwritten.</Text>
+        {nativeSync.lastError && <Alert title="Native sync issue" variant="danger">{nativeSync.lastError}</Alert>}
+        <Toggle label="Write DealGuard results to HubSpot deal properties" checked={settings.nativeSync.enabled} onChange={(value) => updateNative('enabled', value)} />
+        <Toggle label="Include the human-readable readiness summary" checked={settings.nativeSync.includeSummary} onChange={(value) => updateNative('includeSummary', value)} />
+        <Flex direction="row" gap="small" wrap="wrap">
+          <Button variant="secondary" onClick={() => void provisionNative()} disabled={working || !nativeSync.entitled || nativeSync.status === 'provisioning' || nativeSync.status === 'backfilling'}>{nativeSync.status === 'ready' ? 'Verify properties' : 'Provision properties'}</Button>
+          <Button variant="secondary" onClick={() => void backfillNative()} disabled={working || !nativeSync.entitled || nativeSync.status !== 'ready' || !settings.nativeSync.enabled}>Backfill assessed deals</Button>
+          <Button variant="secondary" onClick={() => void refreshNativeSync()} disabled={working}>Refresh sync status</Button>
+        </Flex>
+        <Text variant="microcopy">Property schema version: {nativeSync.propertyVersion || 'Not provisioned'} · Last backfill: {nativeSync.lastBackfillAt ? `${new Date(nativeSync.lastBackfillAt).toLocaleString()} (${nativeSync.lastBackfillCount} deals)` : 'Not run'}</Text>
+      </Flex></Card>
 
       <Divider /><Heading>Slack operations</Heading>
       {!slack.entitled && <Alert title="Growth feature" variant="info">Slack alerts and the HubSpot workflow action are available on Growth. Beta Growth portals receive full access during testing.</Alert>}

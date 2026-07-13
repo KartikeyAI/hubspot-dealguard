@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { verifyDodoWebhook } from '../dist/billing.js';
+import { canonicalChangePayload, withoutApprovalFields } from '../dist/change-control.js';
 import { parseDodoPlanChangeInput } from '../dist/dodo-plan-change.js';
 import {
   isSubscriptionDodoEvent,
@@ -111,6 +112,21 @@ test('validates the official Dodo plan-change controls', () => {
   assert.throws(() => parseDodoPlanChangeInput({ tier: 'free', interval: 'month' }));
 });
 
+test('canonicalizes exact approval payloads independently of object key order', () => {
+  assert.equal(
+    canonicalChangePayload({ tier: 'enterprise', nested: { b: 2, a: 1 }, values: ['x', 'y'] }),
+    canonicalChangePayload({ values: ['x', 'y'], nested: { a: 1, b: 2 }, tier: 'enterprise' }),
+  );
+  assert.notEqual(
+    canonicalChangePayload({ tier: 'enterprise', interval: 'year' }),
+    canonicalChangePayload({ tier: 'enterprise', interval: 'month' }),
+  );
+  assert.deepEqual(
+    withoutApprovalFields({ approvalId: 'approval-1', approval_id: 'approval-2', tier: 'growth' }),
+    { tier: 'growth' },
+  );
+});
+
 test('enforces enterprise permissions and wildcard permissions', () => {
   assert.equal(permissionMatches(['*'], 'billing.manage'), true);
   assert.equal(permissionMatches(['policy.*'], 'policy.manage'), true);
@@ -129,6 +145,7 @@ test('enterprise migrations cover every A-H control-plane domain and billing har
   const hardening = await readFile('worker/migrations/0009_dodo_event_ordering_and_usage_counters.sql', 'utf8');
   const planState = await readFile('worker/migrations/0010_dodo_plan_change_state.sql', 'utf8');
   const scheduleTrigger = await readFile('worker/migrations/0011_preserve_dodo_scheduled_plan_state.sql', 'utf8');
+  const changeExecution = await readFile('worker/migrations/0012_change_approval_execution.sql', 'utf8');
   const requiredTables = [
     'subscriptions_v2', 'billing_usage_events', 'billing_allowances', 'billing_contracts',
     'enterprise_role_assignments', 'change_approval_requests', 'policy_templates', 'policy_segments',
@@ -145,22 +162,29 @@ test('enterprise migrations cover every A-H control-plane domain and billing har
   assert.match(planState, /scheduled_product_id/);
   assert.match(scheduleTrigger, /preserve_dodo_scheduled_plan_state/);
   assert.match(scheduleTrigger, /complete_dodo_scheduled_plan_change/);
+  assert.match(changeExecution, /CREATE TABLE IF NOT EXISTS change_approval_executions/);
+  assert.match(changeExecution, /lease_expires_at/);
 });
 
 test('release source is Dodo-first and uses hardened runtime adapters', async () => {
   const billing = await readFile('worker/src/billing.ts', 'utf8');
-  const router = await readFile('worker/src/routes-v5.ts', 'utf8');
+  const router = await readFile('worker/src/routes-v6.ts', 'utf8');
   const planChange = await readFile('worker/src/dodo-plan-change.ts', 'utf8');
+  const scheduler = await readFile('worker/src/billing-scheduler.ts', 'utf8');
   const index = await readFile('worker/src/index.ts', 'utf8');
   const scanner = await readFile('worker/src/scanner.ts', 'utf8');
   assert.match(billing, /live\.dodopayments\.com/);
   assert.match(billing, /test\.dodopayments\.com/);
   assert.doesNotMatch(billing, /api\.stripe\.com/);
-  assert.match(router, /previewDodoPlanChange/);
-  assert.match(router, /cancelScheduledDodoPlanChange/);
+  assert.match(router, /beginApprovedChange/);
+  assert.match(router, /billing\.plan\.change/);
   assert.match(planChange, /\/change-plan\/preview/);
   assert.match(planChange, /\/change-plan\/scheduled/);
   assert.match(planChange, /on_payment_failure/);
+  assert.match(scheduler, /provider = 'manual'/);
+  assert.doesNotMatch(scheduler, /provider = 'dodo'/);
+  assert.match(index, /applyManualScheduledPlanChanges/);
+  assert.doesNotMatch(index, /applyScheduledPlanChanges/);
   assert.match(index, /retryAtomicUsageReports/);
   assert.match(scanner, /recordUsageAtomic/);
   await assert.rejects(() => readFile('worker/src/routes.ts', 'utf8'));

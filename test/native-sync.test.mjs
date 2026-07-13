@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { DEALGUARD_NATIVE_PROPERTY_NAMES } from '../dist/config.js';
 import { DEALGUARD_PROPERTY_DEFINITIONS, nativePropertyValues } from '../dist/native-sync.js';
 import { workflowOutputFields } from '../dist/workflow-action.js';
 
@@ -22,10 +23,12 @@ const assessment = {
   assessedAt: '2026-07-13T00:00:00.000Z',
 };
 
-test('defines only fixed DealGuard-owned deal properties', () => {
+test('defines only the fixed DealGuard-owned deal property allowlist', () => {
+  const definitionNames = DEALGUARD_PROPERTY_DEFINITIONS.map((property) => property.name);
   assert.equal(DEALGUARD_PROPERTY_DEFINITIONS.length, 7);
-  assert.equal(new Set(DEALGUARD_PROPERTY_DEFINITIONS.map((property) => property.name)).size, 7);
-  assert.equal(DEALGUARD_PROPERTY_DEFINITIONS.every((property) => property.name.startsWith('dealguard_')), true);
+  assert.equal(new Set(definitionNames).size, 7);
+  assert.deepEqual(definitionNames, [...DEALGUARD_NATIVE_PROPERTY_NAMES]);
+  assert.equal(definitionNames.every((name) => name.startsWith('dealguard_')), true);
 });
 
 test('maps assessments to native HubSpot property values', () => {
@@ -37,6 +40,7 @@ test('maps assessments to native HubSpot property values', () => {
   assert.equal(properties.dealguard_handoff_status, 'confirmed');
   assert.equal(properties.dealguard_last_assessed_at, String(Date.parse(assessment.assessedAt)));
   assert.match(properties.dealguard_readiness_summary, /Two readiness issues/);
+  assert.equal(Object.keys(properties).every((name) => DEALGUARD_NATIVE_PROPERTY_NAMES.includes(name)), true);
 });
 
 test('omits the summary when an administrator disables summary sync', () => {

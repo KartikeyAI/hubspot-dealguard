@@ -1,5 +1,5 @@
 import { saveAssessmentContext } from './assessment-context.js';
-import { recordUsage } from './billing.js';
+import { recordUsageAtomic } from './billing-usage.js';
 import { PLAN_LIMITS } from './config.js';
 import { captureAnalyticsSnapshot } from './enterprise-analytics.js';
 import { recordAssessmentHistory } from './enterprise-analytics-v2.js';
@@ -108,8 +108,8 @@ export async function scanPortal(
     await recordOperationalMetric(env, { portalId, service: 'scan', metric: 'success', value: 1, dimensions: { trigger } });
     await recordOperationalMetric(env, { portalId, service: 'scan', metric: 'latency_ms', value: Date.now() - startedAt, dimensions: { trigger, scanned: processedDealIds.size } });
     try {
-      await recordUsage(env, portalId, 'active_deal_overage', processedDealIds.size, `scan-deals:${scanId}`, { trigger, scan_id: scanId });
-      await recordUsage(env, portalId, 'event_overage', processedDealIds.size, `scan-events:${scanId}`, { trigger, scan_id: scanId });
+      await recordUsageAtomic(env, portalId, 'active_deal_overage', processedDealIds.size, `scan-deals:${scanId}`, { trigger, scan_id: scanId });
+      await recordUsageAtomic(env, portalId, 'event_overage', processedDealIds.size, `scan-events:${scanId}`, { trigger, scan_id: scanId });
     } catch (error) {
       console.error(JSON.stringify({ level: 'error', task: 'scan_usage', portalId, scanId, error: error instanceof Error ? error.message : String(error) }));
     }

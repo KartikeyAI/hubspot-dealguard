@@ -1,6 +1,6 @@
 # Dodo Payments implementation
 
-DealGuard uses Dodo Payments as its primary self-service commercial platform and Merchant of Record. The internal entitlement service remains authoritative; Dodo events update that neutral entitlement state.
+DealGuard uses Dodo Payments as its primary self-service commercial platform and Merchant of Record. The internal entitlement service remains authoritative; verified Dodo subscription events update that neutral entitlement state.
 
 ## Commercial model
 
@@ -19,7 +19,7 @@ Create four subscription products:
 - Enterprise monthly
 - Enterprise annual
 
-Attach usage meters to products intended for metered overage. Configure event names matching the Worker secrets or the defaults:
+Attach usage meters to products intended for metered overage. Configure each meter to aggregate the numeric `quantity` metadata property and use event names matching the Worker secrets or defaults:
 
 - `dealguard_ai_credit`
 - `dealguard_active_deal_overage`
@@ -32,7 +32,7 @@ Create the webhook endpoint:
 https://dealguard-api.rokad.co/webhooks/dodo
 ```
 
-Subscribe to subscription lifecycle, payment failure/recovery, refund, dispute and entitlement events required by the production account.
+Subscribe to the Dodo subscription lifecycle events used by DealGuard: active, updated, renewed, plan changed, payment method updated, on hold, cancelled, failed, and expired. Payment, refund and dispute events may be retained for commercial diagnostics, but they are explicitly ignored by the entitlement state machine.
 
 ## Worker secrets
 
@@ -52,13 +52,19 @@ DODO_RETENTION_EVENT_NAME
 
 `DODO_ENVIRONMENT` must be `test` before production acceptance and `live` only after test-mode acceptance succeeds.
 
-## Webhook security
+## Webhook security and ordering
 
-DealGuard validates the Standard Webhooks headers `webhook-id`, `webhook-timestamp` and `webhook-signature`, rejects timestamps outside five minutes, compares HMAC-SHA256 signatures in constant time, stores event IDs for idempotency, and processes verified events asynchronously.
+DealGuard validates the Standard Webhooks headers `webhook-id`, `webhook-timestamp` and `webhook-signature`, rejects delivery timestamps outside five minutes, compares HMAC-SHA256 signatures in constant time, and uses `webhook-id` for idempotency.
+
+The handler persists and applies the small subscription-state transaction before returning success. A processing error returns non-2xx so Dodo retries it. The body event timestamp is stored on the subscription; older events cannot overwrite newer state, and an equal-time active event cannot regress a terminal cancellation or expiration. Sparse update and plan-change events preserve existing tier, product, interval, customer and period values when Dodo omits them.
+
+Only `subscription.*` events can mutate entitlement. Payments, refunds, disputes, credits, grants and recovery events cannot activate, downgrade or cancel a DealGuard plan.
 
 ## Usage reporting
 
-Usage events are first stored in D1 with an idempotency key. Metered events are then reported to Dodo's event-ingestion endpoint. Failed reports remain recoverable and are retried by the scheduled Worker.
+Usage is first reserved atomically in D1 using the portal, metric, billing-period start and idempotency key. The reservation and usage row are committed together, so concurrent scans cannot exceed a hard cap and duplicate calls cannot increment consumption twice.
+
+For metered subscriptions with administrator-enabled overage, DealGuard submits an idempotent event to Dodo's `/events/ingest` endpoint. The event includes `quantity` in metadata for the configured meter aggregation. Failed provider reports remain locally counted and are retried by the scheduled Worker using the same Dodo event ID.
 
 ## Manual Enterprise contracts
 
@@ -72,7 +78,7 @@ Manual subscriptions support:
 - Overage enablement
 - Explicit allowances
 
-Manual entitlements use the same application authorization and usage enforcement as Dodo subscriptions.
+Manual entitlements use the same application authorization, cap enforcement, usage ledger and audit controls as Dodo subscriptions.
 
 ## Acceptance
 
@@ -81,10 +87,11 @@ Before release, complete:
 1. Test-mode checkout for Growth monthly and annual.
 2. Test-mode checkout for Enterprise monthly and annual.
 3. Customer Portal session.
-4. Signed subscription activation webhook.
-5. Payment-failure grace and recovery.
-6. Cancellation and immediate entitlement removal.
-7. Metered event ingestion and idempotent retry.
-8. Manual contract activation and expiry.
-9. Upgrade, downgrade and scheduled plan-change tests.
-10. Refund and dispute handling according to Rokad's commercial policy.
+4. Signed activation, update, renewal and plan-change webhooks.
+5. On-hold grace, recovery, failed mandate, cancellation and expiration.
+6. Out-of-order event delivery and stale-state rejection.
+7. Payment, refund and dispute events verified as entitlement no-ops.
+8. Metered event ingestion, quantity aggregation and idempotent retry.
+9. Concurrent hard-cap enforcement.
+10. Manual contract activation, expiry and allowance enforcement.
+11. Upgrade, downgrade and scheduled plan-change tests.

@@ -75,6 +75,9 @@ export interface PlanLimits {
   nativeSync: boolean;
   enterpriseGovernance: boolean;
   maxPolicySimulationDeals: number;
+  remediationAutomation: boolean;
+  multiDestinationDelivery: boolean;
+  maxNotificationDestinations: number;
 }
 
 export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
@@ -89,6 +92,9 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     nativeSync: false,
     enterpriseGovernance: false,
     maxPolicySimulationDeals: 0,
+    remediationAutomation: false,
+    multiDestinationDelivery: false,
+    maxNotificationDestinations: 0,
   },
   growth: {
     maxDealsPerScan: 5000,
@@ -99,20 +105,26 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     slackNotifications: true,
     workflowActions: true,
     nativeSync: true,
-    enterpriseGovernance: true,
-    maxPolicySimulationDeals: 1000,
+    enterpriseGovernance: false,
+    maxPolicySimulationDeals: 0,
+    remediationAutomation: false,
+    multiDestinationDelivery: false,
+    maxNotificationDestinations: 0,
   },
   beta_growth: {
-    maxDealsPerScan: 5000,
-    minScanIntervalMinutes: 60,
-    historyDays: 365,
-    maxCustomRules: 25,
+    maxDealsPerScan: 10000,
+    minScanIntervalMinutes: 30,
+    historyDays: 730,
+    maxCustomRules: 50,
     digestFrequencies: ['daily', 'weekly'],
     slackNotifications: true,
     workflowActions: true,
     nativeSync: true,
     enterpriseGovernance: true,
-    maxPolicySimulationDeals: 1000,
+    maxPolicySimulationDeals: 5000,
+    remediationAutomation: true,
+    multiDestinationDelivery: true,
+    maxNotificationDestinations: 25,
   },
 };
 
@@ -121,8 +133,9 @@ export const REQUIRED_HUBSPOT_SCOPES = [
   'crm.objects.deals.write',
   'crm.objects.contacts.read',
   'crm.objects.companies.read',
+  'crm.objects.tasks.write',
   'crm.schemas.deals.read',
   'crm.schemas.deals.write',
 ] as const;
 
-export const APP_VERSION = '1.3.0-beta.1';
+export const APP_VERSION = '1.4.0-beta.1';

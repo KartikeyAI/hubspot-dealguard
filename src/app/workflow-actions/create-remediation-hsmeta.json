@@ -1,0 +1,93 @@
+{
+  "uid": "dealguard_create_remediation",
+  "type": "workflow-action",
+  "config": {
+    "actionUrl": "https://dealguard-api.rokad.co/integrations/hubspot/workflow-actions/create-remediation",
+    "isPublished": true,
+    "supportedClients": [
+      { "client": "WORKFLOWS" }
+    ],
+    "inputFields": [
+      {
+        "typeDefinition": { "name": "issueCode", "type": "string", "fieldType": "text" },
+        "supportedValueTypes": ["STATIC_VALUE"],
+        "isRequired": true
+      },
+      {
+        "typeDefinition": { "name": "title", "type": "string", "fieldType": "text" },
+        "supportedValueTypes": ["STATIC_VALUE"],
+        "isRequired": true
+      },
+      {
+        "typeDefinition": { "name": "description", "type": "string", "fieldType": "textarea" },
+        "supportedValueTypes": ["STATIC_VALUE"],
+        "isRequired": false
+      },
+      {
+        "typeDefinition": {
+          "name": "severity",
+          "type": "enumeration",
+          "fieldType": "select",
+          "options": [
+            { "value": "info", "label": "Information" },
+            { "value": "warning", "label": "Warning" },
+            { "value": "critical", "label": "Critical" }
+          ]
+        },
+        "supportedValueTypes": ["STATIC_VALUE"],
+        "isRequired": true
+      },
+      {
+        "typeDefinition": { "name": "dueHours", "type": "number", "fieldType": "number" },
+        "supportedValueTypes": ["STATIC_VALUE"],
+        "isRequired": true
+      },
+      {
+        "typeDefinition": {
+          "name": "createHubSpotTask",
+          "type": "enumeration",
+          "fieldType": "select",
+          "options": [
+            { "value": "yes", "label": "Create HubSpot task" },
+            { "value": "no", "label": "DealGuard case only" }
+          ]
+        },
+        "supportedValueTypes": ["STATIC_VALUE"],
+        "isRequired": true
+      }
+    ],
+    "outputFields": [
+      { "typeDefinition": { "name": "remediationCaseId", "type": "string", "fieldType": "text" } },
+      { "typeDefinition": { "name": "remediationStatus", "type": "string", "fieldType": "text" } },
+      { "typeDefinition": { "name": "remediationDueAt", "type": "string", "fieldType": "text" } },
+      { "typeDefinition": { "name": "hubSpotTaskId", "type": "string", "fieldType": "text" } }
+    ],
+    "labels": {
+      "en": {
+        "appDisplayName": "DealGuard by Rokad",
+        "actionName": "Create DealGuard remediation",
+        "actionDescription": "Creates a durable remediation case, applies an SLA, and optionally creates a HubSpot task associated with the deal.",
+        "actionCardContent": "Create {{severity}} remediation: {{title}}",
+        "inputFieldLabels": {
+          "issueCode": "Issue code",
+          "title": "Case title",
+          "description": "Case description",
+          "severity": "Severity",
+          "dueHours": "Due within hours",
+          "createHubSpotTask": "HubSpot task"
+        },
+        "inputFieldDescriptions": {
+          "issueCode": "Stable identifier used to deduplicate active cases for this deal.",
+          "dueHours": "Number of hours before the remediation case becomes overdue."
+        },
+        "outputFieldLabels": {
+          "remediationCaseId": "Remediation case ID",
+          "remediationStatus": "Remediation status",
+          "remediationDueAt": "Remediation due at",
+          "hubSpotTaskId": "HubSpot task ID"
+        }
+      }
+    },
+    "objectTypes": ["DEAL"]
+  }
+}

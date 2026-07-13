@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.4.0-beta.1 — 2026-07-13
+
+### Added
+
+- Durable remediation cases with assignment, severity, priority, SLA, status history, escalation, resolution, waiver, closure, and reopening.
+- Automatic remediation creation for current critical readiness issues and automatic resolution when the issue disappears.
+- Optional HubSpot tasks associated with the affected deal using dynamically discovered association metadata.
+- Deal-based **Create DealGuard remediation** workflow action with reusable case and task outputs.
+- Microsoft Teams Workflow, email, and signed generic webhook destinations.
+- Event-type, severity, and pipeline routing for enterprise destinations.
+- Encrypted endpoint and signing-secret storage.
+- Durable delivery outbox with processing leases, exponential backoff, attempt history, dead-letter state, and administrator replay.
+- Per-portal operational health for scans, webhooks, delivery failures, dead letters, and overdue remediation cases.
+- Stripe-hosted subscription Checkout and Stripe Customer Portal sessions.
+- Signed and idempotent Stripe billing webhook processing, annual/monthly prices, payment-failure grace periods, and manual Enterprise contracts.
+- Enterprise App Home controls for billing, remediation queues, destinations, health, and dead-letter replay.
+- D1 migration `0006_enterprise_operations.sql` and v1.4 operations tests.
+
+### Changed
+
+- Enterprise commercial entitlement maps to the existing internal `beta_growth` capability bucket; customer-facing tier names are Free, Growth, and Enterprise.
+- Enterprise scans support up to 10,000 deals and policy simulations up to 5,000 deals.
+- HubSpot OAuth now requests `crm.objects.tasks.write` for explicit remediation-task creation.
+- Version advanced to `1.4.0-beta.1` across Worker and HubSpot extensions.
+
 ## 1.3.0-beta.1 — 2026-07-13
 
 ### Added

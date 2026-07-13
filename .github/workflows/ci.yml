@@ -31,5 +31,5 @@ jobs:
       - name: Run automated tests
         run: npm test
       - name: Validate HubSpot manifests
-        run: node -e "const fs=require('fs'); for (const f of ['src/app/app-hsmeta.json','src/app/webhooks/deal-events-hsmeta.json','src/app/workflow-actions/assess-deal-hsmeta.json','src/app/pages/pages-hsmeta.json']) JSON.parse(fs.readFileSync(f,'utf8'));"
+        run: node -e "const fs=require('fs'); for (const f of ['src/app/app-hsmeta.json','src/app/webhooks/deal-events-hsmeta.json','src/app/workflow-actions/assess-deal-hsmeta.json','src/app/workflow-actions/create-remediation-hsmeta.json','src/app/pages/pages-hsmeta.json']) JSON.parse(fs.readFileSync(f,'utf8'));"
       - run: npx wrangler d1 migrations apply dealguard-production --local

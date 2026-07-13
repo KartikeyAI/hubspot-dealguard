@@ -22,6 +22,10 @@ interface AssociationBatchResponse {
   results?: Array<{ from: { id: string }; to: Array<{ toObjectId: number }> }>;
 }
 
+interface AssociationLabelResponse {
+  results?: Array<{ category: string; typeId: number; label: string | null }>;
+}
+
 export class HubSpotClient {
   private credentials: TenantCredentials;
   private readonly repository: Repository;
@@ -157,22 +161,13 @@ export class HubSpotClient {
         const currentOptions = new Set((current.options ?? []).map((option) => option.value));
         const optionsCompatible = expectedOptions.every((value) => currentOptions.has(value));
         if (current.type !== definition.type || current.fieldType !== definition.fieldType || !optionsCompatible) {
-          throw new AppError(
-            409,
-            'native_property_conflict',
-            `HubSpot property ${definition.name} already exists with an incompatible definition.`,
-          );
+          throw new AppError(409, 'native_property_conflict', `HubSpot property ${definition.name} already exists with an incompatible definition.`);
         }
         continue;
       }
       await this.request<HubSpotProperty>('/crm/v3/properties/deals', {
         method: 'POST',
-        body: JSON.stringify({
-          ...definition,
-          hidden: false,
-          formField: false,
-          hasUniqueValue: false,
-        }),
+        body: JSON.stringify({ ...definition, hidden: false, formField: false, hasUniqueValue: false }),
       });
     }
   }
@@ -195,6 +190,41 @@ export class HubSpotClient {
         body: JSON.stringify({ inputs: batch }),
       });
     }
+  }
+
+  async createRemediationTask(input: {
+    dealId: string;
+    subject: string;
+    body: string;
+    dueAt: string;
+    priority: 'LOW' | 'MEDIUM' | 'HIGH';
+    ownerId?: string | null;
+  }): Promise<string> {
+    const labels = await this.request<AssociationLabelResponse>('/crm/v4/associations/tasks/deals/labels');
+    const association = (labels.results ?? []).find((item) => item.category === 'HUBSPOT_DEFINED' && item.label === null)
+      ?? (labels.results ?? []).find((item) => item.category === 'HUBSPOT_DEFINED');
+    const properties: Record<string, string> = {
+      hs_timestamp: input.dueAt,
+      hs_task_subject: input.subject.slice(0, 255),
+      hs_task_body: input.body.slice(0, 65000),
+      hs_task_status: 'NOT_STARTED',
+      hs_task_priority: input.priority,
+      hs_task_type: 'TODO',
+    };
+    if (input.ownerId) properties.hubspot_owner_id = input.ownerId;
+    const task = await this.request<HubSpotObject>('/crm/v3/objects/tasks', {
+      method: 'POST',
+      body: JSON.stringify({
+        properties,
+        ...(association ? {
+          associations: [{
+            to: { id: input.dealId },
+            types: [{ associationCategory: association.category, associationTypeId: association.typeId }],
+          }],
+        } : {}),
+      }),
+    });
+    return task.id;
   }
 
   async buildStageMap(): Promise<Map<string, StageInfo>> {
@@ -241,9 +271,7 @@ export class HubSpotClient {
     const stageProperties = [...stageMap.values()].map((stage) => stage.enteredAtProperty);
     const customProperties = this.settings.rules.customRequiredProperties.map((rule) => rule.property);
     const properties = [...new Set([...CORE_DEAL_PROPERTIES, ...stageProperties, ...customProperties])];
-    const closedLostStageIds = [...stageMap.values()]
-      .filter((stage) => stage.isClosed && !stage.isWon)
-      .map((stage) => stage.id);
+    const closedLostStageIds = [...stageMap.values()].filter((stage) => stage.isClosed && !stage.isWon).map((stage) => stage.id);
     const deals: HubSpotObject[] = [];
     let after: string | undefined;
     while (deals.length < maxDeals) {

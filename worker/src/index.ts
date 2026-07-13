@@ -1,6 +1,8 @@
 import { sendDueDigests } from './email.js';
 import { errorResponse, requestId } from './http.js';
 import { runMaintenance } from './maintenance.js';
+import { dispatchOutbox } from './outbox.js';
+import { escalateOverdueRemediations } from './remediation.js';
 import { Repository } from './repository.js';
 import { route } from './routes.js';
 import { scanPortal } from './scanner.js';
@@ -25,6 +27,8 @@ export default {
         console.error(JSON.stringify({ level: 'error', task: 'scheduled_scan', portalId: tenant.portal_id, error: error instanceof Error ? error.message : String(error) }));
       }));
     }
+    ctx.waitUntil(escalateOverdueRemediations(env));
+    ctx.waitUntil(dispatchOutbox(env));
     ctx.waitUntil(sendDueDigests(env));
     ctx.waitUntil(runMaintenance(env));
   },

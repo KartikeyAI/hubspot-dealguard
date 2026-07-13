@@ -1,8 +1,10 @@
 import { saveAssessmentContext } from './assessment-context.js';
 import { PLAN_LIMITS } from './config.js';
 import { captureAnalyticsSnapshot } from './enterprise-analytics.js';
+import { recordServiceFailure, recordServiceSuccess } from './health.js';
 import { HubSpotClient } from './hubspot.js';
 import { syncAssessmentBatchIfEnabled } from './native-sync.js';
+import { syncAssessmentRemediations } from './remediation.js';
 import { Repository } from './repository.js';
 import { assessDeal } from './scoring.js';
 import { notifyAssessmentTransition } from './slack.js';
@@ -36,6 +38,11 @@ export async function scanPortal(
       } catch (error) {
         console.error(JSON.stringify({ level: 'error', task: 'slack_scan_notification', portalId, dealId: deal.id, error: error instanceof Error ? error.message : String(error) }));
       }
+      try {
+        await syncAssessmentRemediations(env, portalId, assessment);
+      } catch (error) {
+        console.error(JSON.stringify({ level: 'error', task: 'remediation_scan_sync', portalId, dealId: deal.id, error: error instanceof Error ? error.message : String(error) }));
+      }
       if (assessment.status === 'ready') ready += 1;
       if (assessment.status === 'at_risk') atRisk += 1;
       if (assessment.status === 'critical') critical += 1;
@@ -49,11 +56,13 @@ export async function scanPortal(
     const counts = { scanned: deals.length, ready, atRisk, critical, incompleteHandoffs };
     await repository.completeScan(scanId, portalId, client.plan, counts);
     await captureAnalyticsSnapshot(env, portalId);
+    await recordServiceSuccess(env, portalId, 'scan');
     await repository.audit(portalId, null, null, 'scan.completed', { scanId, trigger, ...counts });
     return { scanId, ...counts };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unexpected scan failure';
     await repository.failScan(scanId, portalId, message);
+    await recordServiceFailure(env, portalId, error);
     throw error;
   }
 }

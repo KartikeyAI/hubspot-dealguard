@@ -3,7 +3,7 @@
   "type": "app",
   "config": {
     "name": "DealGuard by Rokad",
-    "description": "Governs HubSpot deal readiness with explainable scoring, versioned policies, approvals, enterprise analytics, native reporting, Slack alerts, and controlled handoffs.",
+    "description": "Enterprise HubSpot revenue governance with explainable scoring, approved policies, remediation SLAs, native reporting, routed notifications, subscription controls, and reliable delivery operations.",
     "logo": "/app/app-logo.png",
     "distribution": "marketplace",
     "auth": {
@@ -17,6 +17,7 @@
         "crm.objects.deals.write",
         "crm.objects.contacts.read",
         "crm.objects.companies.read",
+        "crm.objects.tasks.write",
         "crm.schemas.deals.read",
         "crm.schemas.deals.write"
       ],

@@ -88,10 +88,16 @@ export interface NotificationSettings {
   slack: SlackNotificationSettings;
 }
 
+export interface NativeSyncSettings {
+  enabled: boolean;
+  includeSummary: boolean;
+}
+
 export interface TenantSettings {
   rules: RuleSettings;
   digest: DigestSettings;
   notifications: NotificationSettings;
+  nativeSync: NativeSyncSettings;
 }
 
 export interface TenantRow {
@@ -149,15 +155,38 @@ export interface HubSpotSearchResponse {
   paging?: { next?: { after: string; link?: string } };
 }
 
+export interface HubSpotPropertyOption {
+  label: string;
+  value: string;
+  displayOrder: number;
+  hidden: boolean;
+}
+
+export interface HubSpotPropertyDefinition {
+  groupName: string;
+  name: string;
+  label: string;
+  description: string;
+  type: string;
+  fieldType: string;
+  options?: HubSpotPropertyOption[];
+}
+
 export interface HubSpotProperty {
   name: string;
   label: string;
   groupName: string;
   type: string;
   fieldType: string;
+  options?: HubSpotPropertyOption[];
   hidden?: boolean;
   calculated?: boolean;
   modificationMetadata?: { readOnlyValue?: boolean; readOnlyDefinition?: boolean };
+}
+
+export interface HubSpotDealUpdate {
+  id: string;
+  properties: Record<string, string>;
 }
 
 export interface HubSpotPipeline {

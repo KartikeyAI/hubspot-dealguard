@@ -45,6 +45,7 @@ jobs:
       SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
       DODO_API_KEY: ${{ secrets.DODO_API_KEY }}
       DODO_WEBHOOK_SECRET: ${{ secrets.DODO_WEBHOOK_SECRET }}
+      DODO_ENVIRONMENT: ${{ vars.DODO_ENVIRONMENT }}
       DODO_GROWTH_MONTHLY_PRODUCT_ID: ${{ vars.DODO_GROWTH_MONTHLY_PRODUCT_ID }}
       DODO_GROWTH_YEARLY_PRODUCT_ID: ${{ vars.DODO_GROWTH_YEARLY_PRODUCT_ID }}
       DODO_ENTERPRISE_MONTHLY_PRODUCT_ID: ${{ vars.DODO_ENTERPRISE_MONTHLY_PRODUCT_ID }}
@@ -98,6 +99,10 @@ jobs:
             for (const check of report.checks.filter((item) => !item.ok)) console.log(`- ❌ ${check.id}: ${check.detail}`);
             NODE
           fi
+
+      - name: Remove ephemeral rendered configuration
+        if: always()
+        run: rm -f .release/wrangler.toml
 
       - name: Upload non-sensitive release evidence
         if: always()

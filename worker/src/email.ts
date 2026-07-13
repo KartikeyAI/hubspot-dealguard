@@ -1,3 +1,4 @@
+import { dashboardForPortal } from './dashboard.js';
 import { AppError } from './errors.js';
 import { Repository } from './repository.js';
 import type { Env, TenantRow, TenantSettings } from './types.js';
@@ -20,7 +21,7 @@ export async function sendDueDigests(env: Env): Promise<void> {
   for (const tenant of tenants) {
     const settings = parseSettings(JSON.parse(tenant.settings_json), tenant.plan);
     if (!due(tenant, settings, now)) continue;
-    const summary = await repository.dashboard(tenant.portal_id);
+    const summary = await dashboardForPortal(env, tenant.portal_id);
     const topIssues = summary.topIssues.length
       ? summary.topIssues.map((item) => `<li>${escapeHtml(item.label)}: ${item.count}</li>`).join('')
       : '<li>No recurring readiness issues.</li>';

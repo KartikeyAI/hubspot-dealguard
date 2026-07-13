@@ -32,7 +32,7 @@ const encoder = new TextEncoder();
 
 function strings(value: unknown, max = 500): string[] {
   if (!Array.isArray(value)) return [];
-  return [...new Set(value.filter((item): item is string => typeof item === 'string' && item.trim()).map((item) => item.trim().slice(0, 256)))].slice(0, max);
+  return [...new Set(value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim())).map((item) => item.trim().slice(0, 256)))].slice(0, max);
 }
 
 function clean(value: unknown, max: number): string {

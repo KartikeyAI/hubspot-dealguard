@@ -211,7 +211,7 @@ export async function createCheckoutSession(
     body: JSON.stringify(body),
   });
   if (!result.checkout_url) throw new AppError(502, 'dodo_checkout_url_missing', 'Dodo Payments did not return a checkout URL.');
-  await new Repository(env).audit(identity.portalId, identity.userId, identity.userEmail, 'billing.checkout_created', { provider: 'dodo', tier, interval, ...metadata });
+  await new Repository(env).audit(identity.portalId, identity.userId, identity.userEmail, 'billing.checkout_created', { provider: 'dodo', ...metadata });
   return { url: result.checkout_url, sessionId: result.session_id ?? null };
 }
 
@@ -459,7 +459,7 @@ function constantTimeEqualBytes(left: Uint8Array, right: Uint8Array): boolean {
 }
 
 async function hmacBytes(secret: Uint8Array, value: string): Promise<Uint8Array> {
-  const key = await crypto.subtle.importKey('raw', secret, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const key = await crypto.subtle.importKey('raw', Uint8Array.from(secret).buffer, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   return new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(value)));
 }
 

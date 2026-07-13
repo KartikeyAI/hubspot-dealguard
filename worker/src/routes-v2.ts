@@ -211,11 +211,11 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
       }>(request);
       if (!body.tier) throw new AppError(400, 'subscription_tier_required', 'A commercial tier is required.');
       await setManualSubscription(env, subscriptionMatch[1]!, body.tier, body.currentPeriodEnd ?? null, {
-        contractReference: body.contractReference,
-        purchaseOrderReference: body.purchaseOrderReference,
-        currency: body.currency,
-        usageMode: body.usageMode,
-        overageEnabled: body.overageEnabled,
+        ...(body.contractReference !== undefined ? { contractReference: body.contractReference } : {}),
+        ...(body.purchaseOrderReference !== undefined ? { purchaseOrderReference: body.purchaseOrderReference } : {}),
+        ...(body.currency !== undefined ? { currency: body.currency } : {}),
+        ...(body.usageMode !== undefined ? { usageMode: body.usageMode } : {}),
+        ...(body.overageEnabled !== undefined ? { overageEnabled: body.overageEnabled } : {}),
       });
       return json({ ok: true, portalId: subscriptionMatch[1], tier: body.tier });
     }
@@ -241,7 +241,10 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
       identity,
       body.tier ?? 'growth',
       body.interval === 'year' ? 'year' : 'month',
-      { usageMode: body.usageMode, overageEnabled: body.overageEnabled },
+      {
+        ...(body.usageMode !== undefined ? { usageMode: body.usageMode } : {}),
+        ...(body.overageEnabled !== undefined ? { overageEnabled: body.overageEnabled } : {}),
+      },
     ));
   }
   if (url.pathname === '/api/v1/billing/portal') {

@@ -138,7 +138,7 @@ export async function routeEnterpriseApi(
         resourceType: body.resourceType,
         resourceId: body.resourceId,
         payload: body.payload,
-        expiresAt: body.expiresAt,
+        ...(body.expiresAt !== undefined ? { expiresAt: body.expiresAt } : {}),
       }), 201);
     }
     return methodNotAllowed(['GET', 'POST']);

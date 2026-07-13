@@ -85,7 +85,7 @@ const SYSTEM_TEMPLATES = [
 
 function strings(value: unknown, max = 100): string[] {
   if (!Array.isArray(value)) return [];
-  return [...new Set(value.filter((item): item is string => typeof item === 'string' && item.trim()).map((item) => item.trim().slice(0, 128)))].slice(0, max);
+  return [...new Set(value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim())).map((item) => item.trim().slice(0, 128)))].slice(0, max);
 }
 
 function finite(value: unknown): number | null {
@@ -232,7 +232,7 @@ export async function createPolicyFromTemplate(env: Env, identity: RequestIdenti
   if (templateId.startsWith('system:')) {
     const found = SYSTEM_TEMPLATES.find((item) => `system:${item.key}` === templateId);
     if (!found) throw new AppError(404, 'policy_template_not_found', 'The policy template does not exist.');
-    template = { name: found.name, description: found.description, rules: found.rules as RuleSettings, segments: found.segments as unknown as Array<Record<string, unknown>> };
+    template = { name: found.name, description: found.description, rules: found.rules as unknown as RuleSettings, segments: found.segments as unknown as Array<Record<string, unknown>> };
   } else {
     const row = await env.DB.prepare(`SELECT name, description, rules_json, segments_json FROM policy_templates WHERE id = ? AND (owner_portal_id = ? OR is_system = 1)`)
       .bind(templateId, identity.portalId).first<{ name: string; description: string; rules_json: string; segments_json: string }>();

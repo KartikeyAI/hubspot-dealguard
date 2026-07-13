@@ -11,6 +11,22 @@ interface DodoUsageEnv extends Env {
   DODO_RETENTION_EVENT_NAME?: string;
 }
 
+export type UsageAggregation = 'sum' | 'max';
+const AGGREGATIONS: Record<BillableMetric, UsageAggregation> = {
+  ai_credit: 'sum',
+  active_deal_overage: 'max',
+  event_overage: 'sum',
+  retention_gb_month: 'max',
+};
+
+export function usageAggregation(metric: BillableMetric): UsageAggregation {
+  return AGGREGATIONS[metric];
+}
+
+export function localUsageIncrement(metric: BillableMetric, current: number, quantity: number): number {
+  return usageAggregation(metric) === 'max' ? Math.max(0, quantity - current) : quantity;
+}
+
 function dodoBase(env: Env): string {
   return (env as DodoUsageEnv).DODO_ENVIRONMENT === 'live'
     ? 'https://live.dodopayments.com'
@@ -51,6 +67,19 @@ function metadataValues(
   return output;
 }
 
+function providerQuantity(
+  metric: BillableMetric,
+  storedQuantity: number,
+  metadata: Record<string, string | number | boolean | null>,
+): number {
+  if (usageAggregation(metric) === 'sum') return storedQuantity;
+  const value = Number(metadata.provider_quantity);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new AppError(500, 'gauge_usage_value_missing', `Gauge usage for ${metric} is missing its absolute provider quantity.`);
+  }
+  return value;
+}
+
 async function reportEvent(
   env: Env,
   row: {
@@ -70,6 +99,7 @@ async function reportEvent(
   }
   if (!cfg.DODO_API_KEY) throw new AppError(503, 'billing_not_configured', 'Dodo Payments usage reporting is not configured.');
   const providerEventId = `${row.portalId}:${row.idempotencyKey}`.slice(0, 255);
+  const absoluteQuantity = providerQuantity(row.metric, row.quantity, row.metadata);
   const response = await fetch(`${dodoBase(env)}/events/ingest`, {
     method: 'POST',
     headers: {
@@ -83,7 +113,7 @@ async function reportEvent(
         event_id: providerEventId,
         event_name: providerEventName(env, row.metric),
         timestamp: row.occurredAt,
-        metadata: metadataValues(row.portalId, row.quantity, row.metadata),
+        metadata: metadataValues(row.portalId, absoluteQuantity, row.metadata),
       }],
     }),
   });
@@ -97,6 +127,110 @@ async function reportEvent(
     `UPDATE billing_usage_events SET status = 'reported', provider_event_id = ?, reported_at = ?, error_message = NULL WHERE id = ?`,
   ).bind(providerEventId, new Date().toISOString(), row.id).run();
   return true;
+}
+
+async function recordSumUsage(
+  env: Env,
+  input: {
+    id: string;
+    portalId: string;
+    metric: BillableMetric;
+    quantity: number;
+    key: string;
+    metadataJson: string;
+    occurredAt: string;
+    start: string;
+    overageAllowed: number;
+    hardLimit: number | null;
+  },
+) {
+  return env.DB.batch([
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO billing_usage_counters (portal_id, metric, period_start, consumed_quantity, updated_at)
+       SELECT ?, ?, ?, COALESCE(SUM(quantity), 0), ? FROM billing_usage_events
+       WHERE portal_id = ? AND event_name = ? AND occurred_at >= ?`,
+    ).bind(input.portalId, input.metric, input.start, input.occurredAt, input.portalId, input.metric, input.start),
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO billing_usage_events
+       (id, portal_id, event_name, quantity, idempotency_key, status, metadata_json, occurred_at, created_at)
+       SELECT ?, ?, ?, ?, ?, 'pending', ?, ?, ?
+       WHERE (? = 1 OR ? IS NULL OR
+         COALESCE((SELECT consumed_quantity FROM billing_usage_counters
+                   WHERE portal_id = ? AND metric = ? AND period_start = ?), 0) + ? <= ?)`,
+    ).bind(
+      input.id, input.portalId, input.metric, input.quantity, input.key, input.metadataJson,
+      input.occurredAt, input.occurredAt, input.overageAllowed, input.hardLimit,
+      input.portalId, input.metric, input.start, input.quantity, input.hardLimit,
+    ),
+    env.DB.prepare(
+      `INSERT INTO billing_usage_counters (portal_id, metric, period_start, consumed_quantity, updated_at)
+       SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM billing_usage_events WHERE id = ?)
+       ON CONFLICT(portal_id, metric, period_start) DO UPDATE SET
+         consumed_quantity = billing_usage_counters.consumed_quantity + excluded.consumed_quantity,
+         updated_at = excluded.updated_at`,
+    ).bind(input.portalId, input.metric, input.start, input.quantity, input.occurredAt, input.id),
+  ]);
+}
+
+async function recordGaugeUsage(
+  env: Env,
+  input: {
+    id: string;
+    portalId: string;
+    metric: BillableMetric;
+    quantity: number;
+    key: string;
+    metadataJson: string;
+    occurredAt: string;
+    start: string;
+    overageAllowed: number;
+    hardLimit: number | null;
+  },
+) {
+  return env.DB.batch([
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO billing_usage_counters (portal_id, metric, period_start, consumed_quantity, updated_at)
+       SELECT ?, ?, ?, COALESCE(MAX(
+         CASE WHEN json_valid(metadata_json)
+           THEN COALESCE(CAST(json_extract(metadata_json, '$.provider_quantity') AS REAL), quantity)
+           ELSE quantity END
+       ), 0), ? FROM billing_usage_events
+       WHERE portal_id = ? AND event_name = ? AND occurred_at >= ?`,
+    ).bind(input.portalId, input.metric, input.start, input.occurredAt, input.portalId, input.metric, input.start),
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO billing_usage_events
+       (id, portal_id, event_name, quantity, idempotency_key, status, metadata_json, occurred_at, created_at)
+       SELECT ?, ?, ?, MAX(0, ? - COALESCE((
+         SELECT consumed_quantity FROM billing_usage_counters
+         WHERE portal_id = ? AND metric = ? AND period_start = ?
+       ), 0)), ?, 'pending', ?, ?, ?
+       WHERE (? = 1 OR ? IS NULL OR ? <= ?)`,
+    ).bind(
+      input.id,
+      input.portalId,
+      input.metric,
+      input.quantity,
+      input.quantity,
+      input.portalId,
+      input.metric,
+      input.start,
+      input.key,
+      input.metadataJson,
+      input.occurredAt,
+      input.occurredAt,
+      input.overageAllowed,
+      input.hardLimit,
+      input.quantity,
+      input.hardLimit,
+    ),
+    env.DB.prepare(
+      `INSERT INTO billing_usage_counters (portal_id, metric, period_start, consumed_quantity, updated_at)
+       SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM billing_usage_events WHERE id = ?)
+       ON CONFLICT(portal_id, metric, period_start) DO UPDATE SET
+         consumed_quantity = MAX(billing_usage_counters.consumed_quantity, excluded.consumed_quantity),
+         updated_at = excluded.updated_at`,
+    ).bind(input.portalId, input.metric, input.start, input.quantity, input.occurredAt, input.id),
+  ]);
 }
 
 export async function recordUsageAtomic(
@@ -118,32 +252,25 @@ export async function recordUsageAtomic(
   const key = idempotencyKey.trim().slice(0, 255);
   const overageAllowed = allowance.overageEnabled ? 1 : 0;
   const hardLimit = allowance.hardLimit;
-
-  const results = await env.DB.batch([
-    env.DB.prepare(
-      `INSERT OR IGNORE INTO billing_usage_counters (portal_id, metric, period_start, consumed_quantity, updated_at)
-       SELECT ?, ?, ?, COALESCE(SUM(quantity), 0), ? FROM billing_usage_events
-       WHERE portal_id = ? AND event_name = ? AND occurred_at >= ?`,
-    ).bind(portalId, metric, start, occurredAt, portalId, metric, start),
-    env.DB.prepare(
-      `INSERT OR IGNORE INTO billing_usage_events
-       (id, portal_id, event_name, quantity, idempotency_key, status, metadata_json, occurred_at, created_at)
-       SELECT ?, ?, ?, ?, ?, 'pending', ?, ?, ?
-       WHERE (? = 1 OR ? IS NULL OR
-         COALESCE((SELECT consumed_quantity FROM billing_usage_counters
-                   WHERE portal_id = ? AND metric = ? AND period_start = ?), 0) + ? <= ?)`,
-    ).bind(
-      id, portalId, metric, quantity, key, JSON.stringify(metadata), occurredAt, occurredAt,
-      overageAllowed, hardLimit, portalId, metric, start, quantity, hardLimit,
-    ),
-    env.DB.prepare(
-      `INSERT INTO billing_usage_counters (portal_id, metric, period_start, consumed_quantity, updated_at)
-       SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM billing_usage_events WHERE id = ?)
-       ON CONFLICT(portal_id, metric, period_start) DO UPDATE SET
-         consumed_quantity = billing_usage_counters.consumed_quantity + excluded.consumed_quantity,
-         updated_at = excluded.updated_at`,
-    ).bind(portalId, metric, start, quantity, occurredAt, id),
-  ]);
+  const aggregation = usageAggregation(metric);
+  const enrichedMetadata = aggregation === 'max'
+    ? { ...metadata, provider_quantity: quantity, aggregation }
+    : { ...metadata, aggregation };
+  const common = {
+    id,
+    portalId,
+    metric,
+    quantity,
+    key,
+    metadataJson: JSON.stringify(enrichedMetadata),
+    occurredAt,
+    start,
+    overageAllowed,
+    hardLimit,
+  };
+  const results = aggregation === 'max'
+    ? await recordGaugeUsage(env, common)
+    : await recordSumUsage(env, common);
 
   const inserted = Number(results[1]?.meta?.changes ?? 0) > 0;
   if (!inserted) {
@@ -154,15 +281,18 @@ export async function recordUsageAtomic(
     throw new AppError(402, 'usage_limit_reached', `The ${metric} allowance has been exhausted and overage is disabled.`, { metric, allowance });
   }
 
+  const storedQuantity = aggregation === 'max'
+    ? localUsageIncrement(metric, allowance.consumedQuantity, quantity)
+    : quantity;
   try {
     const reported = await reportEvent(env, {
       id,
       portalId,
       metric,
-      quantity,
+      quantity: storedQuantity,
       idempotencyKey: key,
       occurredAt,
-      metadata,
+      metadata: enrichedMetadata,
     });
     return { recorded: true, reported };
   } catch (error) {

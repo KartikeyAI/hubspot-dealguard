@@ -3,7 +3,7 @@
   "type": "app",
   "config": {
     "name": "DealGuard by Rokad",
-    "description": "Detects risky, incomplete, and stale HubSpot deals, sends governed Slack alerts, and automates closed-won handoffs.",
+    "description": "Detects risky HubSpot deals, persists readiness signals for native reporting and automation, sends governed Slack alerts, and manages handoffs.",
     "logo": "/app/app-logo.png",
     "distribution": "marketplace",
     "auth": {
@@ -14,9 +14,11 @@
       ],
       "requiredScopes": [
         "crm.objects.deals.read",
+        "crm.objects.deals.write",
         "crm.objects.contacts.read",
         "crm.objects.companies.read",
-        "crm.schemas.deals.read"
+        "crm.schemas.deals.read",
+        "crm.schemas.deals.write"
       ],
       "optionalScopes": [],
       "conditionallyRequiredScopes": []

@@ -1,6 +1,6 @@
 import { DEFAULT_SETTINGS, PLAN_LIMITS } from './config.js';
 import { AppError } from './errors.js';
-import type { CustomPropertyRule, DigestSettings, NotificationSettings, RuleSettings, TenantSettings, PlanId, IssueSeverity } from './types.js';
+import type { CustomPropertyRule, DigestSettings, NativeSyncSettings, NotificationSettings, RuleSettings, TenantSettings, PlanId, IssueSeverity } from './types.js';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PROPERTY_PATTERN = /^[a-zA-Z][a-zA-Z0-9_]{0,127}$/;
@@ -71,5 +71,10 @@ export function parseSettings(value: unknown, plan: PlanId): TenantSettings {
       cooldownMinutes: boundedInteger(slackInput.cooldownMinutes, DEFAULT_SETTINGS.notifications.slack.cooldownMinutes, 15, 1440),
     },
   };
-  return { rules, digest, notifications };
+  const nativeInput = input.nativeSync && typeof input.nativeSync === 'object' ? input.nativeSync as Record<string, unknown> : {};
+  const nativeSync: NativeSyncSettings = {
+    enabled: limits.nativeSync && bool(nativeInput.enabled, false),
+    includeSummary: bool(nativeInput.includeSummary, DEFAULT_SETTINGS.nativeSync.includeSummary),
+  };
+  return { rules, digest, notifications, nativeSync };
 }

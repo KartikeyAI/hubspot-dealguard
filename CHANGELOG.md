@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.2.0-beta.1 — 2026-07-13
+
+### Added
+
+- Seven fixed, namespaced HubSpot deal properties for readiness score, status, grade, issue count, handoff state, latest assessment time, and optional summary.
+- Growth-only property provisioning with schema versioning and incompatible-property conflict detection.
+- Per-assessment native write-back from record, webhook, and workflow execution paths.
+- Batched native property updates during portal scans.
+- Controlled backfill of existing DealGuard assessments.
+- Native sync status, error, provisioning, and backfill controls in HubSpot settings.
+- Reusable workflow outputs for score, status, grade, issue count, handoff status, summary, and assessment time.
+- Automated native property mapping and entitlement tests.
+
+### Changed
+
+- HubSpot OAuth now requests `crm.objects.deals.write` and `crm.schemas.deals.write` for DealGuard-owned property creation and updates.
+- Existing installations require reauthorization after the v1.2 app update.
+- DealGuard writes remain disabled by default and are limited to the fixed `dealguard_*` property set.
+- Version advanced to `1.2.0-beta.1` across Worker and UI extension packages.
+
 ## 1.1.0-beta.1 — 2026-07-13
 
 ### Added

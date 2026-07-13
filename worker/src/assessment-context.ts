@@ -13,10 +13,10 @@ export async function saveAssessmentContext(env: Env, portalId: string, assessme
   ).bind(
     portalId,
     assessment.dealId,
-    assessment.dealAmount,
-    assessment.ownerId,
-    assessment.pipelineId,
-    assessment.stageId,
+    assessment.dealAmount ?? null,
+    assessment.ownerId ?? null,
+    assessment.pipelineId ?? '',
+    assessment.stageId ?? '',
     assessment.assessedAt,
   ).run();
 }

@@ -3,6 +3,7 @@ import { recordUsageAtomic } from './billing-usage.js';
 import { PLAN_LIMITS } from './config.js';
 import { captureAnalyticsSnapshot } from './enterprise-analytics.js';
 import { recordAssessmentHistory } from './enterprise-analytics-v2.js';
+import { AppError } from './errors.js';
 import { recordServiceFailure, recordServiceSuccess } from './health.js';
 import { HubSpotClient } from './hubspot.js';
 import { syncAssessmentBatchIfEnabled } from './native-sync.js';
@@ -23,6 +24,37 @@ interface ScanCheckpointState {
   processedDealIds?: string[];
 }
 
+async function reserveScanUsage(
+  env: Env,
+  portalId: string,
+  scanId: string,
+  trigger: string,
+  activeDealCount: number,
+  eventCount: number,
+): Promise<void> {
+  for (const item of [
+    { metric: 'active_deal_overage' as const, quantity: activeDealCount, key: `scan-deals:${scanId}` },
+    { metric: 'event_overage' as const, quantity: eventCount, key: `scan-events:${scanId}` },
+  ]) {
+    try {
+      await recordUsageAtomic(env, portalId, item.metric, item.quantity, item.key, {
+        trigger,
+        scan_id: scanId,
+      });
+    } catch (error) {
+      if (error instanceof AppError && error.status === 402) throw error;
+      console.error(JSON.stringify({
+        level: 'error',
+        task: 'scan_usage_reporting',
+        portalId,
+        scanId,
+        metric: item.metric,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }
+}
+
 export async function scanPortal(
   env: Env,
   portalId: string,
@@ -37,6 +69,9 @@ export async function scanPortal(
   try {
     const dimensionProperties = await policyDimensionPropertyNames(env, portalId);
     const deals = await client.listDeals(PLAN_LIMITS[client.plan].maxDealsPerScan, dimensionProperties);
+    const activeDealCount = deals.filter((deal) => !deal.stage?.isClosed).length;
+    await reserveScanUsage(env, portalId, scanId, trigger, activeDealCount, deals.length);
+
     const checkpoint = await getScanCheckpoint(env, scanId, portalId);
     const state = checkpoint?.state && typeof checkpoint.state === 'object'
       ? checkpoint.state as ScanCheckpointState
@@ -109,12 +144,6 @@ export async function scanPortal(
     await recordServiceSuccess(env, portalId, 'scan');
     await recordOperationalMetric(env, { portalId, service: 'scan', metric: 'success', value: 1, dimensions: { trigger } });
     await recordOperationalMetric(env, { portalId, service: 'scan', metric: 'latency_ms', value: Date.now() - startedAt, dimensions: { trigger, scanned: processedDealIds.size } });
-    try {
-      await recordUsageAtomic(env, portalId, 'active_deal_overage', processedDealIds.size, `scan-deals:${scanId}`, { trigger, scan_id: scanId });
-      await recordUsageAtomic(env, portalId, 'event_overage', processedDealIds.size, `scan-events:${scanId}`, { trigger, scan_id: scanId });
-    } catch (error) {
-      console.error(JSON.stringify({ level: 'error', task: 'scan_usage', portalId, scanId, error: error instanceof Error ? error.message : String(error) }));
-    }
     await repository.audit(portalId, null, null, 'scan.completed', { scanId, trigger, ...counts });
     return { scanId, ...counts };
   } catch (error) {

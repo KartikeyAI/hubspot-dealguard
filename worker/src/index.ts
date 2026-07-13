@@ -1,5 +1,5 @@
 import { promoteLegacyAuditEvents } from './audit-chain.js';
-import { applyScheduledPlanChanges } from './billing.js';
+import { applyManualScheduledPlanChanges } from './billing-scheduler.js';
 import { retryAtomicUsageReports } from './billing-usage.js';
 import { applyComplianceRetention, dispatchSiemEvents } from './compliance.js';
 import { sendDueDigests } from './email.js';
@@ -42,7 +42,7 @@ export default {
     ctx.waitUntil(dispatchSiemEvents(env));
     ctx.waitUntil(runDueSyntheticChecks(env));
     ctx.waitUntil(retryAtomicUsageReports(env));
-    ctx.waitUntil(applyScheduledPlanChanges(env));
+    ctx.waitUntil(applyManualScheduledPlanChanges(env));
     ctx.waitUntil(expirePolicyExceptions(env));
     ctx.waitUntil(sendDueDigests(env));
     ctx.waitUntil(applyComplianceRetention(env));

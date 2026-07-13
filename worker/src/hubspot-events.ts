@@ -1,5 +1,6 @@
-import { sha256Hex } from './crypto.js';
 import { assessDealForPortal } from './assessment-service.js';
+import { sha256Hex } from './crypto.js';
+import { recordServiceFailure, recordServiceSuccess } from './health.js';
 import type { Env } from './types.js';
 
 export interface HubSpotWebhookEvent {
@@ -67,12 +68,14 @@ export async function processHubSpotWebhookEvents(env: Env, events: HubSpotWebho
       for (const key of item.keys) {
         await env.DB.prepare(`UPDATE inbound_events SET status = 'processed', processed_at = ? WHERE event_key = ?`).bind(now, key).run();
       }
+      await recordServiceSuccess(env, item.portalId, 'webhook');
     } catch (error) {
       const message = (error instanceof Error ? error.message : String(error)).slice(0, 1000);
       for (const key of item.keys) {
         await env.DB.prepare(`UPDATE inbound_events SET status = 'failed', processed_at = ?, error_message = ? WHERE event_key = ?`)
           .bind(new Date().toISOString(), message, key).run();
       }
+      await recordServiceFailure(env, item.portalId, error);
     }
   }
 }

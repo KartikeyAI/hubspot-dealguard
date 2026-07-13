@@ -236,9 +236,14 @@ test('release source uses hardened Dodo, approval, dimension and simulation runt
 
 test('HubSpot App Home points to the complete enterprise console', async () => {
   const metadata = JSON.parse(await readFile('src/app/pages/pages-hsmeta.json', 'utf8'));
-  assert.equal(metadata.config.entrypoint, '/app/pages/EnterpriseHomeV2.tsx');
-  const source = await readFile('src/app/pages/EnterpriseHomeV2.tsx', 'utf8');
+  assert.equal(metadata.config.entrypoint, '/app/pages/EnterpriseHomeV3.tsx');
+  const source = await readFile('src/app/pages/EnterpriseHomeV3.tsx', 'utf8');
   for (const section of ['policies', 'analytics', 'access', 'remediation', 'alerts', 'compliance', 'reliability', 'billing']) {
     assert.match(source, new RegExp(`'${section}'`));
   }
+  assert.match(source, /\/enterprise\/policy-dimensions/);
+  assert.match(source, /\/billing\/plan-change\/preview/);
+  assert.match(source, /\/billing\/plan-change/);
+  assert.match(source, /\/enterprise\/change-approvals/);
+  assert.match(source, /Production-equivalent simulation started/);
 });

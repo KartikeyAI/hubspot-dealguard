@@ -1,9 +1,10 @@
 import { saveAssessmentContext } from './assessment-context.js';
-import { recordUsage } from './billing.js';
+import { recordUsageAtomic } from './billing-usage.js';
 import { recordAssessmentHistory } from './enterprise-analytics-v2.js';
 import { resolveSegmentedRules } from './enterprise-policy.js';
 import { HubSpotClient } from './hubspot.js';
 import { syncAssessmentIfEnabled } from './native-sync.js';
+import { policyDimensionPropertyNames } from './policy-dimensions.js';
 import { syncAssessmentRemediations } from './remediation.js';
 import { recordOperationalMetric } from './reliability.js';
 import { Repository } from './repository.js';
@@ -22,7 +23,8 @@ export async function assessDealForPortal(
   const repository = new Repository(env);
   const previous = await repository.getAssessment(portalId, dealId);
   const client = await HubSpotClient.forPortal(env, portalId);
-  const deal = await client.getDeal(dealId);
+  const dimensionProperties = await policyDimensionPropertyNames(env, portalId);
+  const deal = await client.getDeal(dealId, undefined, dimensionProperties);
   const policy = await resolveSegmentedRules(env, portalId, client.settings.rules, deal);
   const assessment = assessDeal(deal, policy.rules);
   await repository.saveAssessment(portalId, assessment);
@@ -50,7 +52,7 @@ export async function assessDealForPortal(
     console.error(JSON.stringify({ level: 'error', task: 'remediation_assessment_sync', portalId, dealId, trigger, error: error instanceof Error ? error.message : String(error) }));
   }
   try {
-    await recordUsage(env, portalId, 'event_overage', 1, `assessment:${trigger}:${dealId}:${assessment.assessedAt}`, {
+    await recordUsageAtomic(env, portalId, 'event_overage', 1, `assessment:${trigger}:${dealId}:${assessment.assessedAt}`, {
       trigger,
       deal_id: dealId,
       policy_id: policy.policyId,

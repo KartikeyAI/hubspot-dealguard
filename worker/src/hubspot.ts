@@ -3,9 +3,11 @@ import { AppError } from './errors.js';
 import { Repository, type TenantCredentials } from './repository.js';
 import type {
   Env,
+  HubSpotDealUpdate,
   HubSpotObject,
   HubSpotPipeline,
   HubSpotProperty,
+  HubSpotPropertyDefinition,
   HubSpotSearchResponse,
   HubSpotTokenInfo,
   HubSpotTokenResponse,
@@ -119,11 +121,59 @@ export class HubSpotClient {
     return response.results;
   }
 
-  async getDealProperties(): Promise<HubSpotProperty[]> {
+  async getAllDealProperties(): Promise<HubSpotProperty[]> {
     const response = await this.request<{ results: HubSpotProperty[] }>('/crm/v3/properties/deals?archived=false');
-    return response.results
+    return response.results;
+  }
+
+  async getDealProperties(): Promise<HubSpotProperty[]> {
+    return (await this.getAllDealProperties())
       .filter((property) => !property.hidden && !property.calculated && !property.modificationMetadata?.readOnlyValue)
       .sort((left, right) => left.label.localeCompare(right.label));
+  }
+
+  async ensureDealProperties(definitions: HubSpotPropertyDefinition[]): Promise<void> {
+    const existing = new Map((await this.getAllDealProperties()).map((property) => [property.name, property]));
+    for (const definition of definitions) {
+      const current = existing.get(definition.name);
+      if (current) {
+        if (current.type !== definition.type || current.fieldType !== definition.fieldType) {
+          throw new AppError(
+            409,
+            'native_property_conflict',
+            `HubSpot property ${definition.name} already exists with an incompatible type.`,
+          );
+        }
+        continue;
+      }
+      await this.request<HubSpotProperty>('/crm/v3/properties/deals', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...definition,
+          hidden: false,
+          formField: false,
+          hasUniqueValue: false,
+        }),
+      });
+    }
+  }
+
+  async updateDealProperties(dealId: string, properties: Record<string, string>): Promise<void> {
+    await this.request<HubSpotObject>(`/crm/v3/objects/deals/${encodeURIComponent(dealId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ properties }),
+    });
+  }
+
+  async batchUpdateDeals(updates: HubSpotDealUpdate[]): Promise<void> {
+    for (let offset = 0; offset < updates.length; offset += 100) {
+      const batch = updates.slice(offset, offset + 100);
+      if (batch.length === 0) continue;
+      await this.request<{ results: HubSpotObject[] }>('/crm/v3/objects/deals/batch/update', {
+        method: 'POST',
+        body: JSON.stringify({ inputs: batch }),
+      });
+    }
   }
 
   async buildStageMap(): Promise<Map<string, StageInfo>> {
@@ -178,9 +228,7 @@ export class HubSpotClient {
     while (deals.length < maxDeals) {
       const limit = Math.min(100, maxDeals - deals.length);
       const filters: Array<Record<string, unknown>> = [{ propertyName: 'dealstage', operator: 'HAS_PROPERTY' }];
-      if (closedLostStageIds.length > 0) {
-        filters.push({ propertyName: 'dealstage', operator: 'NOT_IN', values: closedLostStageIds });
-      }
+      if (closedLostStageIds.length > 0) filters.push({ propertyName: 'dealstage', operator: 'NOT_IN', values: closedLostStageIds });
       const body: Record<string, unknown> = {
         limit,
         properties,

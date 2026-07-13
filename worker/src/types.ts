@@ -45,6 +45,8 @@ export interface Env {
 export type PlanId = 'free' | 'growth' | 'beta_growth';
 export type AssessmentStatus = 'ready' | 'at_risk' | 'critical';
 export type IssueSeverity = 'info' | 'warning' | 'critical';
+export type GovernanceRole = 'admin' | 'policy_admin' | 'approver' | 'manager' | 'viewer';
+export type PolicyStatus = 'draft' | 'pending_approval' | 'approved' | 'published' | 'superseded' | 'rejected';
 
 export interface RuleSettings {
   staleDays: number;
@@ -93,11 +95,18 @@ export interface NativeSyncSettings {
   includeSummary: boolean;
 }
 
+export interface GovernanceSettings {
+  enabled: boolean;
+  requireApproval: boolean;
+  preventSelfApproval: boolean;
+}
+
 export interface TenantSettings {
   rules: RuleSettings;
   digest: DigestSettings;
   notifications: NotificationSettings;
   nativeSync: NativeSyncSettings;
+  governance: GovernanceSettings;
 }
 
 export interface TenantRow {
@@ -235,6 +244,10 @@ export interface DealAssessment {
   dealName: string;
   pipelineLabel: string;
   stageLabel: string;
+  pipelineId: string;
+  stageId: string;
+  ownerId: string | null;
+  dealAmount: number | null;
   score: number;
   grade: 'A' | 'B' | 'C' | 'D' | 'F';
   status: AssessmentStatus;
@@ -287,4 +300,73 @@ export interface RequestIdentity {
   userId: string | null;
   userEmail: string | null;
   appId: string | null;
+}
+
+export interface GovernanceContext {
+  role: GovernanceRole;
+  permissions: string[];
+  governanceEnabled: boolean;
+  installerBootstrap: boolean;
+}
+
+export interface PolicyVersion {
+  id: string;
+  portalId: string;
+  versionNumber: number;
+  name: string;
+  description: string;
+  status: PolicyStatus;
+  rules: RuleSettings;
+  checksum: string;
+  changeSummary: string;
+  basedOnPolicyId: string | null;
+  createdByUserId: string | null;
+  createdByEmail: string | null;
+  submittedAt: string | null;
+  approvedAt: string | null;
+  approvedByEmail: string | null;
+  publishedAt: string | null;
+  publishedByEmail: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PolicySimulation {
+  id: string;
+  policyId: string;
+  status: 'running' | 'completed' | 'failed';
+  totalDeals: number;
+  changedDeals: number;
+  readyDeals: number;
+  atRiskDeals: number;
+  criticalDeals: number;
+  averageScore: number;
+  previousAverageScore: number;
+  errorMessage: string | null;
+  startedAt: string;
+  completedAt: string | null;
+}
+
+export interface EnterpriseAnalyticsSnapshot {
+  date: string;
+  totalDeals: number;
+  readyDeals: number;
+  atRiskDeals: number;
+  criticalDeals: number;
+  averageScore: number;
+  totalPipelineAmount: number;
+  amountAtRisk: number;
+  incompleteHandoffs: number;
+}
+
+export interface EnterpriseOverview {
+  governance: GovernanceContext;
+  activePolicy: PolicyVersion | null;
+  latestSimulation: PolicySimulation | null;
+  current: EnterpriseAnalyticsSnapshot;
+  trend: EnterpriseAnalyticsSnapshot[];
+  byPipeline: Array<{ pipelineId: string; pipelineLabel: string; totalDeals: number; criticalDeals: number; amountAtRisk: number; averageScore: number }>;
+  byOwner: Array<{ ownerId: string; totalDeals: number; criticalDeals: number; amountAtRisk: number; averageScore: number }>;
+  pendingApprovals: number;
+  openExceptions: number;
 }

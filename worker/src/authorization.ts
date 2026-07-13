@@ -18,6 +18,10 @@ const OPERATIONAL_PERMISSIONS: Record<GovernanceRole, OperationalPermission[]> =
   viewer: [],
 };
 
+export function operationalPermissionsForRole(role: GovernanceRole): OperationalPermission[] {
+  return [...OPERATIONAL_PERMISSIONS[role]];
+}
+
 export async function requireOperationalPermission(
   env: Env,
   identity: RequestIdentity,

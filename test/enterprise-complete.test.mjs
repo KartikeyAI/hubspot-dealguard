@@ -199,7 +199,8 @@ test('enterprise migrations cover every A-H domain and hardening layer', async (
 
 test('release source uses hardened Dodo, approval, dimension and simulation runtimes', async () => {
   const billing = await readFile('worker/src/billing.ts', 'utf8');
-  const router = await readFile('worker/src/routes-v8.ts', 'utf8');
+  const simulationRouter = await readFile('worker/src/routes-v8.ts', 'utf8');
+  const handoffRouter = await readFile('worker/src/routes-v9.ts', 'utf8');
   const planChange = await readFile('worker/src/dodo-plan-change.ts', 'utf8');
   const scheduler = await readFile('worker/src/billing-scheduler.ts', 'utf8');
   const index = await readFile('worker/src/index.ts', 'utf8');
@@ -215,11 +216,13 @@ test('release source uses hardened Dodo, approval, dimension and simulation runt
   assert.match(planChange, /on_payment_failure/);
   assert.match(scheduler, /provider = 'manual'/);
   assert.doesNotMatch(scheduler, /provider = 'dodo'/);
-  assert.match(index, /routes-v8/);
+  assert.match(index, /routes-v9/);
   assert.match(index, /applyManualScheduledPlanChanges/);
   assert.doesNotMatch(index, /applyScheduledPlanChanges/);
   assert.match(index, /retryAtomicUsageReports/);
-  assert.match(router, /runEnterprisePolicySimulation/);
+  assert.match(simulationRouter, /runEnterprisePolicySimulation/);
+  assert.match(handoffRouter, /policyDimensionPropertyNames/);
+  assert.match(handoffRouter, /resolveSegmentedRulesForDeal/);
   assert.match(scanner, /reserveScanUsage/);
   assert.match(scanner, /policyDimensionPropertyNames/);
   assert.match(scanner, /resolveSegmentedRulesForDeal/);

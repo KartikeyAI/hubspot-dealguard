@@ -1,9 +1,9 @@
 {
   "name": "@rokadhq/hubspot-dealguard",
-  "version": "1.4.0-beta.1",
+  "version": "2.0.0-rc.1",
   "private": true,
   "type": "module",
-  "description": "DealGuard by Rokad — enterprise HubSpot revenue governance, remediation, and delivery operations.",
+  "description": "DealGuard by Rokad — enterprise HubSpot revenue governance, remediation, compliance, reliability, analytics, and Dodo Payments commercial operations.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",

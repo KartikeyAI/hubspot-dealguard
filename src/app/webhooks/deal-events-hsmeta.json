@@ -1,0 +1,22 @@
+{
+  "uid": "dealguard_deal_events",
+  "type": "webhooks",
+  "config": {
+    "settings": {
+      "targetUrl": "https://dealguard-api.rokad.co/webhooks/hubspot",
+      "maxConcurrentRequests": 10
+    },
+    "subscriptions": {
+      "crmObjects": [
+        { "subscriptionType": "object.creation", "objectType": "deal", "active": true },
+        { "subscriptionType": "object.propertyChange", "objectType": "deal", "propertyName": "dealstage", "active": true },
+        { "subscriptionType": "object.propertyChange", "objectType": "deal", "propertyName": "hubspot_owner_id", "active": true },
+        { "subscriptionType": "object.propertyChange", "objectType": "deal", "propertyName": "amount", "active": true },
+        { "subscriptionType": "object.propertyChange", "objectType": "deal", "propertyName": "closedate", "active": true },
+        { "subscriptionType": "object.propertyChange", "objectType": "deal", "propertyName": "hs_next_step", "active": true }
+      ],
+      "legacyCrmObjects": [],
+      "hubEvents": []
+    }
+  }
+}

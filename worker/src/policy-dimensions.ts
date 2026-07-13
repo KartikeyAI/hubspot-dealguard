@@ -1,4 +1,4 @@
-import { requireGovernancePermission } from './governance.js';
+import { requireEnterprisePermission } from './enterprise-access.js';
 import { HubSpotClient } from './hubspot.js';
 import { AppError } from './errors.js';
 import { Repository } from './repository.js';
@@ -56,7 +56,7 @@ export async function updatePolicyDimensionMappings(
   identity: RequestIdentity,
   value: unknown,
 ): Promise<PolicyDimensionMappings> {
-  await requireGovernancePermission(env, identity, 'policy.manage');
+  await requireEnterprisePermission(env, identity, 'policy.manage');
   const input = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const mappings: PolicyDimensionMappings = {
     teamProperty: property(input.teamProperty),

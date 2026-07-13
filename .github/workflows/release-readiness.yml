@@ -1,0 +1,112 @@
+name: Release readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Protected release environment
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+      include_hubspot_upload:
+        description: Require HubSpot CLI configuration in preflight
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dealguard-release-readiness-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    environment: dealguard-${{ inputs.target }}
+    timeout-minutes: 30
+    env:
+      RELEASE_TARGET: ${{ inputs.target }}
+      RELEASE_INCLUDE_HUBSPOT_UPLOAD: ${{ inputs.include_hubspot_upload }}
+      APP_BASE_URL: ${{ vars.APP_BASE_URL }}
+      HUBSPOT_APP_ID: ${{ vars.HUBSPOT_APP_ID }}
+      HUBSPOT_CLIENT_ID: ${{ vars.HUBSPOT_CLIENT_ID }}
+      HUBSPOT_CLIENT_SECRET: ${{ secrets.HUBSPOT_CLIENT_SECRET }}
+      HUBSPOT_CLI_CONFIG_B64: ${{ secrets.HUBSPOT_CLI_CONFIG_B64 }}
+      TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+      ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
+      D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      SLACK_CLIENT_ID: ${{ vars.SLACK_CLIENT_ID }}
+      SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
+      DODO_API_KEY: ${{ secrets.DODO_API_KEY }}
+      DODO_WEBHOOK_SECRET: ${{ secrets.DODO_WEBHOOK_SECRET }}
+      DODO_GROWTH_MONTHLY_PRODUCT_ID: ${{ vars.DODO_GROWTH_MONTHLY_PRODUCT_ID }}
+      DODO_GROWTH_YEARLY_PRODUCT_ID: ${{ vars.DODO_GROWTH_YEARLY_PRODUCT_ID }}
+      DODO_ENTERPRISE_MONTHLY_PRODUCT_ID: ${{ vars.DODO_ENTERPRISE_MONTHLY_PRODUCT_ID }}
+      DODO_ENTERPRISE_YEARLY_PRODUCT_ID: ${{ vars.DODO_ENTERPRISE_YEARLY_PRODUCT_ID }}
+      DODO_AI_CREDIT_EVENT_NAME: ${{ vars.DODO_AI_CREDIT_EVENT_NAME }}
+      DODO_ACTIVE_DEAL_EVENT_NAME: ${{ vars.DODO_ACTIVE_DEAL_EVENT_NAME }}
+      DODO_EVENT_OVERAGE_EVENT_NAME: ${{ vars.DODO_EVENT_OVERAGE_EVENT_NAME }}
+      DODO_RETENTION_EVENT_NAME: ${{ vars.DODO_RETENTION_EVENT_NAME }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: |
+          npm install --ignore-scripts --silent
+          npm install --ignore-scripts --silent --prefix src/app/cards
+          npm install --ignore-scripts --silent --prefix src/app/settings
+          npm install --ignore-scripts --silent --prefix src/app/pages
+
+      - name: Run complete repository gate
+        run: npm run check
+
+      - name: Run release preflight
+        run: npm run release:preflight
+
+      - name: Build deployable Worker bundle without publishing
+        run: |
+          mkdir -p .release/worker
+          npx wrangler deploy --dry-run --outdir .release/worker --config .release/wrangler.toml
+
+      - name: Record release checksums
+        run: |
+          find .release/worker -type f -print0 | sort -z | xargs -0 sha256sum > .release/worker-checksums.txt
+          sha256sum src/app/*.json src/app/*/*.json > .release/hubspot-manifest-checksums.txt
+
+      - name: Publish readiness summary
+        if: always()
+        run: |
+          if [ -f .release/preflight.json ]; then
+            node - <<'NODE' >> "$GITHUB_STEP_SUMMARY"
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('.release/preflight.json', 'utf8'));
+            console.log('## DealGuard release readiness');
+            console.log(`- Target: **${report.target}**`);
+            console.log(`- Version: **${report.releaseVersion}**`);
+            console.log(`- Passed: **${report.summary.passed}/${report.summary.total}**`);
+            for (const check of report.checks.filter((item) => !item.ok)) console.log(`- ❌ ${check.id}: ${check.detail}`);
+            NODE
+          fi
+
+      - name: Upload non-sensitive release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dealguard-release-readiness-${{ inputs.target }}-${{ github.run_id }}
+          path: |
+            .release/preflight.json
+            .release/worker-checksums.txt
+            .release/hubspot-manifest-checksums.txt
+          if-no-files-found: warn
+          retention-days: 30

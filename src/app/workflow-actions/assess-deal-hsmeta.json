@@ -22,11 +22,20 @@
         "isRequired": true
       }
     ],
+    "outputFields": [
+      { "typeDefinition": { "name": "readinessScore", "type": "number", "fieldType": "number" } },
+      { "typeDefinition": { "name": "readinessStatus", "type": "string", "fieldType": "text" } },
+      { "typeDefinition": { "name": "readinessGrade", "type": "string", "fieldType": "text" } },
+      { "typeDefinition": { "name": "issueCount", "type": "number", "fieldType": "number" } },
+      { "typeDefinition": { "name": "handoffStatus", "type": "string", "fieldType": "text" } },
+      { "typeDefinition": { "name": "readinessSummary", "type": "string", "fieldType": "text" } },
+      { "typeDefinition": { "name": "assessedAt", "type": "string", "fieldType": "text" } }
+    ],
     "labels": {
       "en": {
         "appDisplayName": "DealGuard by Rokad",
         "actionName": "Assess deal with DealGuard",
-        "actionDescription": "Runs the configured deal-readiness rules and optionally sends the result to the connected Slack channel.",
+        "actionDescription": "Runs configured readiness rules, returns reusable workflow outputs, and can optionally notify Slack.",
         "actionCardContent": "Assess deal; Slack notification: {{notifySlack}}",
         "inputFieldLabels": {
           "notifySlack": "Slack notification"
@@ -39,6 +48,15 @@
             "no": "Assess only",
             "yes": "Assess and notify Slack"
           }
+        },
+        "outputFieldLabels": {
+          "readinessScore": "Readiness score",
+          "readinessStatus": "Readiness status",
+          "readinessGrade": "Readiness grade",
+          "issueCount": "Issue count",
+          "handoffStatus": "Handoff status",
+          "readinessSummary": "Readiness summary",
+          "assessedAt": "Assessed at"
         }
       }
     },

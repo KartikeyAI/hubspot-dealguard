@@ -56,9 +56,9 @@ DealGuard is an enterprise HubSpot revenue-governance application that detects i
 ### Commercial infrastructure
 
 - Dodo Payments Merchant-of-Record integration for Growth and Enterprise subscriptions.
-- Test/live environments, monthly and annual products, hosted checkout, customer portal, signed/idempotent webhooks, trial/grace/cancellation state, and scheduled plan changes.
+- Test/live environments, monthly and annual products, hosted checkout, Customer Portal, signed/idempotent webhooks, ordered subscription state, trial/grace/cancellation state, and scheduled plan changes.
 - Manual Enterprise contracts with contract and purchase-order references.
-- Hybrid capped/metered usage, included allowances, hard limits, optional overage, usage reporting, and failed-event retry.
+- Hybrid capped/metered usage, included allowances, atomic hard limits, optional overage, idempotent usage reporting, and retry.
 - Provider-neutral entitlement schema; legacy Stripe tables remain only for rollback/audit and are not authoritative.
 
 ### Security boundaries
@@ -89,7 +89,7 @@ npm run db:migrate:local
 
 ## Deploy and test
 
-Follow [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md), [`docs/DODO_PAYMENTS.md`](docs/DODO_PAYMENTS.md), and [`docs/ENTERPRISE_ACCEPTANCE.md`](docs/ENTERPRISE_ACCEPTANCE.md).
+Follow [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md), [`docs/DODO_PAYMENTS_IMPLEMENTATION.md`](docs/DODO_PAYMENTS_IMPLEMENTATION.md), [`docs/ENTERPRISE_COMPLETE_ACCEPTANCE.md`](docs/ENTERPRISE_COMPLETE_ACCEPTANCE.md), and [`docs/PRODUCTION_ACCEPTANCE_RUNBOOK.md`](docs/PRODUCTION_ACCEPTANCE_RUNBOOK.md).
 
 Existing installations must reauthorize for deal-property and HubSpot task-write scopes. Production enablement requires a Cloudflare Worker/D1 deployment, Dodo Payments products and webhook, HubSpot project upload, email and integration credentials, backup/restore procedures, and the live acceptance suite.
 

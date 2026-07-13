@@ -1,4 +1,6 @@
+import { saveAssessmentContext } from './assessment-context.js';
 import { PLAN_LIMITS } from './config.js';
+import { captureAnalyticsSnapshot } from './enterprise-analytics.js';
 import { HubSpotClient } from './hubspot.js';
 import { syncAssessmentBatchIfEnabled } from './native-sync.js';
 import { Repository } from './repository.js';
@@ -26,11 +28,9 @@ export async function scanPortal(
       const previous = await repository.getAssessment(portalId, deal.id);
       const assessment = assessDeal(deal, client.settings.rules);
       await repository.saveAssessment(portalId, assessment);
+      await saveAssessmentContext(env, portalId, assessment);
       const stored = await repository.getAssessment(portalId, deal.id);
-      nativeUpdates.push({
-        assessment,
-        ...(stored ? { handoffStatus: stored.handoffStatus } : {}),
-      });
+      nativeUpdates.push({ assessment, ...(stored ? { handoffStatus: stored.handoffStatus } : {}) });
       try {
         await notifyAssessmentTransition(env, portalId, previous, assessment, client.settings, client.plan, trigger);
       } catch (error) {
@@ -48,6 +48,7 @@ export async function scanPortal(
     }
     const counts = { scanned: deals.length, ready, atRisk, critical, incompleteHandoffs };
     await repository.completeScan(scanId, portalId, client.plan, counts);
+    await captureAnalyticsSnapshot(env, portalId);
     await repository.audit(portalId, null, null, 'scan.completed', { scanId, trigger, ...counts });
     return { scanId, ...counts };
   } catch (error) {

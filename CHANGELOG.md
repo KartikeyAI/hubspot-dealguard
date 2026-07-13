@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.3.0-beta.1 — 2026-07-13
+
+### Added
+
+- Dedicated HubSpot App Home for enterprise governance and executive pipeline exposure.
+- Versioned policy lifecycle with draft, edit, submit, approve, reject, publish, supersede, rollback, and simulation states.
+- Two-person approval and policy self-approval prevention.
+- Governance roles for administrators, policy administrators, approvers, managers, and viewers.
+- Signed governance APIs for policy and role administration.
+- Searchable audit-event API and CSV export.
+- Commercial assessment context for owner, pipeline, stage, and deal amount.
+- Daily analytics snapshots with readiness trend, amount at risk, incomplete handoffs, pipeline breakdown, and owner breakdown.
+- Asynchronous policy simulation against up to 1,000 current deals.
+- Enterprise governance schema migration and automated governance/context tests.
+
+### Changed
+
+- Live scoring rules become read-only in general settings after governance mode is enabled.
+- Only an approved and published policy version can change governed scoring rules.
+- Version advanced to `1.3.0-beta.1`.
+
 ## 1.2.0-beta.1 — 2026-07-13
 
 ### Added

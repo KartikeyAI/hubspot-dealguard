@@ -3,7 +3,7 @@
   "type": "app",
   "config": {
     "name": "DealGuard by Rokad",
-    "description": "Detects risky HubSpot deals, persists readiness signals for native reporting and automation, sends governed Slack alerts, and manages handoffs.",
+    "description": "Governs HubSpot deal readiness with explainable scoring, versioned policies, approvals, enterprise analytics, native reporting, Slack alerts, and controlled handoffs.",
     "logo": "/app/app-logo.png",
     "distribution": "marketplace",
     "auth": {

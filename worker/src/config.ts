@@ -57,6 +57,11 @@ export const DEFAULT_SETTINGS: TenantSettings = {
     enabled: false,
     includeSummary: true,
   },
+  governance: {
+    enabled: false,
+    requireApproval: true,
+    preventSelfApproval: true,
+  },
 };
 
 export interface PlanLimits {
@@ -68,6 +73,8 @@ export interface PlanLimits {
   slackNotifications: boolean;
   workflowActions: boolean;
   nativeSync: boolean;
+  enterpriseGovernance: boolean;
+  maxPolicySimulationDeals: number;
 }
 
 export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
@@ -80,6 +87,8 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     slackNotifications: false,
     workflowActions: false,
     nativeSync: false,
+    enterpriseGovernance: false,
+    maxPolicySimulationDeals: 0,
   },
   growth: {
     maxDealsPerScan: 5000,
@@ -90,6 +99,8 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     slackNotifications: true,
     workflowActions: true,
     nativeSync: true,
+    enterpriseGovernance: true,
+    maxPolicySimulationDeals: 1000,
   },
   beta_growth: {
     maxDealsPerScan: 5000,
@@ -100,6 +111,8 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     slackNotifications: true,
     workflowActions: true,
     nativeSync: true,
+    enterpriseGovernance: true,
+    maxPolicySimulationDeals: 1000,
   },
 };
 
@@ -112,4 +125,4 @@ export const REQUIRED_HUBSPOT_SCOPES = [
   'crm.schemas.deals.write',
 ] as const;
 
-export const APP_VERSION = '1.2.0-beta.1';
+export const APP_VERSION = '1.3.0-beta.1';

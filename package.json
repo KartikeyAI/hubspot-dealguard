@@ -1,9 +1,9 @@
 {
   "name": "@rokadhq/hubspot-dealguard",
-  "version": "1.2.0-beta.1",
+  "version": "1.3.0-beta.1",
   "private": true,
   "type": "module",
-  "description": "DealGuard by Rokad — HubSpot deal readiness and sales handoff governance.",
+  "description": "DealGuard by Rokad — enterprise HubSpot deal readiness and revenue governance.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -16,7 +16,7 @@
     "hubspot:deps": "hs project install-deps",
     "hubspot:dev": "hs project dev",
     "hubspot:upload": "hs project upload",
-    "typecheck:ui": "npm run typecheck --prefix src/app/cards && npm run typecheck --prefix src/app/settings"
+    "typecheck:ui": "npm run typecheck --prefix src/app/cards && npm run typecheck --prefix src/app/settings && npm run typecheck --prefix src/app/pages"
   },
   "engines": {
     "node": ">=20"

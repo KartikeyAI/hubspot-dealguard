@@ -1,3 +1,4 @@
+import { saveAssessmentContext } from './assessment-context.js';
 import { HubSpotClient } from './hubspot.js';
 import { syncAssessmentIfEnabled } from './native-sync.js';
 import { Repository } from './repository.js';
@@ -17,6 +18,7 @@ export async function assessDealForPortal(
   const client = await HubSpotClient.forPortal(env, portalId);
   const assessment = assessDeal(await client.getDeal(dealId), client.settings.rules);
   await repository.saveAssessment(portalId, assessment);
+  await saveAssessmentContext(env, portalId, assessment);
   const stored = await repository.getAssessment(portalId, dealId);
   try {
     await notifyAssessmentTransition(env, portalId, previous, assessment, client.settings, client.plan, trigger, forceSlack);

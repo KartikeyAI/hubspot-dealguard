@@ -58,6 +58,7 @@ function requiredEnvironment() {
     'SLACK_CLIENT_SECRET',
     'DODO_API_KEY',
     'DODO_WEBHOOK_SECRET',
+    'DODO_ENVIRONMENT',
     'DODO_GROWTH_MONTHLY_PRODUCT_ID',
     'DODO_GROWTH_YEARLY_PRODUCT_ID',
     'DODO_ENTERPRISE_MONTHLY_PRODUCT_ID',
@@ -80,6 +81,8 @@ async function validateEnvironment() {
   add('env.D1_DATABASE_ID.uuid', /^[0-9a-f-]{32,36}$/i.test(process.env.D1_DATABASE_ID ?? ''), 'D1_DATABASE_ID must look like a Cloudflare D1 identifier', 'environment');
   add('env.TOKEN_ENCRYPTION_KEY.length', String(process.env.TOKEN_ENCRYPTION_KEY ?? '').length >= 32, 'TOKEN_ENCRYPTION_KEY must contain at least 32 characters', 'environment');
   add('env.DODO_WEBHOOK_SECRET.format', String(process.env.DODO_WEBHOOK_SECRET ?? '').startsWith('whsec_'), 'DODO_WEBHOOK_SECRET must use the whsec_ form', 'environment');
+  const expectedDodoEnvironment = target === 'production' ? 'live' : 'test';
+  add('env.DODO_ENVIRONMENT.target', process.env.DODO_ENVIRONMENT === expectedDodoEnvironment, `DODO_ENVIRONMENT must be ${expectedDodoEnvironment} for ${target}`, 'environment');
 }
 
 async function validateRepository() {

@@ -22,18 +22,24 @@ test('enterprise governance is plan-gated and approval-safe by default', () => {
   const free = parseSettings({ governance: { enabled: true, requireApproval: false, preventSelfApproval: false } }, 'free');
   assert.equal(free.governance.enabled, false);
   const growth = parseSettings({ governance: { enabled: true } }, 'growth');
-  assert.equal(growth.governance.enabled, true);
-  assert.equal(growth.governance.requireApproval, true);
-  assert.equal(growth.governance.preventSelfApproval, true);
+  assert.equal(growth.governance.enabled, false);
+  const enterprise = parseSettings({ governance: { enabled: true } }, 'beta_growth');
+  assert.equal(enterprise.governance.enabled, true);
+  assert.equal(enterprise.governance.requireApproval, true);
+  assert.equal(enterprise.governance.preventSelfApproval, true);
 });
 
-test('operational permissions protect destructive and configuration actions', () => {
+test('operational permissions protect enterprise operations', () => {
   const admin = operationalPermissionsForRole('admin');
   assert.equal(admin.includes('data.delete'), true);
   assert.equal(admin.includes('settings.manage'), true);
+  assert.equal(admin.includes('billing.manage'), true);
+  assert.equal(admin.includes('delivery.manage'), true);
+  assert.equal(admin.includes('outbox.replay'), true);
   assert.equal(operationalPermissionsForRole('viewer').length, 0);
-  assert.deepEqual(operationalPermissionsForRole('manager'), ['scan.run']);
+  assert.deepEqual(operationalPermissionsForRole('manager'), ['scan.run', 'remediation.manage']);
   assert.equal(operationalPermissionsForRole('policy_admin').includes('integration.manage'), false);
+  assert.equal(operationalPermissionsForRole('policy_admin').includes('remediation.manage'), true);
 });
 
 test('assessments carry commercial context for enterprise analytics', () => {

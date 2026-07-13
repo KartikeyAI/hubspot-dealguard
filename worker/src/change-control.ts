@@ -1,5 +1,5 @@
 import { sha256Hex } from './crypto.js';
-import { requireEnterprisePermission } from './enterprise-access.js';
+import { enterpriseAccessContext } from './enterprise-access.js';
 import { AppError } from './errors.js';
 import { Repository } from './repository.js';
 import type { Env, RequestIdentity } from './types.js';
@@ -24,6 +24,13 @@ interface ExecutionRow {
   status: 'applying' | 'completed' | 'failed';
   attempts: number;
   lease_expires_at: string | null;
+}
+
+interface ExpectedChange {
+  changeType: string;
+  resourceType: string;
+  resourceId: string;
+  payload: unknown;
 }
 
 function canonicalValue(value: unknown): unknown {
@@ -52,18 +59,134 @@ export function withoutApprovalFields(value: unknown): Record<string, unknown> {
   return input;
 }
 
+function roleCanRequest(role: string, changeType: string): boolean {
+  if (role === 'administrator') return true;
+  if (role === 'billing_administrator') return changeType.startsWith('billing.');
+  if (role === 'compliance_auditor') {
+    return changeType.startsWith('compliance.') || changeType.startsWith('legal_hold.') || changeType.startsWith('siem.');
+  }
+  if (role === 'policy_administrator') return changeType.startsWith('policy.');
+  return false;
+}
+
+function roleCanApply(role: string, changeType: string): boolean {
+  if (role === 'administrator') return true;
+  if (role === 'billing_administrator') return changeType.startsWith('billing.');
+  if (role === 'compliance_auditor') {
+    return changeType.startsWith('compliance.') || changeType.startsWith('legal_hold.') || changeType.startsWith('siem.');
+  }
+  return false;
+}
+
+async function payloadMatches(row: ApprovalRow, expected: ExpectedChange): Promise<boolean> {
+  if (row.change_type !== expected.changeType
+    || row.resource_type !== expected.resourceType
+    || row.resource_id !== expected.resourceId) return false;
+  const expectedHash = await sha256Hex(canonicalChangePayload(expected.payload));
+  const approvedHash = await sha256Hex(canonicalChangePayload(JSON.parse(row.requested_payload_json || '{}')));
+  return expectedHash === approvedHash;
+}
+
+async function findMatchingRequest(
+  env: Env,
+  portalId: string,
+  expected: ExpectedChange,
+  statuses: Array<ApprovalRow['status']>,
+): Promise<ApprovalRow | null> {
+  const placeholders = statuses.map(() => '?').join(',');
+  const rows = await env.DB.prepare(
+    `SELECT * FROM change_approval_requests
+     WHERE portal_id = ? AND change_type = ? AND resource_type = ? AND resource_id = ?
+       AND status IN (${placeholders})
+     ORDER BY requested_at DESC LIMIT 25`,
+  ).bind(
+    portalId,
+    expected.changeType,
+    expected.resourceType,
+    expected.resourceId,
+    ...statuses,
+  ).all<ApprovalRow>();
+  for (const row of rows.results ?? []) {
+    if (await payloadMatches(row, expected)) return row;
+  }
+  return null;
+}
+
+async function createPendingRequest(
+  env: Env,
+  identity: RequestIdentity,
+  expected: ExpectedChange,
+): Promise<never> {
+  const context = await enterpriseAccessContext(env, identity);
+  if (!roleCanRequest(context.role, expected.changeType)) {
+    throw new AppError(403, 'change_request_forbidden', 'Your DealGuard role cannot request this high-impact change.');
+  }
+  const id = crypto.randomUUID();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 24 * 60 * 60_000).toISOString();
+  await env.DB.prepare(
+    `INSERT INTO change_approval_requests
+     (id, portal_id, change_type, resource_type, resource_id, requested_payload_json,
+      status, requested_by_user_id, requested_by_email, requested_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+  ).bind(
+    id,
+    identity.portalId,
+    expected.changeType,
+    expected.resourceType,
+    expected.resourceId,
+    canonicalChangePayload(expected.payload),
+    identity.userId,
+    identity.userEmail,
+    now.toISOString(),
+    expiresAt,
+  ).run();
+  await new Repository(env).audit(identity.portalId, identity.userId, identity.userEmail, 'change.requested', {
+    approvalId: id,
+    changeType: expected.changeType,
+    resourceType: expected.resourceType,
+    resourceId: expected.resourceId,
+    expiresAt,
+  });
+  throw new AppError(409, 'change_approval_created', 'This high-impact change requires a second administrator. A pending approval request has been created; approve it from the Enterprise App Home, then repeat the same action.', {
+    approvalId: id,
+    status: 'pending',
+    expiresAt,
+  });
+}
+
 async function approvedRequest(
   env: Env,
   identity: RequestIdentity,
   approvalId: string,
-  expected: { changeType: string; resourceType: string; resourceId: string; payload: unknown },
+  expected: ExpectedChange,
 ): Promise<ApprovalRow> {
-  await requireEnterprisePermission(env, identity, 'change.apply');
-  if (!approvalId) throw new AppError(409, 'change_approval_required', 'An approved change request is required for this enterprise action.');
-  const row = await env.DB.prepare(
-    `SELECT * FROM change_approval_requests WHERE portal_id = ? AND id = ?`,
-  ).bind(identity.portalId, approvalId).first<ApprovalRow>();
-  if (!row) throw new AppError(404, 'change_approval_not_found', 'The requested change approval does not exist.');
+  const context = await enterpriseAccessContext(env, identity);
+  if (!roleCanApply(context.role, expected.changeType)) {
+    throw new AppError(403, 'change_apply_forbidden', 'Your DealGuard role cannot apply this approved high-impact change.');
+  }
+
+  let row: ApprovalRow | null = null;
+  if (approvalId) {
+    row = await env.DB.prepare(
+      `SELECT * FROM change_approval_requests WHERE portal_id = ? AND id = ?`,
+    ).bind(identity.portalId, approvalId).first<ApprovalRow>();
+    if (!row) throw new AppError(404, 'change_approval_not_found', 'The requested change approval does not exist.');
+  } else {
+    row = await findMatchingRequest(env, identity.portalId, expected, ['approved']);
+    if (!row) {
+      const pending = await findMatchingRequest(env, identity.portalId, expected, ['pending']);
+      if (pending) {
+        throw new AppError(409, 'change_approval_pending', 'This exact change is awaiting approval from a second administrator.', {
+          approvalId: pending.id,
+          status: pending.status,
+          expiresAt: pending.expires_at,
+        });
+      }
+      return createPendingRequest(env, identity, expected);
+    }
+  }
+
   if (row.status !== 'approved') throw new AppError(409, 'change_not_approved', `The change request is ${row.status}, not approved.`);
   if (row.expires_at && Date.parse(row.expires_at) < Date.now()) {
     await env.DB.prepare(
@@ -71,15 +194,8 @@ async function approvedRequest(
     ).bind(row.id, identity.portalId).run();
     throw new AppError(409, 'change_approval_expired', 'The approved change request has expired.');
   }
-  if (row.change_type !== expected.changeType
-    || row.resource_type !== expected.resourceType
-    || row.resource_id !== expected.resourceId) {
-    throw new AppError(409, 'change_approval_scope_mismatch', 'The approved request does not authorize this resource or change type.');
-  }
-  const expectedHash = await sha256Hex(canonicalChangePayload(expected.payload));
-  const approvedHash = await sha256Hex(canonicalChangePayload(JSON.parse(row.requested_payload_json || '{}')));
-  if (expectedHash !== approvedHash) {
-    throw new AppError(409, 'change_approval_payload_mismatch', 'The requested action differs from the payload that was approved.');
+  if (!await payloadMatches(row, expected)) {
+    throw new AppError(409, 'change_approval_payload_mismatch', 'The requested action differs from the exact payload that was approved.');
   }
   return row;
 }
@@ -88,7 +204,7 @@ export async function beginApprovedChange(
   env: Env,
   identity: RequestIdentity,
   approvalId: string,
-  expected: { changeType: string; resourceType: string; resourceId: string; payload: unknown },
+  expected: ExpectedChange,
 ): Promise<{ approvalId: string; idempotencyKey: string }> {
   const approval = await approvedRequest(env, identity, approvalId, expected);
   const now = new Date();

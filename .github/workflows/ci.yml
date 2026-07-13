@@ -16,7 +16,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
       - run: npm install --ignore-scripts
       - run: npm install --ignore-scripts --prefix src/app/cards
       - run: npm install --ignore-scripts --prefix src/app/settings

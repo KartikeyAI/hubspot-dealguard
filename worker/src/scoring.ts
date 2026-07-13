@@ -12,6 +12,12 @@ function timestamp(value: string | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function amount(value: string | null | undefined): number | null {
+  if (blank(value)) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function daysSince(value: string | null | undefined, now: number): number | null {
   const parsed = timestamp(value);
   return parsed === null ? null : Math.max(0, (now - parsed) / 86_400_000);
@@ -37,6 +43,15 @@ function grade(score: number): DealAssessment['grade'] {
   return 'F';
 }
 
+function context(deal: NormalizedDeal) {
+  return {
+    pipelineId: deal.properties.pipeline ?? '',
+    stageId: deal.properties.dealstage ?? '',
+    ownerId: deal.properties.hubspot_owner_id?.trim() || null,
+    dealAmount: amount(deal.properties.amount),
+  };
+}
+
 export function assessDeal(deal: NormalizedDeal, settings: RuleSettings, now = Date.now()): DealAssessment {
   const properties = deal.properties;
   const issues: AssessmentIssue[] = [];
@@ -46,6 +61,7 @@ export function assessDeal(deal: NormalizedDeal, settings: RuleSettings, now = D
   const stageLabel = stage?.label ?? properties.dealstage ?? 'Unknown stage';
   const isClosed = stage?.isClosed ?? false;
   const isWon = stage?.isWon ?? false;
+  const commercialContext = context(deal);
 
   if (settings.excludedPipelineIds.includes(properties.pipeline ?? '') || settings.excludedStageIds.includes(properties.dealstage ?? '')) {
     return {
@@ -53,6 +69,7 @@ export function assessDeal(deal: NormalizedDeal, settings: RuleSettings, now = D
       dealName,
       pipelineLabel,
       stageLabel,
+      ...commercialContext,
       score: 100,
       grade: 'A',
       status: 'ready',
@@ -71,6 +88,7 @@ export function assessDeal(deal: NormalizedDeal, settings: RuleSettings, now = D
       dealName,
       pipelineLabel,
       stageLabel,
+      ...commercialContext,
       score: 100,
       grade: 'A',
       status: 'ready',
@@ -156,6 +174,7 @@ export function assessDeal(deal: NormalizedDeal, settings: RuleSettings, now = D
     dealName,
     pipelineLabel,
     stageLabel,
+    ...commercialContext,
     score,
     grade: grade(score),
     status,

@@ -170,15 +170,22 @@ export class HubSpotClient {
     const stageProperties = [...stageMap.values()].map((stage) => stage.enteredAtProperty);
     const customProperties = this.settings.rules.customRequiredProperties.map((rule) => rule.property);
     const properties = [...new Set([...CORE_DEAL_PROPERTIES, ...stageProperties, ...customProperties])];
+    const closedLostStageIds = [...stageMap.values()]
+      .filter((stage) => stage.isClosed && !stage.isWon)
+      .map((stage) => stage.id);
     const deals: HubSpotObject[] = [];
     let after: string | undefined;
     while (deals.length < maxDeals) {
       const limit = Math.min(100, maxDeals - deals.length);
+      const filters: Array<Record<string, unknown>> = [{ propertyName: 'dealstage', operator: 'HAS_PROPERTY' }];
+      if (closedLostStageIds.length > 0) {
+        filters.push({ propertyName: 'dealstage', operator: 'NOT_IN', values: closedLostStageIds });
+      }
       const body: Record<string, unknown> = {
         limit,
         properties,
         sorts: ['-hs_lastmodifieddate'],
-        filterGroups: [{ filters: [{ propertyName: 'dealstage', operator: 'HAS_PROPERTY' }] }],
+        filterGroups: [{ filters }],
       };
       if (after) body.after = after;
       const page = await this.request<HubSpotSearchResponse>('/crm/v3/objects/deals/search', {

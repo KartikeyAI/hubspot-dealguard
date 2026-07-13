@@ -1,7 +1,11 @@
 import { saveAssessmentContext } from './assessment-context.js';
+import { recordUsage } from './billing.js';
+import { recordAssessmentHistory } from './enterprise-analytics-v2.js';
+import { resolveSegmentedRules } from './enterprise-policy.js';
 import { HubSpotClient } from './hubspot.js';
 import { syncAssessmentIfEnabled } from './native-sync.js';
 import { syncAssessmentRemediations } from './remediation.js';
+import { recordOperationalMetric } from './reliability.js';
 import { Repository } from './repository.js';
 import { assessDeal } from './scoring.js';
 import { notifyAssessmentTransition } from './slack.js';
@@ -14,12 +18,20 @@ export async function assessDealForPortal(
   trigger: 'record' | 'webhook' | 'workflow',
   forceSlack = false,
 ) {
+  const startedAt = Date.now();
   const repository = new Repository(env);
   const previous = await repository.getAssessment(portalId, dealId);
   const client = await HubSpotClient.forPortal(env, portalId);
-  const assessment = assessDeal(await client.getDeal(dealId), client.settings.rules);
+  const deal = await client.getDeal(dealId);
+  const policy = await resolveSegmentedRules(env, portalId, client.settings.rules, deal);
+  const assessment = assessDeal(deal, policy.rules);
   await repository.saveAssessment(portalId, assessment);
   await saveAssessmentContext(env, portalId, assessment);
+  await recordAssessmentHistory(env, portalId, assessment, {
+    trigger,
+    properties: deal.properties,
+    policyId: policy.policyId,
+  });
   const stored = await repository.getAssessment(portalId, dealId);
   try {
     await notifyAssessmentTransition(env, portalId, previous, assessment, client.settings, client.plan, trigger, forceSlack);
@@ -37,5 +49,18 @@ export async function assessDealForPortal(
   } catch (error) {
     console.error(JSON.stringify({ level: 'error', task: 'remediation_assessment_sync', portalId, dealId, trigger, error: error instanceof Error ? error.message : String(error) }));
   }
+  try {
+    await recordUsage(env, portalId, 'event_overage', 1, `assessment:${trigger}:${dealId}:${assessment.assessedAt}`, {
+      trigger,
+      deal_id: dealId,
+      policy_id: policy.policyId,
+      segment_count: policy.segmentIds.length,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('allowance has been exhausted')) throw error;
+    console.error(JSON.stringify({ level: 'error', task: 'assessment_usage', portalId, dealId, trigger, error: error instanceof Error ? error.message : String(error) }));
+  }
+  await recordOperationalMetric(env, { portalId, service: `assessment.${trigger}`, metric: 'success', value: 1 });
+  await recordOperationalMetric(env, { portalId, service: `assessment.${trigger}`, metric: 'latency_ms', value: Date.now() - startedAt });
   return stored;
 }

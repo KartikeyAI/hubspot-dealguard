@@ -1,3 +1,4 @@
+import { PLAN_LIMITS } from './config.js';
 import { decryptSecret, encryptSecret, randomToken } from './crypto.js';
 import { sendEmail } from './email.js';
 import { AppError } from './errors.js';
@@ -82,6 +83,9 @@ function cleanName(value: unknown): string {
 }
 
 function parseDestination(row: DestinationRow): DestinationView {
+  const recipients = row.type === 'email'
+    ? (JSON.parse(row.config_json) as { recipients?: string[] }).recipients ?? []
+    : [];
   return {
     id: row.id,
     type: row.type,
@@ -90,10 +94,23 @@ function parseDestination(row: DestinationRow): DestinationView {
     minimumSeverity: row.minimum_severity,
     pipelineIds: JSON.parse(row.pipeline_ids_json) as string[],
     enabled: Boolean(row.enabled),
-    configured: row.type === 'email' ? (JSON.parse(row.config_json) as { recipients?: string[] }).recipients?.length! > 0 : Boolean(row.endpoint_cipher && row.endpoint_iv),
+    configured: row.type === 'email' ? recipients.length > 0 : Boolean(row.endpoint_cipher && row.endpoint_iv),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+export function destinationMatches(
+  destination: Pick<DestinationRow, 'enabled' | 'event_types_json' | 'minimum_severity' | 'pipeline_ids_json'>,
+  event: Pick<OutboxRow, 'event_type' | 'severity' | 'pipeline_id'>,
+): boolean {
+  if (!destination.enabled) return false;
+  const eventTypes = JSON.parse(destination.event_types_json) as string[];
+  if (eventTypes.length > 0 && !eventTypes.includes(event.event_type)) return false;
+  if (severityRank[event.severity] < severityRank[destination.minimum_severity]) return false;
+  const pipelines = JSON.parse(destination.pipeline_ids_json) as string[];
+  if (pipelines.length > 0 && (!event.pipeline_id || !pipelines.includes(event.pipeline_id))) return false;
+  return true;
 }
 
 export async function listDestinations(env: Env, portalId: string): Promise<DestinationView[]> {
@@ -102,6 +119,13 @@ export async function listDestinations(env: Env, portalId: string): Promise<Dest
 }
 
 export async function createDestination(env: Env, identity: RequestIdentity, value: unknown): Promise<DestinationView> {
+  const tenant = await new Repository(env).getTenant(identity.portalId);
+  const limits = PLAN_LIMITS[tenant.plan];
+  if (!limits.multiDestinationDelivery) throw new AppError(403, 'enterprise_subscription_required', 'Multiple notification destinations require DealGuard Enterprise.');
+  const count = await env.DB.prepare(`SELECT COUNT(*) AS count FROM notification_destinations WHERE portal_id = ?`).bind(identity.portalId).first<{ count: number }>();
+  if (Number(count?.count ?? 0) >= limits.maxNotificationDestinations) {
+    throw new AppError(409, 'destination_limit_reached', `This portal supports up to ${limits.maxNotificationDestinations} notification destinations.`);
+  }
   const input = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const allowed: DestinationType[] = ['teams_workflow', 'webhook', 'email'];
   const type = allowed.includes(input.type as DestinationType) ? input.type as DestinationType : null;
@@ -122,6 +146,7 @@ export async function createDestination(env: Env, identity: RequestIdentity, val
   const encryptedSecret = generatedSigningSecret ? await encryptSecret(generatedSigningSecret, env.TOKEN_ENCRYPTION_KEY) : null;
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
+  const destinationName = cleanName(input.name);
   await env.DB.prepare(
     `INSERT INTO notification_destinations (id, portal_id, type, name, endpoint_cipher, endpoint_iv, signing_secret_cipher, signing_secret_iv, config_json, event_types_json, minimum_severity, pipeline_ids_json, enabled, created_by_user_id, created_by_email, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`
@@ -129,7 +154,7 @@ export async function createDestination(env: Env, identity: RequestIdentity, val
     id,
     identity.portalId,
     type,
-    cleanName(input.name),
+    destinationName,
     encryptedEndpoint?.cipher ?? null,
     encryptedEndpoint?.iv ?? null,
     encryptedSecret?.cipher ?? null,
@@ -143,7 +168,7 @@ export async function createDestination(env: Env, identity: RequestIdentity, val
     now,
     now,
   ).run();
-  await new Repository(env).audit(identity.portalId, identity.userId, identity.userEmail, 'destination.created', { destinationId: id, type, name: cleanName(input.name) });
+  await new Repository(env).audit(identity.portalId, identity.userId, identity.userEmail, 'destination.created', { destinationId: id, type, name: destinationName });
   const row = await env.DB.prepare(`SELECT * FROM notification_destinations WHERE id = ? AND portal_id = ?`).bind(id, identity.portalId).first<DestinationRow>();
   if (!row) throw new AppError(500, 'destination_creation_failed', 'The notification destination could not be loaded.');
   return parseDestination(row);
@@ -161,11 +186,14 @@ export async function updateDestination(env: Env, identity: RequestIdentity, des
   await env.DB.prepare(`UPDATE notification_destinations SET name = ?, event_types_json = ?, minimum_severity = ?, pipeline_ids_json = ?, enabled = ?, updated_at = ? WHERE id = ? AND portal_id = ?`)
     .bind(cleanName(input.name ?? current.name), JSON.stringify(eventTypes), minimumSeverity, JSON.stringify(pipelineIds), enabled ? 1 : 0, now, destinationId, identity.portalId).run();
   await new Repository(env).audit(identity.portalId, identity.userId, identity.userEmail, 'destination.updated', { destinationId, enabled, minimumSeverity });
-  return parseDestination((await env.DB.prepare(`SELECT * FROM notification_destinations WHERE id = ?`).bind(destinationId).first<DestinationRow>())!);
+  const updated = await env.DB.prepare(`SELECT * FROM notification_destinations WHERE id = ? AND portal_id = ?`).bind(destinationId, identity.portalId).first<DestinationRow>();
+  if (!updated) throw new AppError(500, 'destination_update_failed', 'The notification destination could not be loaded after update.');
+  return parseDestination(updated);
 }
 
 export async function deleteDestination(env: Env, identity: RequestIdentity, destinationId: string): Promise<void> {
-  await env.DB.prepare(`DELETE FROM notification_destinations WHERE id = ? AND portal_id = ?`).bind(destinationId, identity.portalId).run();
+  const result = await env.DB.prepare(`DELETE FROM notification_destinations WHERE id = ? AND portal_id = ?`).bind(destinationId, identity.portalId).run();
+  if (Number(result.meta?.changes ?? 0) === 0) throw new AppError(404, 'destination_not_found', 'The notification destination does not exist.');
   await new Repository(env).audit(identity.portalId, identity.userId, identity.userEmail, 'destination.deleted', { destinationId });
 }
 
@@ -188,16 +216,6 @@ export async function enqueueOutboxEvent(
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
   ).bind(id, input.portalId, input.eventType.slice(0, 128), input.severity ?? 'info', input.pipelineId ?? null, input.aggregateType.slice(0, 64), input.aggregateId.slice(0, 128), JSON.stringify(input.payload), now, now).run();
   return id;
-}
-
-function matches(destination: DestinationRow, event: OutboxRow): boolean {
-  if (!destination.enabled) return false;
-  const eventTypes = JSON.parse(destination.event_types_json) as string[];
-  if (eventTypes.length > 0 && !eventTypes.includes(event.event_type)) return false;
-  if (severityRank[event.severity] < severityRank[destination.minimum_severity]) return false;
-  const pipelines = JSON.parse(destination.pipeline_ids_json) as string[];
-  if (pipelines.length > 0 && (!event.pipeline_id || !pipelines.includes(event.pipeline_id))) return false;
-  return true;
 }
 
 async function hmacHex(secret: string, body: string): Promise<string> {
@@ -247,9 +265,12 @@ async function recordDelivery(env: Env, event: OutboxRow, destination: Destinati
     .bind(crypto.randomUUID(), event.portal_id, event.id, destination.id, attempt, status, httpStatus, error, new Date().toISOString()).run();
 }
 
+export function retryDelaySeconds(attempt: number, jitterSeconds = 0): number {
+  return Math.min(6 * 60 * 60, 30 * (2 ** Math.min(attempt, 10))) + Math.max(0, Math.min(30, jitterSeconds));
+}
+
 function retryAt(attempt: number): string {
-  const seconds = Math.min(6 * 60 * 60, 30 * (2 ** Math.min(attempt, 10))) + Math.floor(Math.random() * 30);
-  return new Date(Date.now() + seconds * 1000).toISOString();
+  return new Date(Date.now() + retryDelaySeconds(attempt, Math.floor(Math.random() * 30)) * 1000).toISOString();
 }
 
 async function updateHealth(env: Env, portalId: string, success: boolean, error: string | null): Promise<void> {
@@ -268,13 +289,17 @@ async function updateHealth(env: Env, portalId: string, success: boolean, error:
 }
 
 export async function dispatchOutbox(env: Env, limit = 25): Promise<void> {
+  const staleCutoff = new Date(Date.now() - 15 * 60_000).toISOString();
+  await env.DB.prepare(`UPDATE outbox_events SET status = 'failed', available_at = ?, last_error = COALESCE(last_error, 'Recovered abandoned processing lease.') WHERE status = 'processing' AND available_at < ?`)
+    .bind(new Date().toISOString(), staleCutoff).run();
   const events = await env.DB.prepare(`SELECT * FROM outbox_events WHERE status IN ('pending', 'failed') AND available_at <= ? ORDER BY created_at ASC LIMIT ?`)
     .bind(new Date().toISOString(), limit).all<OutboxRow>();
   for (const event of events.results ?? []) {
-    const claimed = await env.DB.prepare(`UPDATE outbox_events SET status = 'processing' WHERE id = ? AND status IN ('pending', 'failed')`).bind(event.id).run();
-    if (!claimed.success) continue;
+    const claimed = await env.DB.prepare(`UPDATE outbox_events SET status = 'processing', available_at = ? WHERE id = ? AND status IN ('pending', 'failed')`)
+      .bind(new Date(Date.now() + 15 * 60_000).toISOString(), event.id).run();
+    if (Number(claimed.meta?.changes ?? 0) === 0) continue;
     const destinations = await env.DB.prepare(`SELECT * FROM notification_destinations WHERE portal_id = ? AND enabled = 1`).bind(event.portal_id).all<DestinationRow>();
-    const matching = (destinations.results ?? []).filter((destination) => matches(destination, event));
+    const matching = (destinations.results ?? []).filter((destination) => destinationMatches(destination, event));
     let failures = 0;
     let lastError: string | null = null;
     for (const destination of matching) {
@@ -322,6 +347,6 @@ export async function listOutbox(env: Env, portalId: string, status: string | nu
 export async function replayOutboxEvent(env: Env, identity: RequestIdentity, eventId: string): Promise<void> {
   const result = await env.DB.prepare(`UPDATE outbox_events SET status = 'pending', attempts = 0, available_at = ?, last_error = NULL, delivered_at = NULL WHERE id = ? AND portal_id = ? AND status IN ('failed', 'dead_letter')`)
     .bind(new Date().toISOString(), eventId, identity.portalId).run();
-  if (!result.success) throw new AppError(404, 'outbox_event_not_replayable', 'The delivery event does not exist or is not replayable.');
+  if (Number(result.meta?.changes ?? 0) === 0) throw new AppError(404, 'outbox_event_not_replayable', 'The delivery event does not exist or is not replayable.');
   await new Repository(env).audit(identity.portalId, identity.userId, identity.userEmail, 'outbox.replayed', { eventId });
 }

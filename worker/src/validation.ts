@@ -1,6 +1,6 @@
 import { DEFAULT_SETTINGS, PLAN_LIMITS } from './config.js';
 import { AppError } from './errors.js';
-import type { CustomPropertyRule, DigestSettings, NativeSyncSettings, NotificationSettings, RuleSettings, TenantSettings, PlanId, IssueSeverity } from './types.js';
+import type { CustomPropertyRule, DigestSettings, GovernanceSettings, NativeSyncSettings, NotificationSettings, RuleSettings, TenantSettings, PlanId, IssueSeverity } from './types.js';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PROPERTY_PATTERN = /^[a-zA-Z][a-zA-Z0-9_]{0,127}$/;
@@ -30,15 +30,13 @@ function customRule(value: unknown): CustomPropertyRule | null {
   return { property, label, weight: boundedInteger(rule.weight, 10, 1, 30), severity, stageIds: stringArray(rule.stageIds, 50) };
 }
 
-export function parseSettings(value: unknown, plan: PlanId): TenantSettings {
-  const input = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
-  const ruleInput = input.rules && typeof input.rules === 'object' ? (input.rules as Record<string, unknown>) : {};
-  const digestInput = input.digest && typeof input.digest === 'object' ? (input.digest as Record<string, unknown>) : {};
+export function parseRuleSettings(value: unknown, plan: PlanId): RuleSettings {
+  const ruleInput = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const limits = PLAN_LIMITS[plan];
   const customRequiredProperties = Array.isArray(ruleInput.customRequiredProperties)
     ? ruleInput.customRequiredProperties.map(customRule).filter((rule): rule is CustomPropertyRule => Boolean(rule)).slice(0, limits.maxCustomRules)
     : [];
-  const rules: RuleSettings = {
+  return {
     staleDays: boundedInteger(ruleInput.staleDays, DEFAULT_SETTINGS.rules.staleDays, 1, 90),
     maxStageAgeDays: boundedInteger(ruleInput.maxStageAgeDays, DEFAULT_SETTINGS.rules.maxStageAgeDays, 1, 365),
     requireOwner: bool(ruleInput.requireOwner, DEFAULT_SETTINGS.rules.requireOwner),
@@ -51,6 +49,13 @@ export function parseSettings(value: unknown, plan: PlanId): TenantSettings {
     excludedStageIds: stringArray(ruleInput.excludedStageIds, 200),
     customRequiredProperties,
   };
+}
+
+export function parseSettings(value: unknown, plan: PlanId): TenantSettings {
+  const input = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  const digestInput = input.digest && typeof input.digest === 'object' ? (input.digest as Record<string, unknown>) : {};
+  const limits = PLAN_LIMITS[plan];
+  const rules = parseRuleSettings(input.rules, plan);
   const requestedFrequency = digestInput.frequency === 'daily' ? 'daily' : 'weekly';
   const digest: DigestSettings = {
     enabled: bool(digestInput.enabled, false),
@@ -76,5 +81,11 @@ export function parseSettings(value: unknown, plan: PlanId): TenantSettings {
     enabled: limits.nativeSync && bool(nativeInput.enabled, false),
     includeSummary: bool(nativeInput.includeSummary, DEFAULT_SETTINGS.nativeSync.includeSummary),
   };
-  return { rules, digest, notifications, nativeSync };
+  const governanceInput = input.governance && typeof input.governance === 'object' ? input.governance as Record<string, unknown> : {};
+  const governance: GovernanceSettings = {
+    enabled: limits.enterpriseGovernance && bool(governanceInput.enabled, false),
+    requireApproval: bool(governanceInput.requireApproval, DEFAULT_SETTINGS.governance.requireApproval),
+    preventSelfApproval: bool(governanceInput.preventSelfApproval, DEFAULT_SETTINGS.governance.preventSelfApproval),
+  };
+  return { rules, digest, notifications, nativeSync, governance };
 }

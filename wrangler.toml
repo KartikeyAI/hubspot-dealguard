@@ -1,0 +1,19 @@
+name = "dealguard-api"
+main = "worker/src/index.ts"
+compatibility_date = "2026-07-01"
+workers_dev = true
+
+[vars]
+APP_BASE_URL = "https://dealguard-api.rokad.co"
+HUBSPOT_APP_ID = "REPLACE_WITH_HUBSPOT_APP_ID"
+EMAIL_FROM = "DealGuard <dealguard@rokad.co>"
+SUPPORT_EMAIL = "company@rokad.co"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "dealguard-production"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "worker/migrations"
+
+[triggers]
+crons = ["*/15 * * * *"]

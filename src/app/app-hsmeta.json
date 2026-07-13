@@ -1,0 +1,35 @@
+{
+  "uid": "rokad_dealguard_app",
+  "type": "app",
+  "config": {
+    "name": "DealGuard by Rokad",
+    "description": "Continuously detects risky, incomplete, and stale HubSpot deals and governs closed-won sales-to-delivery handoffs.",
+    "logo": "/app/app-logo.png",
+    "distribution": "marketplace",
+    "auth": {
+      "type": "oauth",
+      "redirectUrls": [
+        "https://dealguard-api.rokad.co/oauth/callback",
+        "http://localhost:8787/oauth/callback"
+      ],
+      "requiredScopes": [
+        "crm.objects.deals.read",
+        "crm.objects.contacts.read",
+        "crm.objects.companies.read",
+        "crm.schemas.deals.read"
+      ],
+      "optionalScopes": [],
+      "conditionallyRequiredScopes": []
+    },
+    "permittedUrls": {
+      "fetch": ["https://dealguard-api.rokad.co/"],
+      "iframe": [],
+      "img": []
+    },
+    "support": {
+      "supportEmail": "company@rokad.co",
+      "documentationUrl": "https://dealguard-api.rokad.co/docs",
+      "supportUrl": "https://dealguard-api.rokad.co/support"
+    }
+  }
+}

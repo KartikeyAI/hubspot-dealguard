@@ -1,0 +1,7 @@
+{
+  "uid": "dealguard_settings_page",
+  "type": "settings",
+  "config": {
+    "entrypoint": "/app/settings/DealGuardSettings.tsx"
+  }
+}

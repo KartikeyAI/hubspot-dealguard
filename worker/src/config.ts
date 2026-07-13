@@ -1,0 +1,78 @@
+import type { PlanId, TenantSettings } from './types.js';
+
+export const CORE_DEAL_PROPERTIES = [
+  'dealname',
+  'pipeline',
+  'dealstage',
+  'hubspot_owner_id',
+  'amount',
+  'closedate',
+  'hs_next_step',
+  'hs_last_sales_activity_timestamp',
+  'hs_lastmodifieddate',
+  'description',
+] as const;
+
+export const DEFAULT_SETTINGS: TenantSettings = {
+  rules: {
+    staleDays: 7,
+    maxStageAgeDays: 21,
+    requireOwner: true,
+    requireAmount: true,
+    requireCloseDate: true,
+    requireNextStep: true,
+    requireCompany: true,
+    requireContact: true,
+    excludedPipelineIds: [],
+    excludedStageIds: [],
+    customRequiredProperties: [],
+  },
+  digest: {
+    enabled: false,
+    frequency: 'weekly',
+    recipients: [],
+    dayOfWeek: 1,
+    hourUtc: 8,
+  },
+};
+
+export interface PlanLimits {
+  maxDealsPerScan: number;
+  minScanIntervalMinutes: number;
+  historyDays: number;
+  maxCustomRules: number;
+  digestFrequencies: Array<'daily' | 'weekly'>;
+}
+
+export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
+  free: {
+    maxDealsPerScan: 250,
+    minScanIntervalMinutes: 1440,
+    historyDays: 30,
+    maxCustomRules: 3,
+    digestFrequencies: ['weekly'],
+  },
+  growth: {
+    maxDealsPerScan: 5000,
+    minScanIntervalMinutes: 60,
+    historyDays: 365,
+    maxCustomRules: 25,
+    digestFrequencies: ['daily', 'weekly'],
+  },
+  beta_growth: {
+    maxDealsPerScan: 5000,
+    minScanIntervalMinutes: 60,
+    historyDays: 365,
+    maxCustomRules: 25,
+    digestFrequencies: ['daily', 'weekly'],
+  },
+};
+
+export const REQUIRED_HUBSPOT_SCOPES = [
+  'crm.objects.deals.read',
+  'crm.objects.contacts.read',
+  'crm.objects.companies.read',
+  'crm.schemas.deals.read',
+] as const;
+
+export const APP_VERSION = '1.0.0-beta.1';

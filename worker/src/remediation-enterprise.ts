@@ -1,7 +1,8 @@
 import { sha256Hex } from './crypto.js';
 import { requireEnterprisePermission } from './enterprise-access.js';
 import { AppError } from './errors.js';
-import { createRemediationCase, transitionRemediationCase, type RemediationCase } from './remediation.js';
+import { transitionRemediationCase, type RemediationCase } from './remediation.js';
+import { attachTaskToExistingRemediation } from './remediation-task.js';
 import { Repository } from './repository.js';
 import type { Env, RequestIdentity } from './types.js';
 
@@ -189,15 +190,7 @@ export async function runRemediationBulkJob(env: Env, identity: RequestIdentity,
         await env.DB.prepare(`UPDATE remediation_cases SET priority = ?, updated_at = ? WHERE portal_id = ? AND id = ?`)
           .bind(priority, new Date().toISOString(), identity.portalId, caseId).run();
       } else if (operation === 'create_tasks') {
-        const detail = await remediationDetail(env, identity, caseId);
-        const item = detail.case as Record<string, unknown>;
-        if (item.hubSpotTaskId) { succeeded += 1; continue; }
-        const created = await createRemediationCase(env, identity, {
-          dealId: item.dealId, issueCode: `${item.issueCode}.task`, title: item.title, description: item.description,
-          severity: item.severity, priority: item.priority, ownerId: item.ownerId, ownerEmail: item.ownerEmail,
-          dueAt: item.dueAt, createHubSpotTask: true,
-        }, 'manual');
-        if (!created.hubSpotTaskId) throw new AppError(502, 'hubspot_task_not_created', 'HubSpot task creation failed.');
+        await attachTaskToExistingRemediation(env, identity, caseId);
       }
       succeeded += 1;
     } catch (error) {

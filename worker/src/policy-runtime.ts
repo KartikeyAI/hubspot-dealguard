@@ -1,7 +1,7 @@
 import { listPolicySegments, type PolicySegment } from './enterprise-policy.js';
 import { activePolicy } from './governance.js';
 import { dimensionValues, getPolicyDimensionMappings } from './policy-dimensions.js';
-import type { Env, NormalizedDeal, RuleSettings } from './types.js';
+import type { Env, NormalizedDeal, PolicyVersion, RuleSettings } from './types.js';
 
 function finite(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
@@ -41,14 +41,12 @@ function segmentMatches(
   return true;
 }
 
-export async function resolveSegmentedRulesForDeal(
+export async function resolvePolicyRulesForDeal(
   env: Env,
   portalId: string,
-  base: RuleSettings,
+  policy: Pick<PolicyVersion, 'id' | 'rules'>,
   deal: NormalizedDeal,
-): Promise<{ rules: RuleSettings; segmentIds: string[]; policyId: string | null }> {
-  const policy = await activePolicy(env, portalId);
-  if (!policy) return { rules: base, segmentIds: [], policyId: null };
+): Promise<{ rules: RuleSettings; segmentIds: string[]; policyId: string }> {
   const [segments, mappings] = await Promise.all([
     listPolicySegments(env, portalId, policy.id),
     getPolicyDimensionMappings(env, portalId),
@@ -62,4 +60,15 @@ export async function resolveSegmentedRulesForDeal(
     segmentIds.push(segment.id);
   }
   return { rules, segmentIds, policyId: policy.id };
+}
+
+export async function resolveSegmentedRulesForDeal(
+  env: Env,
+  portalId: string,
+  base: RuleSettings,
+  deal: NormalizedDeal,
+): Promise<{ rules: RuleSettings; segmentIds: string[]; policyId: string | null }> {
+  const policy = await activePolicy(env, portalId);
+  if (!policy) return { rules: base, segmentIds: [], policyId: null };
+  return resolvePolicyRulesForDeal(env, portalId, policy, deal);
 }

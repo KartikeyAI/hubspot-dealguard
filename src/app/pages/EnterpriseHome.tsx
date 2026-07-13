@@ -6,8 +6,10 @@ import {
   Divider,
   Flex,
   Heading,
+  Input,
   LoadingSpinner,
   NumberInput,
+  Select,
   StatusTag,
   Text,
   TextArea,
@@ -23,6 +25,7 @@ import {
 const API_BASE = 'https://dealguard-api.rokad.co/api/v1';
 
 type PolicyStatus = 'draft' | 'pending_approval' | 'approved' | 'published' | 'superseded' | 'rejected';
+type GovernanceRole = 'admin' | 'policy_admin' | 'approver' | 'manager' | 'viewer';
 type Rules = {
   staleDays: number;
   maxStageAgeDays: number;
@@ -50,8 +53,10 @@ type Policy = {
   createdAt: string;
   updatedAt: string;
 };
+type RoleAssignment = { userId: string | null; userEmail: string | null; role: GovernanceRole; updatedAt: string };
+type AuditEvent = { id: string; action: string; userId: string | null; userEmail: string | null; metadata: unknown; createdAt: string };
 type Overview = {
-  governance: { role: string; permissions: string[]; governanceEnabled: boolean; installerBootstrap: boolean };
+  governance: { role: GovernanceRole; permissions: string[]; governanceEnabled: boolean; installerBootstrap: boolean };
   activePolicy: Policy | null;
   latestSimulation: null | {
     id: string; policyId: string; status: 'running' | 'completed' | 'failed'; totalDeals: number;
@@ -68,7 +73,6 @@ type Overview = {
   pendingApprovals: number;
   openExceptions: number;
 };
-
 type RequestOptions = { method?: 'GET' | 'POST' | 'PUT'; body?: Record<string, unknown> };
 
 hubspot.extend<'home'>(() => <EnterpriseHome />);
@@ -87,7 +91,11 @@ function policyVariant(status: PolicyStatus): 'success' | 'warning' | 'danger' |
 const EnterpriseHome = () => {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [policies, setPolicies] = useState<Policy[]>([]);
+  const [roles, setRoles] = useState<RoleAssignment[]>([]);
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [selected, setSelected] = useState<Policy | null>(null);
+  const [roleEmail, setRoleEmail] = useState('');
+  const [roleValue, setRoleValue] = useState<GovernanceRole>('viewer');
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -112,8 +120,19 @@ const EnterpriseHome = () => {
         fetchJson('/enterprise/overview') as Promise<Overview>,
         fetchJson('/governance/policies') as Promise<{ policies: Policy[] }>,
       ]);
+      const permissions = new Set(overviewData.governance.permissions);
+      const [roleData, auditData] = await Promise.all([
+        permissions.has('role.manage')
+          ? fetchJson('/governance/roles') as Promise<{ roles: RoleAssignment[] }>
+          : Promise.resolve({ roles: [] as RoleAssignment[] }),
+        permissions.has('audit.view')
+          ? fetchJson('/governance/audit?limit=30') as Promise<{ events: AuditEvent[] }>
+          : Promise.resolve({ events: [] as AuditEvent[] }),
+      ]);
       setOverview(overviewData);
       setPolicies(policyData.policies);
+      setRoles(roleData.roles);
+      setAuditEvents(auditData.events);
       setSelected((current) => current ? policyData.policies.find((policy) => policy.id === current.id) ?? null : null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Enterprise home could not be loaded.');
@@ -145,6 +164,11 @@ const EnterpriseHome = () => {
     setSelected(created);
   }, 'A new policy draft was created from the active policy.');
   const scan = () => run(async () => { await fetchJson('/scans', { method: 'POST', body: {} }); }, 'A portal assessment scan was started.');
+  const assignRole = () => run(async () => {
+    if (!roleEmail.trim()) throw new Error('Enter a HubSpot user email.');
+    await fetchJson('/governance/roles', { method: 'PUT', body: { userEmail: roleEmail.trim(), role: roleValue } });
+    setRoleEmail('');
+  }, 'Governance role assigned.');
 
   const policyAction = (policy: Policy, action: 'submit' | 'approve' | 'reject' | 'publish' | 'rollback' | 'simulate') => run(async () => {
     await fetchJson(`/governance/policies/${policy.id}/${action}`, { method: 'POST', body: action === 'approve' ? { comment: 'Approved from DealGuard Enterprise Home.' } : action === 'reject' ? { comment: 'Rejected from DealGuard Enterprise Home.' } : {} });
@@ -155,12 +179,7 @@ const EnterpriseHome = () => {
     return run(async () => {
       const updated = await fetchJson(`/governance/policies/${selected.id}`, {
         method: 'PUT',
-        body: {
-          name: selected.name,
-          description: selected.description,
-          changeSummary: selected.changeSummary,
-          rules: selected.rules,
-        },
+        body: { name: selected.name, description: selected.description, changeSummary: selected.changeSummary, rules: selected.rules },
       }) as Policy;
       setSelected(updated);
     }, 'Policy draft saved.');
@@ -190,9 +209,7 @@ const EnterpriseHome = () => {
         <StatusTag variant={overview.governance.governanceEnabled ? 'success' : 'warning'}>{overview.governance.governanceEnabled ? `${overview.governance.role} · governed` : `${overview.governance.role} · governance off`}</StatusTag>
       </Flex>
 
-      {!overview.governance.governanceEnabled && <Alert title="Enterprise governance is not enabled" variant="warning">
-        Enable governance to capture a baseline policy, lock direct rule changes, and require versioned publication.
-      </Alert>}
+      {!overview.governance.governanceEnabled && <Alert title="Enterprise governance is not enabled" variant="warning">Enable governance to capture a baseline policy, lock direct rule changes, and require versioned publication.</Alert>}
       {!overview.governance.governanceEnabled && permissions.has('governance.enable') && <Button onClick={() => void enable()} disabled={working}>Enable enterprise governance</Button>}
 
       <Flex direction="row" gap="medium" wrap="wrap">
@@ -203,16 +220,11 @@ const EnterpriseHome = () => {
         <Card><Text format={{ fontWeight: 'bold' }}>{overview.pendingApprovals}</Text><Text>Policies awaiting approval</Text></Card>
       </Flex>
 
-      {overview.activePolicy && <Card>
-        <Flex direction="column" gap="extra-small">
-          <Flex direction="row" justify="between" align="center" gap="small">
-            <Text format={{ fontWeight: 'bold' }}>Active policy v{overview.activePolicy.versionNumber}: {overview.activePolicy.name}</Text>
-            <StatusTag variant="success">published</StatusTag>
-          </Flex>
-          <Text>{overview.activePolicy.description || 'No policy description.'}</Text>
-          <Text variant="microcopy">Published by {overview.activePolicy.publishedByEmail ?? 'an administrator'}</Text>
-        </Flex>
-      </Card>}
+      {overview.activePolicy && <Card><Flex direction="column" gap="extra-small">
+        <Flex direction="row" justify="between" align="center" gap="small"><Text format={{ fontWeight: 'bold' }}>Active policy v{overview.activePolicy.versionNumber}: {overview.activePolicy.name}</Text><StatusTag variant="success">published</StatusTag></Flex>
+        <Text>{overview.activePolicy.description || 'No policy description.'}</Text>
+        <Text variant="microcopy">Published by {overview.activePolicy.publishedByEmail ?? 'an administrator'}</Text>
+      </Flex></Card>}
 
       {overview.latestSimulation && <Alert title={`Latest policy simulation: ${overview.latestSimulation.status}`} variant={overview.latestSimulation.status === 'failed' ? 'danger' : overview.latestSimulation.status === 'running' ? 'warning' : 'success'}>
         {overview.latestSimulation.status === 'completed'
@@ -220,42 +232,29 @@ const EnterpriseHome = () => {
           : overview.latestSimulation.status === 'failed' ? overview.latestSimulation.errorMessage ?? 'Simulation failed.' : 'DealGuard is evaluating the draft against current deals.'}
       </Alert>}
 
-      <Divider />
-      <Heading>Pipeline exposure</Heading>
-      {overview.byPipeline.length === 0 ? <Text>No pipeline analytics are available until a scan completes.</Text> : overview.byPipeline.map((pipeline) => <Card key={pipeline.pipelineId}>
-        <Flex direction="row" justify="between" align="center" gap="small">
-          <Flex direction="column" gap="extra-small"><Text format={{ fontWeight: 'bold' }}>{pipeline.pipelineLabel}</Text><Text>{pipeline.totalDeals} deals · readiness {pipeline.averageScore}</Text></Flex>
-          <Flex direction="column" gap="extra-small"><Text format={{ fontWeight: 'bold' }}>{money(pipeline.amountAtRisk)}</Text><Text>{pipeline.criticalDeals} critical</Text></Flex>
-        </Flex>
-      </Card>)}
+      <Divider /><Heading>Pipeline exposure</Heading>
+      {overview.byPipeline.length === 0 ? <Text>No pipeline analytics are available until a scan completes.</Text> : overview.byPipeline.map((pipeline) => <Card key={pipeline.pipelineId}><Flex direction="row" justify="between" align="center" gap="small">
+        <Flex direction="column" gap="extra-small"><Text format={{ fontWeight: 'bold' }}>{pipeline.pipelineLabel}</Text><Text>{pipeline.totalDeals} deals · readiness {pipeline.averageScore}</Text></Flex>
+        <Flex direction="column" gap="extra-small"><Text format={{ fontWeight: 'bold' }}>{money(pipeline.amountAtRisk)}</Text><Text>{pipeline.criticalDeals} critical</Text></Flex>
+      </Flex></Card>)}
 
-      <Divider />
-      <Flex direction="row" justify="between" align="center" gap="small">
-        <Heading>Policy versions</Heading>
-        {permissions.has('policy.manage') && overview.governance.governanceEnabled && <Button variant="secondary" onClick={() => void createDraft()} disabled={working}>Create draft</Button>}
-      </Flex>
-      {policies.map((policy) => <Card key={policy.id}>
-        <Flex direction="column" gap="small">
-          <Flex direction="row" justify="between" align="center" gap="small">
-            <Text format={{ fontWeight: 'bold' }}>v{policy.versionNumber} · {policy.name}</Text>
-            <StatusTag variant={policyVariant(policy.status)}>{policy.status.replace('_', ' ')}</StatusTag>
-          </Flex>
-          <Text>{policy.changeSummary || policy.description || 'No change summary.'}</Text>
-          <Flex direction="row" gap="small" wrap="wrap">
-            {['draft', 'rejected'].includes(policy.status) && permissions.has('policy.manage') && <Button variant="secondary" onClick={() => setSelected(policy)}>Edit</Button>}
-            {['draft', 'rejected'].includes(policy.status) && permissions.has('policy.submit') && <Button variant="secondary" onClick={() => void policyAction(policy, 'submit')} disabled={working}>Submit</Button>}
-            {policy.status === 'pending_approval' && permissions.has('policy.approve') && <Button variant="secondary" onClick={() => void policyAction(policy, 'approve')} disabled={working}>Approve</Button>}
-            {policy.status === 'pending_approval' && permissions.has('policy.approve') && <Button variant="secondary" onClick={() => void policyAction(policy, 'reject')} disabled={working}>Reject</Button>}
-            {policy.status === 'approved' && permissions.has('policy.publish') && <Button onClick={() => void policyAction(policy, 'publish')} disabled={working}>Publish</Button>}
-            {permissions.has('policy.simulate') && policy.status !== 'published' && <Button variant="secondary" onClick={() => void policyAction(policy, 'simulate')} disabled={working}>Simulate</Button>}
-            {permissions.has('policy.manage') && ['published', 'superseded'].includes(policy.status) && <Button variant="secondary" onClick={() => void policyAction(policy, 'rollback')} disabled={working}>Create rollback draft</Button>}
-          </Flex>
+      <Divider /><Flex direction="row" justify="between" align="center" gap="small"><Heading>Policy versions</Heading>{permissions.has('policy.manage') && overview.governance.governanceEnabled && <Button variant="secondary" onClick={() => void createDraft()} disabled={working}>Create draft</Button>}</Flex>
+      {policies.map((policy) => <Card key={policy.id}><Flex direction="column" gap="small">
+        <Flex direction="row" justify="between" align="center" gap="small"><Text format={{ fontWeight: 'bold' }}>v{policy.versionNumber} · {policy.name}</Text><StatusTag variant={policyVariant(policy.status)}>{policy.status.replace('_', ' ')}</StatusTag></Flex>
+        <Text>{policy.changeSummary || policy.description || 'No change summary.'}</Text>
+        <Flex direction="row" gap="small" wrap="wrap">
+          {['draft', 'rejected'].includes(policy.status) && permissions.has('policy.manage') && <Button variant="secondary" onClick={() => setSelected(policy)}>Edit</Button>}
+          {['draft', 'rejected'].includes(policy.status) && permissions.has('policy.submit') && <Button variant="secondary" onClick={() => void policyAction(policy, 'submit')} disabled={working}>Submit</Button>}
+          {policy.status === 'pending_approval' && permissions.has('policy.approve') && <Button variant="secondary" onClick={() => void policyAction(policy, 'approve')} disabled={working}>Approve</Button>}
+          {policy.status === 'pending_approval' && permissions.has('policy.approve') && <Button variant="secondary" onClick={() => void policyAction(policy, 'reject')} disabled={working}>Reject</Button>}
+          {policy.status === 'approved' && permissions.has('policy.publish') && <Button onClick={() => void policyAction(policy, 'publish')} disabled={working}>Publish</Button>}
+          {permissions.has('policy.simulate') && policy.status !== 'published' && <Button variant="secondary" onClick={() => void policyAction(policy, 'simulate')} disabled={working}>Simulate</Button>}
+          {permissions.has('policy.manage') && ['published', 'superseded'].includes(policy.status) && <Button variant="secondary" onClick={() => void policyAction(policy, 'rollback')} disabled={working}>Create rollback draft</Button>}
         </Flex>
-      </Card>)}
+      </Flex></Card>)}
 
       {selected && ['draft', 'rejected'].includes(selected.status) && <>
-        <Divider />
-        <Heading>Edit policy v{selected.versionNumber}</Heading>
+        <Divider /><Heading>Edit policy v{selected.versionNumber}</Heading>
         <TextArea name="policyDescription" label="Description" value={selected.description} onChange={(value) => setSelected({ ...selected, description: value })} />
         <TextArea name="policySummary" label="Change summary" value={selected.changeSummary} onChange={(value) => setSelected({ ...selected, changeSummary: value })} />
         <Flex direction="row" gap="medium" wrap="wrap">
@@ -269,6 +268,32 @@ const EnterpriseHome = () => {
         <Toggle label="Require company association" checked={selected.rules.requireCompany} onChange={(value) => setSelected({ ...selected, rules: { ...selected.rules, requireCompany: value } })} />
         <Toggle label="Require contact association" checked={selected.rules.requireContact} onChange={(value) => setSelected({ ...selected, rules: { ...selected.rules, requireContact: value } })} />
         <Flex direction="row" gap="small"><Button onClick={() => void saveDraft()} disabled={working}>Save draft</Button><Button variant="secondary" onClick={() => setSelected(null)}>Close editor</Button></Flex>
+      </>}
+
+      {permissions.has('role.manage') && <>
+        <Divider /><Heading>Governance roles</Heading>
+        <Text>Assign application-level authority independently from ordinary HubSpot record access.</Text>
+        <Flex direction="row" gap="medium" wrap="wrap">
+          <Input name="roleEmail" label="HubSpot user email" value={roleEmail} onChange={setRoleEmail} />
+          <Select name="roleValue" label="DealGuard role" value={roleValue} options={[
+            { label: 'Administrator', value: 'admin' },
+            { label: 'Policy administrator', value: 'policy_admin' },
+            { label: 'Approver', value: 'approver' },
+            { label: 'Manager', value: 'manager' },
+            { label: 'Viewer', value: 'viewer' },
+          ]} onChange={(value) => setRoleValue(String(value) as GovernanceRole)} />
+        </Flex>
+        <Button variant="secondary" onClick={() => void assignRole()} disabled={working || !roleEmail.trim()}>Assign role</Button>
+        {roles.map((role) => <Card key={`${role.userId ?? ''}:${role.userEmail ?? ''}`}><Flex direction="row" justify="between" align="center" gap="small"><Text>{role.userEmail ?? role.userId ?? 'Unknown user'}</Text><StatusTag variant={role.role === 'admin' ? 'success' : 'default'}>{role.role.replace('_', ' ')}</StatusTag></Flex></Card>)}
+      </>}
+
+      {permissions.has('audit.view') && <>
+        <Divider /><Heading>Recent governance activity</Heading>
+        <Text>Latest actor-attributed configuration, policy, scan, and integration events. Full CSV export is available through the enterprise audit API.</Text>
+        {auditEvents.length === 0 ? <Text>No audit events are available.</Text> : auditEvents.map((event) => <Card key={event.id}><Flex direction="column" gap="extra-small">
+          <Flex direction="row" justify="between" align="center" gap="small"><Text format={{ fontWeight: 'bold' }}>{event.action}</Text><Text variant="microcopy">{new Date(event.createdAt).toLocaleString()}</Text></Flex>
+          <Text>{event.userEmail ?? event.userId ?? 'System'}</Text>
+        </Flex></Card>)}
       </>}
     </Flex>
   );

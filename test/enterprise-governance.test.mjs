@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { operationalPermissionsForRole } from '../dist/authorization.js';
 import { assessDeal } from '../dist/scoring.js';
 import { parseSettings } from '../dist/validation.js';
 
@@ -24,6 +25,15 @@ test('enterprise governance is plan-gated and approval-safe by default', () => {
   assert.equal(growth.governance.enabled, true);
   assert.equal(growth.governance.requireApproval, true);
   assert.equal(growth.governance.preventSelfApproval, true);
+});
+
+test('operational permissions protect destructive and configuration actions', () => {
+  const admin = operationalPermissionsForRole('admin');
+  assert.equal(admin.includes('data.delete'), true);
+  assert.equal(admin.includes('settings.manage'), true);
+  assert.equal(operationalPermissionsForRole('viewer').length, 0);
+  assert.deepEqual(operationalPermissionsForRole('manager'), ['scan.run']);
+  assert.equal(operationalPermissionsForRole('policy_admin').includes('integration.manage'), false);
 });
 
 test('assessments carry commercial context for enterprise analytics', () => {

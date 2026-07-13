@@ -1,97 +1,93 @@
 # Release evidence index
 
-A production release record must link every evidence class below. Repository CI alone is insufficient.
+Every release must retain an auditable evidence chain. Repository validation is necessary but does not replace account-bound provider evidence.
 
-## 1. Source and package integrity
+## 1. Source and repository integrity
 
-- reviewed commit SHA and pull request
-- successful CI workflow run
-- Worker, deal card, settings and App Home typechecks
-- automated test summary
+- Pull request and immutable release commit SHA
+- CI workflow run
+- Worker and HubSpot extension typechecks
+- Automated test report
+- Manifest validation
+- Migration validation through the latest numbered migration
+
+## 2. Release readiness
+
+- `dealguard-release-readiness-<target>-<run>` artifact
+- Preflight JSON
+- Worker bundle checksums
 - HubSpot manifest checksums
-- migration sequence through `0013_policy_dimension_mappings.sql`
+- Dodo environment mode validation
+- Protected-environment approval evidence
 
-## 2. Protected release readiness
+## 3. Controlled deployment
 
-- successful **Release readiness** workflow run
-- target environment (`staging` or `production`)
-- `2.0.0-rc.x` package/runtime version match
-- release-preflight JSON artifact
-- deployable Worker bundle checksums
-- explicit Dodo mode (`test` for staging, `live` for production)
-- confirmation that no secret value appears in the artifact
-
-## 3. Deployment and database
-
-- encrypted or provider-managed pre-migration backup reference
-- backup checksum and restore owner
-- D1 remote migration output
-- previous and deployed Worker version identifiers
-- `/health` response proving the deployed package version
-- cron/scheduled-handler verification
+- Provider-managed backup or restore-point reference created before migration
+- `dealguard-deployment-staging-<run>` artifact
+- Staging deployment record with exact commit and version
+- Remote migration checksums
+- Deployed health response
+- Signed staging acceptance report
+- Production promotion verification for the identical staging commit
+- `dealguard-deployment-production-<run>` artifact
+- Application rollback or incident reference when applicable
 
 ## 4. HubSpot platform acceptance
 
-- authenticated HubSpot project upload output
-- app ID and developer-test portal ID
-- install and reauthorization evidence
-- App Home V3 screenshots
-- deal-readiness card evidence
-- both workflow-action executions and outputs
-- webhook delivery evidence
-- property provisioning and backfill evidence
-- task-to-deal association evidence
+- Authenticated HubSpot upload output
+- Install and uninstall validation
+- OAuth and reauthorization validation
+- Deal card evidence
+- App Home V3 evidence
+- Settings extension evidence
+- Workflow action evidence
+- Webhook evidence
+- Native property provisioning and backfill evidence
+- Task-to-deal association evidence
 
-## 5. Signed live acceptance
+## 5. Dodo Payments acceptance
 
-- successful **Live acceptance** read-only artifact
-- successful **Live acceptance** full artifact
-- HubSpot v3 signature rejection and acceptance
-- Dodo invalid-signature rejection
-- non-subscription entitlement-isolation result
-- checkout creation without premature entitlement
-- plan-preview no-mutation result
-- single-use secure-download replay rejection
+- Dodo test-mode product configuration
+- Checkout evidence for every tier and billing interval
+- Customer Portal evidence
+- Signed subscription lifecycle webhooks
+- Stale and replay event tests
+- Non-subscription entitlement-isolation evidence
+- Plan preview, immediate change, scheduled change, and cancellation evidence
+- Usage meter and hard-cap evidence
+- Grace, recovery, cancellation, and expiry evidence
+- Dodo live-mode approval before production billing
 
-## 6. Dodo Payments acceptance
+## 6. Enterprise A–H acceptance
 
-- all four test-mode checkout results
-- Customer Portal result
-- subscription activation, renewal, grace, recovery, cancellation and expiry
-- immediate and scheduled plan changes
-- stale and out-of-order event handling
-- idempotent event processing
-- `sum` usage meters for events and AI credits
-- `max` usage meters for active deals and retained storage
-- capped mode, hard limit and metered-overage evidence
-- manual Enterprise contract activation and expiry
+- Role and scope authorization tests
+- Exact-payload two-person approval tests
+- Policy simulation, publish, rollback, import, and export tests
+- Segmentation and dimension-mapping tests
+- Executive analytics and export tests
+- Remediation case, evidence, bulk-action, SLA, and HubSpot-task tests
+- Multi-channel routing, acknowledgement, retry, dead-letter, and replay tests
+- Audit-chain, legal-hold, retention, data-export, and SIEM tests
+- Synthetic health, resumable scan, lease recovery, and incident-history tests
 
-## 7. Enterprise A–H acceptance
+## 7. Recovery and operational evidence
 
-- scoped policy simulation, two-person approval, publication and rollback
-- role and scope authorization tests
-- analytics audiences, drill-down and export tests
-- remediation evidence, bulk operations and HubSpot task tests
-- multi-channel routing, quiet hours, acknowledgement, dead-letter and replay tests
-- audit-chain verification, CSV/JSON/JSONL exports and legal-hold tests
-- SIEM delivery evidence
-- synthetic checks, stale-lease recovery and resumable-scan evidence
+- Backup restore into an isolated environment
+- Record-count and integrity comparison
+- Disaster-recovery exercise
+- Encryption-key rotation exercise
+- Worker rollback exercise
+- Post-rollback signed acceptance
+- Incident and corrective-action record
 
-## 8. Recovery and governance
+## 8. Security, legal, and commercial approval
 
-- isolated backup restore test
-- disaster-recovery exercise
-- incident record and customer-status evidence
-- encryption-key rotation evidence
-- external security review and vulnerability test
-- legal, privacy, DPA, support, pricing and Marketplace approvals
+- External security review and vulnerability testing
+- Privacy policy and terms
+- Data-processing agreement
+- Subprocessor disclosures
+- Support and SLA materials
+- Pricing and commercial approval
+- HubSpot Marketplace submission and approval
 
-## Release decision
-
-The release owner and an independent reviewer must record one of:
-
-- `approved`
-- `approved with documented exceptions`
-- `rejected`
-
-Exceptions require an owner, risk statement, compensating control and expiry date. Evidence must not contain access tokens, signing secrets, encryption material, full customer PII or unencrypted database exports.
+Release approval requires reviewer sign-off against this index. Evidence must not contain access tokens, signing secrets, encryption keys, full customer personal data, or unencrypted database exports.

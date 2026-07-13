@@ -13,6 +13,16 @@ export const CORE_DEAL_PROPERTIES = [
   'description',
 ] as const;
 
+export const DEALGUARD_NATIVE_PROPERTY_NAMES = [
+  'dealguard_readiness_score',
+  'dealguard_readiness_status',
+  'dealguard_readiness_grade',
+  'dealguard_issue_count',
+  'dealguard_handoff_status',
+  'dealguard_last_assessed_at',
+  'dealguard_readiness_summary',
+] as const;
+
 export const DEFAULT_SETTINGS: TenantSettings = {
   rules: {
     staleDays: 7,

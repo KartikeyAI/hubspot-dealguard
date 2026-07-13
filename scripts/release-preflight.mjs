@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
 
-const ROOT = resolve(new URL('..', import.meta.url).pathname, '..');
+const ROOT = resolve(new URL('..', import.meta.url).pathname);
 const args = new Set(process.argv.slice(2));
 const outputPath = resolve(ROOT, valueAfter('--output') ?? '.release/preflight.json');
 const wranglerOutput = resolve(ROOT, valueAfter('--wrangler-output') ?? '.release/wrangler.toml');
@@ -31,6 +31,15 @@ function add(id, ok, detail, category = 'repository') {
 
 async function text(path) {
   return readFile(resolve(ROOT, path), 'utf8');
+}
+
+function parsedBaseUrl() {
+  try {
+    const parsed = new URL(process.env.APP_BASE_URL ?? '');
+    return parsed.protocol === 'https:' ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 function requiredEnvironment() {
@@ -66,10 +75,7 @@ async function validateEnvironment() {
   for (const name of requiredEnvironment()) {
     add(`env.${name}`, present(process.env[name]), present(process.env[name]) ? 'configured' : 'missing or placeholder', 'environment');
   }
-  const baseUrl = process.env.APP_BASE_URL ?? '';
-  let parsed = null;
-  try { parsed = new URL(baseUrl); } catch { /* handled below */ }
-  add('env.APP_BASE_URL.https', parsed?.protocol === 'https:', 'APP_BASE_URL must be an absolute HTTPS URL', 'environment');
+  add('env.APP_BASE_URL.https', Boolean(parsedBaseUrl()), 'APP_BASE_URL must be an absolute HTTPS URL', 'environment');
   add('env.HUBSPOT_APP_ID.numeric', /^\d+$/.test(process.env.HUBSPOT_APP_ID ?? ''), 'HUBSPOT_APP_ID must be numeric', 'environment');
   add('env.D1_DATABASE_ID.uuid', /^[0-9a-f-]{32,36}$/i.test(process.env.D1_DATABASE_ID ?? ''), 'D1_DATABASE_ID must look like a Cloudflare D1 identifier', 'environment');
   add('env.TOKEN_ENCRYPTION_KEY.length', String(process.env.TOKEN_ENCRYPTION_KEY ?? '').length >= 32, 'TOKEN_ENCRYPTION_KEY must contain at least 32 characters', 'environment');
@@ -91,11 +97,11 @@ async function validateRepository() {
   add('hubspot.platform', hsProject.platformVersion === '2026.03', `HubSpot platform version is ${hsProject.platformVersion}`);
   add('hubspot.marketplace_distribution', appManifest?.config?.distribution === 'marketplace', 'HubSpot app distribution must be marketplace');
 
-  const baseUrl = new URL(process.env.APP_BASE_URL);
-  const normalizedRoot = `${baseUrl.origin}/`;
-  const redirect = `${baseUrl.origin}/oauth/callback`;
-  add('hubspot.fetch_domain', appManifest?.config?.permittedUrls?.fetch?.includes(normalizedRoot), `permitted fetch URLs must include ${normalizedRoot}`);
-  add('hubspot.redirect_domain', appManifest?.config?.auth?.redirectUrls?.includes(redirect), `OAuth redirects must include ${redirect}`);
+  const baseUrl = parsedBaseUrl();
+  const normalizedRoot = baseUrl ? `${baseUrl.origin}/` : null;
+  const redirect = baseUrl ? `${baseUrl.origin}/oauth/callback` : null;
+  add('hubspot.fetch_domain', Boolean(normalizedRoot && appManifest?.config?.permittedUrls?.fetch?.includes(normalizedRoot)), normalizedRoot ? `permitted fetch URLs must include ${normalizedRoot}` : 'APP_BASE_URL is invalid');
+  add('hubspot.redirect_domain', Boolean(redirect && appManifest?.config?.auth?.redirectUrls?.includes(redirect)), redirect ? `OAuth redirects must include ${redirect}` : 'APP_BASE_URL is invalid');
   add('hubspot.support_https', ['documentationUrl', 'supportUrl'].every((key) => String(appManifest?.config?.support?.[key] ?? '').startsWith('https://')), 'support and documentation URLs must use HTTPS');
 
   add('wrangler.worker_name', /name\s*=\s*"dealguard-api"/.test(wrangler), 'Worker must retain the dealguard-api name');
@@ -117,13 +123,14 @@ async function validateRepository() {
     add(`env_example.${name}`, envExample.includes(`${name}=`), `${name} must be documented in .env.example`);
   }
 
-  return { packageJson, appManifest, wrangler, migrationFiles };
+  return { packageJson, wrangler };
 }
 
 function renderDeploymentWrangler(source) {
-  const baseUrl = new URL(process.env.APP_BASE_URL).origin;
+  const baseUrl = parsedBaseUrl();
+  if (!baseUrl) throw new Error('APP_BASE_URL is invalid.');
   let rendered = source
-    .replace(/APP_BASE_URL\s*=\s*"[^"]*"/, `APP_BASE_URL = "${baseUrl}"`)
+    .replace(/APP_BASE_URL\s*=\s*"[^"]*"/, `APP_BASE_URL = "${baseUrl.origin}"`)
     .replace(/HUBSPOT_APP_ID\s*=\s*"[^"]*"/, `HUBSPOT_APP_ID = "${process.env.HUBSPOT_APP_ID}"`)
     .replace(/database_id\s*=\s*"[^"]*"/, `database_id = "${process.env.D1_DATABASE_ID}"`);
   rendered = rendered.replace(/workers_dev\s*=\s*(true|false)/, `workers_dev = ${target === 'staging' ? 'true' : 'false'}`);
@@ -133,7 +140,8 @@ function renderDeploymentWrangler(source) {
 async function main() {
   await validateEnvironment();
   const repository = await validateRepository();
-  if (renderWrangler && checks.every((item) => item.ok || item.category !== 'environment')) {
+  const environmentFailed = checks.some((item) => item.category === 'environment' && !item.ok);
+  if (renderWrangler && !environmentFailed) {
     await mkdir(dirname(wranglerOutput), { recursive: true });
     await writeFile(wranglerOutput, renderDeploymentWrangler(repository.wrangler), { mode: 0o600 });
     add('output.wrangler', true, `rendered ${wranglerOutput}`, 'output');

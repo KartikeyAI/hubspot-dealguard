@@ -18,6 +18,7 @@ const completeEnvironment = {
   SLACK_CLIENT_SECRET: 'slack-client-secret',
   DODO_API_KEY: 'dodo-api-key',
   DODO_WEBHOOK_SECRET: 'whsec_ZG9kby10ZXN0LXNlY3JldA',
+  DODO_ENVIRONMENT: 'test',
   DODO_GROWTH_MONTHLY_PRODUCT_ID: 'prod_growth_month',
   DODO_GROWTH_YEARLY_PRODUCT_ID: 'prod_growth_year',
   DODO_ENTERPRISE_MONTHLY_PRODUCT_ID: 'prod_enterprise_month',
@@ -57,6 +58,17 @@ test('release preflight validates complete enterprise configuration and renders 
   assert.match(wrangler, /database_id = "12345678-1234-1234-1234-123456789abc"/);
   assert.match(wrangler, /workers_dev = true/);
   assert.doesNotMatch(wrangler, /REPLACE_WITH_/);
+});
+
+test('release preflight requires live Dodo mode for production', async () => {
+  await rm('.release', { recursive: true, force: true });
+  const rejected = runPreflight({ RELEASE_TARGET: 'production', DODO_ENVIRONMENT: 'test' }, ['--no-render']);
+  assert.notEqual(rejected.status, 0);
+  const rejectedReport = JSON.parse(await readFile('.release/test-preflight.json', 'utf8'));
+  assert.ok(rejectedReport.checks.some((item) => item.id === 'env.DODO_ENVIRONMENT.target' && !item.ok));
+
+  const accepted = runPreflight({ RELEASE_TARGET: 'production', DODO_ENVIRONMENT: 'live' }, ['--no-render']);
+  assert.equal(accepted.status, 0, `${accepted.stdout}\n${accepted.stderr}`);
 });
 
 test('release preflight reports invalid environment without crashing or rendering config', async () => {

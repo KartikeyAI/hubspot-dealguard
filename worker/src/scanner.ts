@@ -27,7 +27,10 @@ export async function scanPortal(
       const assessment = assessDeal(deal, client.settings.rules);
       await repository.saveAssessment(portalId, assessment);
       const stored = await repository.getAssessment(portalId, deal.id);
-      nativeUpdates.push({ assessment, handoffStatus: stored?.handoffStatus });
+      nativeUpdates.push({
+        assessment,
+        ...(stored ? { handoffStatus: stored.handoffStatus } : {}),
+      });
       try {
         await notifyAssessmentTransition(env, portalId, previous, assessment, client.settings, client.plan, trigger);
       } catch (error) {

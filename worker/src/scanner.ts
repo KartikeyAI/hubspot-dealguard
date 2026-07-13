@@ -7,6 +7,7 @@ import { resolveSegmentedRules } from './enterprise-policy.js';
 import { recordServiceFailure, recordServiceSuccess } from './health.js';
 import { HubSpotClient } from './hubspot.js';
 import { syncAssessmentBatchIfEnabled } from './native-sync.js';
+import { policyDimensionPropertyNames } from './policy-dimensions.js';
 import { syncAssessmentRemediations } from './remediation.js';
 import { getScanCheckpoint, recordOperationalMetric, saveScanCheckpoint } from './reliability.js';
 import { Repository } from './repository.js';
@@ -34,7 +35,8 @@ export async function scanPortal(
   const scanId = existingScanId ?? await repository.startScan(portalId, trigger);
   const leaseOwner = crypto.randomUUID();
   try {
-    const deals = await client.listDeals(PLAN_LIMITS[client.plan].maxDealsPerScan);
+    const dimensionProperties = await policyDimensionPropertyNames(env, portalId);
+    const deals = await client.listDeals(PLAN_LIMITS[client.plan].maxDealsPerScan, dimensionProperties);
     const checkpoint = await getScanCheckpoint(env, scanId, portalId);
     const state = checkpoint?.state && typeof checkpoint.state === 'object'
       ? checkpoint.state as ScanCheckpointState

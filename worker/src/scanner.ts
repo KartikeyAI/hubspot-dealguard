@@ -2,6 +2,7 @@ import { PLAN_LIMITS } from './config.js';
 import { HubSpotClient } from './hubspot.js';
 import { Repository } from './repository.js';
 import { assessDeal } from './scoring.js';
+import { notifyAssessmentTransition } from './slack.js';
 import type { Env } from './types.js';
 
 export async function scanPortal(
@@ -20,8 +21,14 @@ export async function scanPortal(
     let critical = 0;
     let incompleteHandoffs = 0;
     for (const deal of deals) {
+      const previous = await repository.getAssessment(portalId, deal.id);
       const assessment = assessDeal(deal, client.settings.rules);
       await repository.saveAssessment(portalId, assessment);
+      try {
+        await notifyAssessmentTransition(env, portalId, previous, assessment, client.settings, client.plan, trigger);
+      } catch (error) {
+        console.error(JSON.stringify({ level: 'error', task: 'slack_scan_notification', portalId, dealId: deal.id, error: error instanceof Error ? error.message : String(error) }));
+      }
       if (assessment.status === 'ready') ready += 1;
       if (assessment.status === 'at_risk') atRisk += 1;
       if (assessment.status === 'critical') critical += 1;

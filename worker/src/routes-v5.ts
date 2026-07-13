@@ -25,6 +25,11 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     }
     if (request.method === 'DELETE') {
       await cancelScheduledDodoPlanChange(env, identity);
+      await env.DB.prepare(
+        `UPDATE subscriptions_v2 SET scheduled_tier = NULL, scheduled_interval = NULL,
+         scheduled_product_id = NULL, scheduled_change_at = NULL,
+         scheduled_change_provider_state = 'cancelled', updated_at = ? WHERE portal_id = ?`,
+      ).bind(new Date().toISOString(), identity.portalId).run();
       return json({ ok: true });
     }
     return methodNotAllowed(['POST', 'DELETE']);

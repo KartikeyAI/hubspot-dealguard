@@ -1,5 +1,7 @@
 import { PLAN_LIMITS, REQUIRED_HUBSPOT_SCOPES } from './config.js';
 import { randomToken, sha256Hex } from './crypto.js';
+import { dashboardForPortal } from './dashboard.js';
+import { finalizePortalDeletion } from './data-deletion.js';
 import { sendEmail } from './email.js';
 import { AppError } from './errors.js';
 import { HubSpotClient } from './hubspot.js';
@@ -102,7 +104,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
 
   if (url.pathname === '/api/v1/dashboard') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
-    return json(await repository.dashboard(identity.portalId));
+    return json(await dashboardForPortal(env, identity.portalId));
   }
 
   if (url.pathname === '/api/v1/settings') {
@@ -147,7 +149,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     const credentials = await repository.getCredentials(identity.portalId);
     const recipients = credentials.settings.digest.recipients;
     if (recipients.length === 0) throw new AppError(400, 'digest_recipient_required', 'Configure at least one digest recipient first.');
-    const summary = await repository.dashboard(identity.portalId);
+    const summary = await dashboardForPortal(env, identity.portalId);
     await sendEmail(env, recipients, 'DealGuard test digest', `<h1>DealGuard test digest</h1><p>${summary.totalDeals} deals assessed. Average readiness score: ${summary.averageScore}.</p>`);
     await repository.audit(identity.portalId, identity.userId, identity.userEmail, 'digest.test_sent', { recipients });
     return json({ ok: true });
@@ -160,6 +162,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
       throw new AppError(400, 'confirmation_required', 'Enter the exact deletion confirmation phrase.');
     }
     await repository.softDeletePortal(identity);
+    await finalizePortalDeletion(env, identity);
     return json({ ok: true });
   }
 

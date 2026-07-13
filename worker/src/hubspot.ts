@@ -1,4 +1,4 @@
-import { CORE_DEAL_PROPERTIES } from './config.js';
+import { CORE_DEAL_PROPERTIES, DEALGUARD_NATIVE_PROPERTY_NAMES } from './config.js';
 import { AppError } from './errors.js';
 import { Repository, type TenantCredentials } from './repository.js';
 import type {
@@ -16,6 +16,7 @@ import type {
 } from './types.js';
 
 const API_BASE = 'https://api.hubapi.com';
+const ALLOWED_NATIVE_PROPERTY_NAMES = new Set<string>(DEALGUARD_NATIVE_PROPERTY_NAMES);
 
 interface AssociationBatchResponse {
   results?: Array<{ from: { id: string }; to: Array<{ toObjectId: number }> }>;
@@ -116,6 +117,18 @@ export class HubSpotClient {
     return (await response.json()) as T;
   }
 
+  private assertAllowedNativeProperties(properties: Record<string, string>): void {
+    const blocked = Object.keys(properties).filter((name) => !ALLOWED_NATIVE_PROPERTY_NAMES.has(name));
+    if (blocked.length > 0) {
+      throw new AppError(
+        500,
+        'native_property_write_blocked',
+        'DealGuard blocked an attempted write outside its fixed native property allowlist.',
+        { blocked },
+      );
+    }
+  }
+
   async getPipelines(): Promise<HubSpotPipeline[]> {
     const response = await this.request<{ results: HubSpotPipeline[] }>('/crm/v3/pipelines/deals');
     return response.results;
@@ -135,13 +148,19 @@ export class HubSpotClient {
   async ensureDealProperties(definitions: HubSpotPropertyDefinition[]): Promise<void> {
     const existing = new Map((await this.getAllDealProperties()).map((property) => [property.name, property]));
     for (const definition of definitions) {
+      if (!ALLOWED_NATIVE_PROPERTY_NAMES.has(definition.name)) {
+        throw new AppError(500, 'native_property_definition_blocked', 'DealGuard refused to provision a property outside its fixed allowlist.');
+      }
       const current = existing.get(definition.name);
       if (current) {
-        if (current.type !== definition.type || current.fieldType !== definition.fieldType) {
+        const expectedOptions = definition.options?.map((option) => option.value) ?? [];
+        const currentOptions = new Set((current.options ?? []).map((option) => option.value));
+        const optionsCompatible = expectedOptions.every((value) => currentOptions.has(value));
+        if (current.type !== definition.type || current.fieldType !== definition.fieldType || !optionsCompatible) {
           throw new AppError(
             409,
             'native_property_conflict',
-            `HubSpot property ${definition.name} already exists with an incompatible type.`,
+            `HubSpot property ${definition.name} already exists with an incompatible definition.`,
           );
         }
         continue;
@@ -159,6 +178,7 @@ export class HubSpotClient {
   }
 
   async updateDealProperties(dealId: string, properties: Record<string, string>): Promise<void> {
+    this.assertAllowedNativeProperties(properties);
     await this.request<HubSpotObject>(`/crm/v3/objects/deals/${encodeURIComponent(dealId)}`, {
       method: 'PATCH',
       body: JSON.stringify({ properties }),
@@ -166,6 +186,7 @@ export class HubSpotClient {
   }
 
   async batchUpdateDeals(updates: HubSpotDealUpdate[]): Promise<void> {
+    for (const update of updates) this.assertAllowedNativeProperties(update.properties);
     for (let offset = 0; offset < updates.length; offset += 100) {
       const batch = updates.slice(offset, offset + 100);
       if (batch.length === 0) continue;

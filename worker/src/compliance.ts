@@ -265,18 +265,18 @@ export async function createDataExport(env: Env, identity: RequestIdentity, valu
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + 24 * 60 * 60_000).toISOString();
   await env.DB.prepare(
-    \`INSERT INTO data_export_jobs (id, portal_id, format, scope, status, requested_by_user_id, requested_by_email, created_at, expires_at)
-     VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)\`
+    `INSERT INTO data_export_jobs (id, portal_id, format, scope, status, requested_by_user_id, requested_by_email, created_at, expires_at)
+     VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)`
   ).bind(id, identity.portalId, format, scope, identity.userId, identity.userEmail, now, expiresAt).run();
   try {
     await enqueueDataExport(env, identity.portalId, id);
   } catch (error) {
-    await env.DB.prepare(\`UPDATE data_export_jobs SET status = 'failed', error_message = ? WHERE portal_id = ? AND id = ?\`)
+    await env.DB.prepare(`UPDATE data_export_jobs SET status = 'failed', error_message = ? WHERE portal_id = ? AND id = ?`)
       .bind((error instanceof Error ? error.message : String(error)).slice(0, 1000), identity.portalId, id).run();
     throw error;
   }
   await appendImmutableAudit(env, { portalId: identity.portalId, action: 'data_export.queued', resourceType: 'data_export', resourceId: id, actorUserId: identity.userId, actorEmail: identity.userEmail, metadata: { format, scope, expiresAt } });
-  return { id, format, scope, status: 'queued', expiresAt, statusPath: \`/api/v1/enterprise/compliance/exports/\${id}\` };
+  return { id, format, scope, status: 'queued', expiresAt, statusPath: `/api/v1/enterprise/compliance/exports/${id}` };
 }
 
 function renderExport(payload: Record<string, unknown>, format: string): { body: string; contentType: string; extension: string } {
@@ -286,7 +286,7 @@ function renderExport(payload: Record<string, unknown>, format: string): { body:
     extension: 'jsonl',
   };
   if (format === 'csv') return {
-    body: \`section,data\\n\${Object.entries(payload).map(([section, value]) => \`\${csv(section)},\${csv(value)}\`).join('\\n')}\`,
+    body: `section,data\\n${Object.entries(payload).map(([section, value]) => `${csv(section)},${csv(value)}`).join('\\n')}`,
     contentType: 'text/csv; charset=utf-8',
     extension: 'csv',
   };
@@ -295,50 +295,50 @@ function renderExport(payload: Record<string, unknown>, format: string): { body:
 
 export async function processDataExport(env: Env, portalId: string, exportId: string): Promise<void> {
   const claimed = await env.DB.prepare(
-    \`UPDATE data_export_jobs SET status = 'processing', error_message = NULL WHERE portal_id = ? AND id = ? AND status IN ('queued','failed')\`
+    `UPDATE data_export_jobs SET status = 'processing', error_message = NULL WHERE portal_id = ? AND id = ? AND status IN ('queued','failed')`
   ).bind(portalId, exportId).run();
   if (!Number(claimed.meta?.changes ?? 0)) {
-    const existing = await env.DB.prepare(\`SELECT status FROM data_export_jobs WHERE portal_id = ? AND id = ?\`).bind(portalId, exportId).first<{ status: string }>();
+    const existing = await env.DB.prepare(`SELECT status FROM data_export_jobs WHERE portal_id = ? AND id = ?`).bind(portalId, exportId).first<{ status: string }>();
     if (existing?.status === 'completed') return;
     throw new AppError(409, 'data_export_not_processable', 'The data export is already processing or does not exist.');
   }
   try {
-    const job = await env.DB.prepare(\`SELECT * FROM data_export_jobs WHERE portal_id = ? AND id = ?\`).bind(portalId, exportId).first<Record<string, unknown>>();
+    const job = await env.DB.prepare(`SELECT * FROM data_export_jobs WHERE portal_id = ? AND id = ?`).bind(portalId, exportId).first<Record<string, unknown>>();
     if (!job) throw new Error('Data export disappeared after it was claimed.');
     const payload = await completeExportPayload(env, portalId, String(job.scope));
     const rendered = renderExport(payload, String(job.format));
     const checksum = await sha256Hex(rendered.body);
-    const key = tenantObjectKey(portalId, 'exports', exportId, \`dealguard-\${job.scope}.\${rendered.extension}\`);
+    const key = tenantObjectKey(portalId, 'exports', exportId, `dealguard-${job.scope}.${rendered.extension}`);
     const stored = await putObject(env, { key, body: rendered.body, contentType: rendered.contentType, sha256: checksum });
     const now = new Date().toISOString();
     await env.DB.prepare(
-      \`UPDATE data_export_jobs SET status = 'completed', object_key = ?, checksum = ?, size_bytes = ?, content_type = ?, completed_at = ?, error_message = NULL WHERE portal_id = ? AND id = ?\`
+      `UPDATE data_export_jobs SET status = 'completed', object_key = ?, checksum = ?, size_bytes = ?, content_type = ?, completed_at = ?, error_message = NULL WHERE portal_id = ? AND id = ?`
     ).bind(key, checksum, stored.sizeBytes, rendered.contentType, now, portalId, exportId).run();
-    await env.DB.prepare(\`UPDATE async_jobs SET status = 'completed', completed_at = ?, updated_at = ?, last_error = NULL WHERE id = ?\`).bind(now, now, \`export:\${exportId}\`).run();
+    await env.DB.prepare(`UPDATE async_jobs SET status = 'completed', completed_at = ?, updated_at = ?, last_error = NULL WHERE id = ?`).bind(now, now, `export:${exportId}`).run();
     await appendImmutableAudit(env, { portalId, action: 'data_export.completed', resourceType: 'data_export', resourceId: exportId, source: 'queue', metadata: { format: job.format, scope: job.scope, checksum, objectKey: key, sizeBytes: stored.sizeBytes } });
   } catch (error) {
     const message = (error instanceof Error ? error.message : String(error)).slice(0, 1000);
-    await env.DB.prepare(\`UPDATE data_export_jobs SET status = 'failed', error_message = ? WHERE portal_id = ? AND id = ?\`).bind(message, portalId, exportId).run();
+    await env.DB.prepare(`UPDATE data_export_jobs SET status = 'failed', error_message = ? WHERE portal_id = ? AND id = ?`).bind(message, portalId, exportId).run();
     throw error;
   }
 }
 
 export async function dataExportStatus(env: Env, identity: RequestIdentity, exportId: string): Promise<Record<string, unknown>> {
   await requireEnterprisePermission(env, identity, 'data_export.manage');
-  const job = await env.DB.prepare(\`SELECT id, format, scope, status, checksum, size_bytes, content_type, created_at, completed_at, expires_at, error_message FROM data_export_jobs WHERE portal_id = ? AND id = ?\`)
+  const job = await env.DB.prepare(`SELECT id, format, scope, status, checksum, size_bytes, content_type, created_at, completed_at, expires_at, error_message FROM data_export_jobs WHERE portal_id = ? AND id = ?`)
     .bind(identity.portalId, exportId).first<Record<string, unknown>>();
   if (!job) throw new AppError(404, 'data_export_not_found', 'The data export does not exist.');
-  return { id: job.id, format: job.format, scope: job.scope, status: job.status, checksum: job.checksum, sizeBytes: job.size_bytes, contentType: job.content_type, createdAt: job.created_at, completedAt: job.completed_at, expiresAt: job.expires_at, error: job.error_message, ...(job.status === 'completed' ? { downloadPath: \`/api/v1/enterprise/compliance/exports/\${exportId}/download\` } : {}) };
+  return { id: job.id, format: job.format, scope: job.scope, status: job.status, checksum: job.checksum, sizeBytes: job.size_bytes, contentType: job.content_type, createdAt: job.created_at, completedAt: job.completed_at, expiresAt: job.expires_at, error: job.error_message, ...(job.status === 'completed' ? { downloadPath: `/api/v1/enterprise/compliance/exports/${exportId}/download` } : {}) };
 }
 
 export async function downloadDataExport(env: Env, identity: RequestIdentity, exportId: string): Promise<Response> {
   await requireEnterprisePermission(env, identity, 'data_export.manage');
-  const job = await env.DB.prepare(\`SELECT * FROM data_export_jobs WHERE portal_id = ? AND id = ?\`)
+  const job = await env.DB.prepare(`SELECT * FROM data_export_jobs WHERE portal_id = ? AND id = ?`)
     .bind(identity.portalId, exportId).first<Record<string, unknown>>();
   if (!job) throw new AppError(404, 'data_export_not_found', 'The data export does not exist.');
-  if (job.status !== 'completed' || !job.object_key) throw new AppError(409, 'data_export_not_ready', \`The data export is \${String(job.status)}.\`);
+  if (job.status !== 'completed' || !job.object_key) throw new AppError(409, 'data_export_not_ready', `The data export is ${String(job.status)}.`);
   if (job.expires_at && Date.parse(String(job.expires_at)) <= Date.now()) throw new AppError(410, 'data_export_expired', 'The data export has expired.');
-  const filename = \`dealguard-\${String(job.scope)}-\${identity.portalId}.\${String(job.format)}\`;
+  const filename = `dealguard-${String(job.scope)}-${identity.portalId}.${String(job.format)}`;
   const location = await createSignedObjectDownload(env, String(job.object_key), filename, 300);
   return new Response(null, { status: 302, headers: { location, 'cache-control': 'no-store', 'x-content-sha256': String(job.checksum ?? '') } });
 }

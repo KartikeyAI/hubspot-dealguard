@@ -27,7 +27,7 @@ jobs:
             cat "$f" >> inventory/migrations.sql.txt
             printf '\n' >> inventory/migrations.sql.txt
           done
-          tar --exclude=.git --exclude=inventory --exclude=node_modules --exclude=repository-source.tar.gz -czf repository-source.tar.gz .
+          git archive --format=tar.gz --output=repository-source.tar.gz HEAD
       - name: Upload persistence inventory
         uses: actions/upload-artifact@v4
         with:

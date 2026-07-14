@@ -1,9 +1,9 @@
 {
   "name": "@rokadhq/hubspot-dealguard",
-  "version": "2.0.0-rc.1",
+  "version": "2.1.0-rc.1",
   "private": true,
   "type": "module",
-  "description": "DealGuard by Rokad — enterprise HubSpot revenue governance, remediation, compliance, reliability, analytics, and Dodo Payments commercial operations.",
+  "description": "DealGuard by Rokad — enterprise HubSpot revenue governance on Neon PostgreSQL, Hyperdrive, Tigris object storage, Cloudflare Queues, and Dodo Payments.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -16,12 +16,20 @@
     "release:verify-staging": "node scripts/verify-staging-promotion.mjs",
     "dev:worker": "wrangler dev",
     "deploy:worker": "wrangler deploy",
-    "db:migrate:local": "wrangler d1 migrations apply dealguard-production --local",
-    "db:migrate:remote": "wrangler d1 migrations apply dealguard-production --remote",
     "hubspot:deps": "hs project install-deps",
     "hubspot:dev": "hs project dev",
     "hubspot:upload": "hs project upload",
-    "typecheck:ui": "npm run typecheck --prefix src/app/cards && npm run typecheck --prefix src/app/settings && npm run typecheck --prefix src/app/pages"
+    "typecheck:ui": "npm run typecheck --prefix src/app/cards && npm run typecheck --prefix src/app/settings && npm run typecheck --prefix src/app/pages",
+    "db:migrate": "node scripts/postgres-migrate.mjs",
+    "db:migrate:check": "node scripts/postgres-migrate.mjs --check",
+    "db:migrate:dry-run": "node scripts/postgres-migrate.mjs --dry-run",
+    "db:validate": "node scripts/postgres-validate.mjs",
+    "deploy:worker:staging": "wrangler deploy --env staging",
+    "deploy:worker:production": "wrangler deploy --env production",
+    "storage:backup:upload": "node scripts/tigris-backup.mjs upload",
+    "storage:backup:head": "node scripts/tigris-backup.mjs head",
+    "storage:backup:download": "node scripts/tigris-backup.mjs download",
+    "hubspot:render-target": "node scripts/render-hubspot-target.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -29,6 +37,12 @@
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260713.1",
     "typescript": "5.9.3",
-    "wrangler": "4.110.0"
+    "wrangler": "4.110.0",
+    "@types/pg": "8.15.5"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.894.0",
+    "@aws-sdk/s3-request-presigner": "3.894.0",
+    "pg": "8.16.3"
   }
 }

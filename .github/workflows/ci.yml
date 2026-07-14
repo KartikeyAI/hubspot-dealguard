@@ -87,6 +87,7 @@ jobs:
             REPLACE_WITH_PRODUCTION_TIGRIS_BUCKET: 'dealguard-ci',
           };
           for (const [from, to] of Object.entries(replacements)) value = value.replaceAll(from, to);
+          value = value.replace(/^main\s*=\s*"[^"]+"/m, 'main = "../worker/src/index.ts"');
           if (value.includes('REPLACE_WITH_')) throw new Error('CI Wrangler rendering left a placeholder.');
           fs.writeFileSync('.release/ci-wrangler.toml', value, { mode: 0o600 });
           NODE

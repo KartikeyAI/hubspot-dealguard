@@ -17,6 +17,12 @@ function digest(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function postgresSql(source) {
+  return source
+    .replace(/^\s*PRAGMA\s+foreign_keys\s*=\s*ON;\s*/i, 'SET search_path TO dealguard, public;\n\n')
+    .replace(/\bREAL\b/g, 'DOUBLE PRECISION');
+}
+
 const files = (await readdir(directory)).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
 if (!files.length) throw new Error(`No PostgreSQL migrations found in ${directory}.`);
 const numbers = files.map((name) => Number(name.slice(0, 4)));
@@ -48,7 +54,8 @@ try {
 
   for (const name of files) {
     const version = Number(name.slice(0, 4));
-    const sql = await readFile(resolve(directory, name), 'utf8');
+    const source = await readFile(resolve(directory, name), 'utf8');
+    const sql = postgresSql(source);
     const checksum = digest(sql);
     const existing = applied.get(version);
     if (existing) {

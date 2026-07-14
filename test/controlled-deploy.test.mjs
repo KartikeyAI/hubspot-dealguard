@@ -4,7 +4,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 
 const commit = 'a'.repeat(40);
-const version = '2.0.0-rc.1';
+const { version } = JSON.parse(await readFile('package.json', 'utf8'));
 const root = '.release/controlled-deploy-test';
 
 async function fixture() {
@@ -29,7 +29,7 @@ function deploymentRecord(extraEnvironment = {}) {
       ...process.env,
       RELEASE_TARGET: 'staging',
       RELEASE_SHA: commit,
-      BACKUP_REFERENCE: 'cloudflare-time-travel:bookmark-123',
+      BACKUP_REFERENCE: 'backups/staging/dealguard-2.1.0-rc.1.sql.enc',
       GITHUB_REPOSITORY: 'rokadhq/hubspot-dealguard',
       GITHUB_WORKFLOW: 'Controlled deploy',
       GITHUB_RUN_ID: '123',
@@ -96,10 +96,15 @@ test('controlled deployment workflow retains enterprise release invariants', asy
   assert.match(workflow, /inputs\.target == 'production'/);
   assert.match(workflow, /gh run download/);
   assert.match(workflow, /release:verify-staging/);
-  assert.match(workflow, /d1 migrations apply dealguard-production --remote/);
+  assert.match(workflow, /storage:backup:head/);
+  assert.match(workflow, /npm run db:migrate/);
+  assert.match(workflow, /npm run db:migrate:check/);
+  assert.match(workflow, /npm run db:validate/);
+  assert.doesNotMatch(workflow, /wrangler d1|D1_DATABASE_ID/i);
   assert.match(workflow, /wrangler deploy --config \.release\/wrangler\.toml/);
   assert.match(workflow, /acceptance:live/);
   assert.match(workflow, /release:record/);
+  assert.match(workflow, /database\/migrations/);
   assert.match(workflow, /retention-days: 90/);
   assert.doesNotMatch(workflow, /wrangler secret (put|bulk)/);
 });

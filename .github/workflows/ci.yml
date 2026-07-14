@@ -1,16 +1,33 @@
 name: CI
 
 on:
-  pull_request:
   push:
     branches: [main]
+  pull_request:
 
 permissions:
   contents: read
 
 jobs:
-  validate:
+  verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: dealguard
+          POSTGRES_PASSWORD: dealguard-test-password
+          POSTGRES_DB: dealguard_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dealguard -d dealguard_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -39,10 +56,17 @@ jobs:
         run: npm run typecheck --prefix src/app/cards
       - name: Typecheck settings extension
         run: npm run typecheck --prefix src/app/settings
-      - name: Typecheck enterprise App Home
+      - name: Typecheck App Home
         run: npm run typecheck --prefix src/app/pages
+      - name: Apply PostgreSQL migrations
+        run: npm run db:migrate
+      - name: Verify immutable PostgreSQL migration checksums
+        run: npm run db:migrate:check
+      - name: Validate PostgreSQL schema and tenant constraints
+        run: npm run db:validate
       - name: Run automated tests
         run: npm test
       - name: Validate HubSpot manifests
-        run: node -e "const fs=require('fs'); for (const f of ['src/app/app-hsmeta.json','src/app/webhooks/deal-events-hsmeta.json','src/app/workflow-actions/assess-deal-hsmeta.json','src/app/workflow-actions/create-remediation-hsmeta.json','src/app/pages/pages-hsmeta.json']) JSON.parse(fs.readFileSync(f,'utf8'));"
-      - run: npx wrangler d1 migrations apply dealguard-production --local
+        run: node -e "for (const file of ['hsproject.json','src/app/app-hsmeta.json','src/app/cards/dealguard-card-hsmeta.json','src/app/settings/dealguard-settings-hsmeta.json','src/app/pages/pages-hsmeta.json','src/app/webhooks/deal-events-hsmeta.json','src/app/workflow-actions/assess-deal-hsmeta.json','src/app/workflow-actions/create-remediation-hsmeta.json']) JSON.parse(require('fs').readFileSync(file, 'utf8')); console.log('manifests valid')"
+      - name: Validate Cloudflare deployment configuration
+        run: npx wrangler deploy --dry-run --env staging --outdir .release/worker-staging

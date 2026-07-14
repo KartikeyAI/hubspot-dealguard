@@ -1,7 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
+import pg from 'pg';
+
+const { Client } = pg;
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function stableJson(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(',')}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+}
+
+function rawTableHash(rows, columns) {
+  return sha256(rows.map((row) => stableJson(Object.fromEntries(columns.map((column) => [column, row[column] ?? null])))).sort().join('\n'));
+}
 
 test('D1-to-Neon migration tool is syntactically valid and fails closed', async () => {
   const syntax = spawnSync(process.execPath, ['--check', 'scripts/d1-to-neon.mjs'], { encoding: 'utf8' });
@@ -62,4 +80,93 @@ test('package exposes explicit snapshot, import and verification commands', asyn
   assert.equal(packageJson.scripts['migration:d1:snapshot'], 'node scripts/d1-to-neon.mjs snapshot');
   assert.equal(packageJson.scripts['migration:d1:import'], 'node scripts/d1-to-neon.mjs import');
   assert.equal(packageJson.scripts['migration:d1:verify'], 'node scripts/d1-to-neon.mjs verify');
+});
+
+test('fixture snapshot imports transactionally and verifies against PostgreSQL', {
+  skip: !process.env.DEALGUARD_CUTOVER_TEST_DATABASE_URL,
+}, async () => {
+  const databaseUrl = process.env.DEALGUARD_CUTOVER_TEST_DATABASE_URL;
+  const root = '.release/data-cutover-test';
+  const snapshotPath = `${root}/snapshot.json`;
+  const importReportPath = `${root}/import-report.json`;
+  const verificationReportPath = `${root}/verification-report.json`;
+  const columns = ['state_hash', 'return_to', 'expires_at', 'created_at'];
+  const rows = [{
+    state_hash: 'cutover-fixture-state',
+    return_to: '/settings',
+    expires_at: '2026-07-14T17:30:00.000Z',
+    created_at: '2026-07-14T16:30:00.000Z',
+  }];
+  const table = {
+    name: 'oauth_states',
+    columns,
+    primaryKey: ['state_hash'],
+    count: rows.length,
+    rawHash: rawTableHash(rows, columns),
+    rows,
+  };
+  const payload = {
+    schemaVersion: 1,
+    source: { provider: 'cloudflare-d1', database: 'cutover-fixture' },
+    createdAt: '2026-07-14T16:30:00.000Z',
+    batchSize: 2000,
+    tables: [table],
+  };
+  const snapshot = { ...payload, manifestChecksum: sha256(stableJson(payload)) };
+
+  await rm(root, { recursive: true, force: true });
+  await mkdir(root, { recursive: true });
+  await writeFile(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, { mode: 0o600 });
+
+  const cleanup = async () => {
+    const client = new Client({ connectionString: databaseUrl, application_name: 'dealguard-cutover-test-cleanup' });
+    await client.connect();
+    try {
+      await client.query(`DELETE FROM dealguard.oauth_states WHERE state_hash = $1`, [rows[0].state_hash]);
+    } finally {
+      await client.end();
+    }
+  };
+
+  await cleanup();
+  try {
+    const imported = spawnSync(process.execPath, [
+      'scripts/d1-to-neon.mjs', 'import', '--input', snapshotPath, '--report', importReportPath,
+    ], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    assert.equal(imported.status, 0, `${imported.stdout}\n${imported.stderr}`);
+    const importReport = JSON.parse(await readFile(importReportPath, 'utf8'));
+    assert.equal(importReport.status, 'passed');
+    assert.equal(importReport.verification.summary.sourceRows, 1);
+    assert.equal(importReport.verification.summary.targetRows, 1);
+    assert.equal(importReport.verification.summary.failed, 0);
+
+    const verified = spawnSync(process.execPath, [
+      'scripts/d1-to-neon.mjs', 'verify', '--input', snapshotPath, '--report', verificationReportPath,
+    ], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    assert.equal(verified.status, 0, `${verified.stdout}\n${verified.stderr}`);
+    const verificationReport = JSON.parse(await readFile(verificationReportPath, 'utf8'));
+    assert.equal(verificationReport.status, 'passed');
+    assert.equal(verificationReport.verification.tables[0].ok, true);
+
+    const client = new Client({ connectionString: databaseUrl, application_name: 'dealguard-cutover-test-read' });
+    await client.connect();
+    try {
+      const result = await client.query(`SELECT return_to FROM dealguard.oauth_states WHERE state_hash = $1`, [rows[0].state_hash]);
+      assert.equal(result.rows[0]?.return_to, '/settings');
+    } finally {
+      await client.end();
+    }
+  } finally {
+    await cleanup();
+  }
 });

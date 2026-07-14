@@ -11,7 +11,7 @@
     "check": "npm run typecheck && npm run typecheck:ui && npm test",
     "acceptance:live": "node scripts/live-acceptance.mjs",
     "release:preflight": "node scripts/release-preflight.mjs",
-    "release:bundle": "wrangler deploy --dry-run --outdir .release/worker --config .release/wrangler.toml",
+    "release:bundle": "node scripts/release-bundle.mjs",
     "release:record": "node scripts/deployment-record.mjs",
     "release:verify-staging": "node scripts/verify-staging-promotion.mjs",
     "dev:worker": "wrangler dev",

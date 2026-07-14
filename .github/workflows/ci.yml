@@ -30,6 +30,8 @@ jobs:
       DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -68,5 +70,25 @@ jobs:
         run: npm test
       - name: Validate HubSpot manifests
         run: node -e "for (const file of ['hsproject.json','src/app/app-hsmeta.json','src/app/cards/dealguard-card-hsmeta.json','src/app/settings/dealguard-settings-hsmeta.json','src/app/pages/pages-hsmeta.json','src/app/webhooks/deal-events-hsmeta.json','src/app/workflow-actions/assess-deal-hsmeta.json','src/app/workflow-actions/create-remediation-hsmeta.json']) JSON.parse(require('fs').readFileSync(file, 'utf8')); console.log('manifests valid')"
+      - name: Render non-secret staging configuration
+        run: |
+          mkdir -p .release
+          node - <<'NODE'
+          const fs = require('fs');
+          let value = fs.readFileSync('wrangler.toml', 'utf8');
+          const replacements = {
+            REPLACE_WITH_LOCAL_HUBSPOT_APP_ID: '123456',
+            REPLACE_WITH_STAGING_HUBSPOT_APP_ID: '123456',
+            REPLACE_WITH_PRODUCTION_HUBSPOT_APP_ID: '123456',
+            REPLACE_WITH_STAGING_HYPERDRIVE_ID: '0123456789abcdef0123456789abcdef',
+            REPLACE_WITH_PRODUCTION_HYPERDRIVE_ID: '0123456789abcdef0123456789abcdef',
+            REPLACE_WITH_LOCAL_TIGRIS_BUCKET: 'dealguard-ci',
+            REPLACE_WITH_STAGING_TIGRIS_BUCKET: 'dealguard-ci',
+            REPLACE_WITH_PRODUCTION_TIGRIS_BUCKET: 'dealguard-ci',
+          };
+          for (const [from, to] of Object.entries(replacements)) value = value.replaceAll(from, to);
+          if (value.includes('REPLACE_WITH_')) throw new Error('CI Wrangler rendering left a placeholder.');
+          fs.writeFileSync('.release/ci-wrangler.toml', value, { mode: 0o600 });
+          NODE
       - name: Validate Cloudflare deployment configuration
-        run: npx wrangler deploy --dry-run --env staging --outdir .release/worker-staging
+        run: npx wrangler deploy --dry-run --env staging --config .release/ci-wrangler.toml --outdir .release/worker-staging

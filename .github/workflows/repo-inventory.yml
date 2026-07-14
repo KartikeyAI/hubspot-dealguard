@@ -3,6 +3,8 @@ name: Repository inventory
 on:
   push:
     branches: [agent/neon-hyperdrive-tigris-queues]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read

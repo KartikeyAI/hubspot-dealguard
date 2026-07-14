@@ -12,20 +12,23 @@ Last updated: 2026-07-14
 - Added Cloudflare Queue producers and consumers for scans, delivery, exports, and maintenance.
 - Added bounded retries, async-job state, and dead-letter behavior.
 - Removed the legacy runtime database binding and runtime migration directory.
-- Updated CI to use PostgreSQL 17 and validate migrations, schema constraints, Worker type safety, HubSpot extensions, and manifests.
+- Updated CI to use PostgreSQL 17 and validate migrations, schema constraints, Worker type safety, HubSpot extensions, manifests, and a rendered Wrangler staging bundle.
 - Updated enterprise tests to validate PostgreSQL migrations and queued maintenance execution.
-- Updated release preflight for Neon, Hyperdrive, Tigris, Queues, canonical HubSpot manifests, and target rendering.
+- Updated release preflight for Neon, Hyperdrive, Tigris, Queues, canonical HubSpot manifests, target rendering, and entry-point resolution from ephemeral configuration.
 - Updated protected release-readiness and controlled-deployment workflows.
 - Added backup verification before protected migration.
-- Added target-specific Worker deployment with explicit `--env` selection.
+- Added target-specific Worker deployment and bundle validation with explicit `--env` selection.
 - Added the operational deployment guide and controlled data-cutover runbook.
+- Added deterministic D1 source snapshot tooling with bounded reads and manifest checksums.
+- Added empty-target, foreign-key-ordered, parameterized, transactional PostgreSQL import tooling.
+- Added independent row-count, normalized-content, primary-key, and foreign-key verification reports.
+- Added a real PostgreSQL fixture test for transactional import and independent verification.
+- Reviewed the pull request for unresolved review threads and stale release-path assumptions; no review threads are open.
 
 ## In progress
 
-- Implementing and validating deterministic source snapshot, PostgreSQL import, and independent verification tooling.
-- Re-running the full CI suite after release-control and documentation migration.
-- Reviewing the complete PR diff for stale provider references and operational gaps.
-- Updating PR evidence and acceptance criteria after the final green repository run.
+- Confirming the final CI run at the exact migration head after the PostgreSQL cutover fixture was enabled.
+- Updating pull-request evidence and handoff notes at the final green SHA.
 
 ## Blocked
 
@@ -44,13 +47,12 @@ The following require protected provider accounts or human approval and cannot b
 
 ## Next
 
-1. Finish source snapshot/import/verification tooling and its deterministic tests.
-2. Obtain a green PR CI run at the final migration SHA.
-3. Run Release readiness in the protected staging environment.
-4. Perform a complete rehearsal using a copied source database and disposable Neon branch.
-5. Attach row reconciliation, hash verification, backup, restore, and acceptance evidence.
-6. Run the protected staging deployment.
-7. Promote to production only after the exact staging release passes and a reviewer approves the cutover.
+1. Confirm green CI at the final repository SHA.
+2. Run Release readiness in the protected staging environment.
+3. Perform a complete rehearsal using a copied source database and disposable Neon branch.
+4. Attach row reconciliation, hash verification, backup, restore, and acceptance evidence.
+5. Run the protected staging deployment.
+6. Promote to production only after the exact staging release passes and a reviewer approves the cutover.
 
 ## Known risks
 

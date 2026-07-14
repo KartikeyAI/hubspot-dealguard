@@ -78,9 +78,7 @@ function rowsFromWrangler(value) {
 
 function parseWranglerOutput(output) {
   const text = String(output ?? '').trim();
-  const arrayStart = text.indexOf('[');
-  const objectStart = text.indexOf('{');
-  const starts = [arrayStart, objectStart].filter((index) => index >= 0);
+  const starts = [text.indexOf('['), text.indexOf('{')].filter((index) => index >= 0);
   if (!starts.length) throw new Error('Wrangler did not return JSON output.');
   const start = Math.min(...starts);
   const opener = text[start];
@@ -161,8 +159,7 @@ async function loadSnapshot(path) {
   const value = JSON.parse(await readFile(resolve(process.cwd(), path), 'utf8'));
   const { manifestChecksum, ...payload } = value;
   if (payload.schemaVersion !== 1 || !Array.isArray(payload.tables)) throw new Error('Unsupported migration snapshot schema.');
-  const expected = sha256(stableJson(payload));
-  if (manifestChecksum !== expected) throw new Error('Migration snapshot manifest checksum does not match.');
+  if (manifestChecksum !== sha256(stableJson(payload))) throw new Error('Migration snapshot manifest checksum does not match.');
   for (const table of payload.tables) {
     safeIdentifier(table.name);
     if (!Array.isArray(table.columns) || !Array.isArray(table.primaryKey) || !Array.isArray(table.rows)) throw new Error(`Snapshot table ${table.name} is malformed.`);
@@ -176,7 +173,7 @@ async function loadSnapshot(path) {
 
 async function targetMetadata(client) {
   const columnResult = await client.query(`
-    SELECT table_name, column_name, data_type, udt_name, ordinal_position
+    SELECT table_name, column_name, data_type, udt_name, ordinal_position, is_nullable
     FROM information_schema.columns
     WHERE table_schema = 'dealguard'
     ORDER BY table_name, ordinal_position
@@ -191,25 +188,57 @@ async function targetMetadata(client) {
     ORDER BY tc.table_name, kcu.ordinal_position
   `);
   const foreignKeyResult = await client.query(`
-    SELECT tc.table_name AS child_table, ccu.table_name AS parent_table
-    FROM information_schema.table_constraints tc
-    JOIN information_schema.constraint_column_usage ccu
-      ON ccu.constraint_schema = tc.constraint_schema
-      AND ccu.constraint_name = tc.constraint_name
-    WHERE tc.table_schema = 'dealguard'
-      AND ccu.table_schema = 'dealguard'
-      AND tc.constraint_type = 'FOREIGN KEY'
-    ORDER BY child_table, parent_table
+    SELECT
+      child.relname AS child_table,
+      parent.relname AS parent_table,
+      constraint_record.conname AS constraint_name,
+      ARRAY(
+        SELECT attribute.attname
+        FROM unnest(constraint_record.conkey) WITH ORDINALITY AS key_columns(attnum, position)
+        JOIN pg_attribute attribute
+          ON attribute.attrelid = constraint_record.conrelid
+          AND attribute.attnum = key_columns.attnum
+        ORDER BY key_columns.position
+      ) AS child_columns,
+      ARRAY(
+        SELECT attribute.attname
+        FROM unnest(constraint_record.confkey) WITH ORDINALITY AS key_columns(attnum, position)
+        JOIN pg_attribute attribute
+          ON attribute.attrelid = constraint_record.confrelid
+          AND attribute.attnum = key_columns.attnum
+        ORDER BY key_columns.position
+      ) AS parent_columns
+    FROM pg_constraint constraint_record
+    JOIN pg_class child ON child.oid = constraint_record.conrelid
+    JOIN pg_namespace child_namespace ON child_namespace.oid = child.relnamespace
+    JOIN pg_class parent ON parent.oid = constraint_record.confrelid
+    JOIN pg_namespace parent_namespace ON parent_namespace.oid = parent.relnamespace
+    WHERE constraint_record.contype = 'f'
+      AND child_namespace.nspname = 'dealguard'
+      AND parent_namespace.nspname = 'dealguard'
+    ORDER BY child_table, parent_table, constraint_name
   `);
 
   const tables = new Map();
   for (const row of columnResult.rows) {
     const table = tables.get(row.table_name) ?? { columns: new Map(), primaryKey: [] };
-    table.columns.set(row.column_name, { dataType: row.data_type, udtName: row.udt_name, ordinal: Number(row.ordinal_position) });
+    table.columns.set(row.column_name, {
+      dataType: row.data_type,
+      udtName: row.udt_name,
+      ordinal: Number(row.ordinal_position),
+      nullable: row.is_nullable === 'YES',
+    });
     tables.set(row.table_name, table);
   }
   for (const row of primaryKeyResult.rows) tables.get(row.table_name)?.primaryKey.push(row.column_name);
-  return { tables, foreignKeys: foreignKeyResult.rows };
+  const foreignKeys = foreignKeyResult.rows.map((row) => ({
+    childTable: row.child_table,
+    parentTable: row.parent_table,
+    constraintName: row.constraint_name,
+    childColumns: row.child_columns,
+    parentColumns: row.parent_columns,
+  }));
+  return { tables, foreignKeys };
 }
 
 function importOrder(snapshot, metadata) {
@@ -223,15 +252,8 @@ function importOrder(snapshot, metadata) {
 
   const dependencies = new Map([...names].map((name) => [name, new Set()]));
   for (const relation of metadata.foreignKeys) {
-    const child = relation.child_table;
-    const parent = relation.parent_table;
-    if (!names.has(child) || !names.has(parent)) continue;
-    if (child === parent) {
-      const source = snapshot.tables.find((table) => table.name === child);
-      if (source?.count) throw new Error(`Self-referential source table ${child} requires an explicit migration strategy.`);
-      continue;
-    }
-    dependencies.get(child).add(parent);
+    if (!names.has(relation.childTable) || !names.has(relation.parentTable)) continue;
+    if (relation.childTable !== relation.parentTable) dependencies.get(relation.childTable).add(relation.parentTable);
   }
 
   const ordered = [];
@@ -242,6 +264,44 @@ function importOrder(snapshot, metadata) {
     for (const name of ready) {
       ordered.push(name);
       remaining.delete(name);
+    }
+  }
+  return ordered;
+}
+
+function keyForRow(row, columns) {
+  return stableJson(columns.map((column) => row[column] ?? null));
+}
+
+function orderRowsForSelfReferences(table, metadata) {
+  const relations = metadata.foreignKeys.filter((relation) => relation.childTable === table.name && relation.parentTable === table.name);
+  if (!relations.length || table.rows.length < 2) return table.rows;
+
+  const dependencies = table.rows.map(() => new Set());
+  for (const relation of relations) {
+    const parentRows = new Map();
+    for (let index = 0; index < table.rows.length; index += 1) {
+      const key = keyForRow(table.rows[index], relation.parentColumns);
+      if (parentRows.has(key)) throw new Error(`Self-referential key is duplicated in ${table.name}.${relation.constraintName}.`);
+      parentRows.set(key, index);
+    }
+    for (let index = 0; index < table.rows.length; index += 1) {
+      const values = relation.childColumns.map((column) => table.rows[index][column] ?? null);
+      if (values.some((value) => value === null)) continue;
+      const parentIndex = parentRows.get(stableJson(values));
+      if (parentIndex === undefined) throw new Error(`Self-referential parent is missing in ${table.name}.${relation.constraintName}.`);
+      if (parentIndex !== index) dependencies[index].add(parentIndex);
+    }
+  }
+
+  const ordered = [];
+  const remaining = new Set(table.rows.map((_, index) => index));
+  while (remaining.size) {
+    const ready = [...remaining].filter((index) => [...dependencies[index]].every((dependency) => !remaining.has(dependency))).sort((left, right) => left - right);
+    if (!ready.length) throw new Error(`Self-referential cycle prevents automatic import of ${table.name}.`);
+    for (const index of ready) {
+      ordered.push(table.rows[index]);
+      remaining.delete(index);
     }
   }
   return ordered;
@@ -262,20 +322,28 @@ function normalizedNumber(value) {
   return Number.isFinite(numeric) ? String(numeric) : text;
 }
 
+function binaryValue(value) {
+  if (Buffer.isBuffer(value)) return value;
+  if (Array.isArray(value)) return Buffer.from(value);
+  if (value && typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) return Buffer.from(value.data);
+  if (typeof value === 'string' && value.startsWith('base64:')) return Buffer.from(value.slice(7), 'base64');
+  if (typeof value === 'string' && /^\s*\[.*\]\s*$/.test(value)) {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed) && parsed.every((item) => Number.isInteger(item) && item >= 0 && item <= 255)) return Buffer.from(parsed);
+  }
+  return null;
+}
+
 function normalizedValue(value, metadata) {
   if (value === null || value === undefined) return null;
   const dataType = metadata.dataType;
   if (['smallint', 'integer', 'bigint', 'numeric', 'decimal', 'real', 'double precision'].includes(dataType)) return normalizedNumber(value);
   if (dataType === 'boolean') return value === true || value === 1 || value === '1' || String(value).toLowerCase() === 'true' ? 'true' : 'false';
-  if (dataType === 'json' || dataType === 'jsonb') {
-    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
-    return stableJson(parsed);
-  }
+  if (dataType === 'json' || dataType === 'jsonb') return stableJson(typeof value === 'string' ? JSON.parse(value) : value);
   if (dataType === 'bytea') {
-    if (Buffer.isBuffer(value)) return value.toString('base64');
-    if (Array.isArray(value)) return Buffer.from(value).toString('base64');
-    if (value && typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) return Buffer.from(value.data).toString('base64');
-    return String(value);
+    const bytes = binaryValue(value);
+    if (!bytes) throw new Error('A source binary value is not in a supported deterministic representation.');
+    return bytes.toString('base64');
   }
   if (value instanceof Date) return value.toISOString();
   if (typeof value === 'object') return stableJson(value);
@@ -292,11 +360,9 @@ function convertedValue(value, metadata) {
   if (metadata.dataType === 'boolean') return value === true || value === 1 || value === '1' || String(value).toLowerCase() === 'true';
   if (metadata.dataType === 'json' || metadata.dataType === 'jsonb') return typeof value === 'string' ? JSON.parse(value) : value;
   if (metadata.dataType === 'bytea') {
-    if (Buffer.isBuffer(value)) return value;
-    if (Array.isArray(value)) return Buffer.from(value);
-    if (value && typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) return Buffer.from(value.data);
-    if (typeof value === 'string' && value.startsWith('base64:')) return Buffer.from(value.slice(7), 'base64');
-    throw new Error('A source binary value is not in a supported deterministic representation.');
+    const bytes = binaryValue(value);
+    if (!bytes) throw new Error('A source binary value is not in a supported deterministic representation.');
+    return bytes;
   }
   return value;
 }
@@ -315,10 +381,11 @@ async function insertTable(client, table, metadata) {
   if (!table.rows.length) return 0;
   const target = metadata.tables.get(table.name);
   const columns = table.columns;
+  const rowsToInsert = orderRowsForSelfReferences(table, metadata);
   const maximumRows = Math.max(1, Math.min(250, Math.floor(60000 / columns.length)));
   let inserted = 0;
-  for (let offset = 0; offset < table.rows.length; offset += maximumRows) {
-    const rows = table.rows.slice(offset, offset + maximumRows);
+  for (let offset = 0; offset < rowsToInsert.length; offset += maximumRows) {
+    const rows = rowsToInsert.slice(offset, offset + maximumRows);
     const values = [];
     const tuples = rows.map((row) => {
       const placeholders = columns.map((column) => {
@@ -340,13 +407,12 @@ async function verifySnapshot(client, snapshot, metadata) {
   const tables = [];
   for (const source of snapshot.tables) {
     const targetMetadata = metadata.tables.get(source.name);
-    const selected = source.columns.map(quoted).join(', ');
-    const targetRows = (await client.query(`SELECT ${selected} FROM dealguard.${quoted(source.name)}`)).rows;
+    const targetRows = (await client.query(`SELECT ${source.columns.map(quoted).join(', ')} FROM dealguard.${quoted(source.name)}`)).rows;
     const sourceHash = normalizedHash(source.rows, source.columns, targetMetadata);
     const targetHash = normalizedHash(targetRows, source.columns, targetMetadata);
     const sourcePrimaryKeyHash = normalizedHash(source.rows, source.primaryKey, targetMetadata);
     const targetPrimaryKeyHash = normalizedHash(targetRows, source.primaryKey, targetMetadata);
-    const item = {
+    tables.push({
       name: source.name,
       sourceCount: source.count,
       targetCount: targetRows.length,
@@ -355,8 +421,7 @@ async function verifySnapshot(client, snapshot, metadata) {
       sourcePrimaryKeyHash,
       targetPrimaryKeyHash,
       ok: source.count === targetRows.length && sourceHash === targetHash && sourcePrimaryKeyHash === targetPrimaryKeyHash,
-    };
-    tables.push(item);
+    });
   }
   const invalidConstraints = (await client.query(`
     SELECT conname
@@ -379,8 +444,7 @@ async function verifySnapshot(client, snapshot, metadata) {
 }
 
 async function databaseIdentity(client) {
-  const result = await client.query(`SELECT current_database() AS database, current_user AS role`);
-  return result.rows[0];
+  return (await client.query(`SELECT current_database() AS database, current_user AS role`)).rows[0];
 }
 
 async function runImportOrVerify(mode) {
@@ -408,6 +472,7 @@ async function runImportOrVerify(mode) {
     await client.query(mode === 'import' ? 'BEGIN ISOLATION LEVEL SERIALIZABLE' : 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     if (mode === 'import') await client.query(`SELECT pg_advisory_xact_lock(hashtext('dealguard-d1-neon-cutover'))`);
     await client.query(`SET LOCAL search_path TO dealguard, public`);
+    await client.query(`SET LOCAL statement_timeout = 0`);
     const metadata = await targetMetadata(client);
     const order = importOrder(snapshot, metadata);
 

@@ -17,20 +17,20 @@ jobs:
       - name: Build persistence inventory
         shell: bash
         run: |
-          mkdir -p .inventory
-          find worker/migrations -maxdepth 1 -type f -name '*.sql' -print | sort > .inventory/migration-files.txt
-          grep -RInE 'INSERT OR (IGNORE|REPLACE)|json_extract|julianday|datetime\(|strftime\(|PRAGMA|AUTOINCREMENT|last_insert_rowid|\.batch\(' worker/src worker/migrations > .inventory/sqlite-specific.txt || true
-          grep -RIl 'env\.DB\|\.DB\.' worker/src | sort > .inventory/db-callers.txt
-          : > .inventory/migrations.sql.txt
-          for f in $(cat .inventory/migration-files.txt); do
-            echo "--- $f ---" >> .inventory/migrations.sql.txt
-            cat "$f" >> .inventory/migrations.sql.txt
-            printf '\n' >> .inventory/migrations.sql.txt
+          mkdir -p inventory
+          find worker/migrations -maxdepth 1 -type f -name '*.sql' -print | sort > inventory/migration-files.txt
+          grep -RInE 'INSERT OR (IGNORE|REPLACE)|json_extract|julianday|datetime\(|strftime\(|PRAGMA|AUTOINCREMENT|last_insert_rowid|\.batch\(' worker/src worker/migrations > inventory/sqlite-specific.txt || true
+          grep -RIl 'env\.DB\|\.DB\.' worker/src | sort > inventory/db-callers.txt
+          : > inventory/migrations.sql.txt
+          for f in $(cat inventory/migration-files.txt); do
+            echo "--- $f ---" >> inventory/migrations.sql.txt
+            cat "$f" >> inventory/migrations.sql.txt
+            printf '\n' >> inventory/migrations.sql.txt
           done
       - name: Upload persistence inventory
         uses: actions/upload-artifact@v4
         with:
           name: repository-persistence-inventory
-          path: .inventory/
+          path: inventory/
           if-no-files-found: error
           retention-days: 7

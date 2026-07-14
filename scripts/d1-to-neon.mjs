@@ -59,6 +59,19 @@ function quoted(value) {
   return `"${safeIdentifier(value).replaceAll('"', '""')}"`;
 }
 
+function identifierArray(value) {
+  if (Array.isArray(value)) return value.map((item) => safeIdentifier(String(item)));
+  const text = String(value ?? '');
+  if (text === '{}') return [];
+  if (!text.startsWith('{') || !text.endsWith('}')) throw new Error(`Unsupported PostgreSQL identifier array: ${text}`);
+  return text.slice(1, -1).split(',').map((item) => {
+    const unquoted = item.startsWith('"') && item.endsWith('"')
+      ? item.slice(1, -1).replaceAll('\\"', '"').replaceAll('\\\\', '\\')
+      : item;
+    return safeIdentifier(unquoted);
+  });
+}
+
 function sourceTableAllowed(name) {
   return !excludedSourceTables.has(name) && !name.startsWith('sqlite_') && !name.startsWith('_cf_');
 }
@@ -235,8 +248,8 @@ async function targetMetadata(client) {
     childTable: row.child_table,
     parentTable: row.parent_table,
     constraintName: row.constraint_name,
-    childColumns: row.child_columns,
-    parentColumns: row.parent_columns,
+    childColumns: identifierArray(row.child_columns),
+    parentColumns: identifierArray(row.parent_columns),
   }));
   return { tables, foreignKeys };
 }

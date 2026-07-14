@@ -38,7 +38,7 @@ async function validateEnvironment() {
   for (const name of requiredEnvironment()) add(`env.${name}`, present(process.env[name]), present(process.env[name]) ? 'configured' : 'missing or placeholder', 'environment');
   const base = parsedUrl(process.env.APP_BASE_URL);
   add('env.APP_BASE_URL.https', Boolean(base), 'APP_BASE_URL must be an absolute HTTPS URL', 'environment');
-  add('env.APP_BASE_URL.target', Boolean(base && (target === 'production' ? !base.hostname.includes('staging') : base.hostname.includes('staging'))), `APP_BASE_URL must identify the ${target} deployment`, 'environment');
+  add('env.APP_BASE_URL.target', Boolean(base && (target === 'production' ? base.hostname === 'dealguard-api.rokad.co' : base.hostname.includes('staging'))), `APP_BASE_URL must identify the ${target} deployment`, 'environment');
   add('env.HUBSPOT_APP_ID.numeric', /^\d+$/.test(process.env.HUBSPOT_APP_ID ?? ''), 'HUBSPOT_APP_ID must be numeric', 'environment');
   add('env.NEON_DATABASE_URL.postgres', Boolean(postgresUrl(process.env.NEON_DATABASE_URL)), 'NEON_DATABASE_URL must be a PostgreSQL connection URL', 'environment');
   add('env.NEON_DATABASE_URL.tls', /sslmode=(require|verify-full)/i.test(process.env.NEON_DATABASE_URL ?? '') || /\.neon\.tech(?::|\/)/i.test(process.env.NEON_DATABASE_URL ?? ''), 'Neon connections must require TLS', 'environment');
@@ -57,11 +57,13 @@ async function validateRepository() {
   const appManifest = JSON.parse(await text('src/app/app-hsmeta.json'));
   const wrangler = await text('wrangler.toml');
   const deployment = await text('docs/DEPLOYMENT.md');
+  const migrationGuide = await text('docs/MIGRATION_D1_TO_NEON.md');
   const envExample = await text('.env.example');
   const index = await text('worker/src/index.ts');
   const postgres = await text('worker/src/postgres.ts');
   const storage = await text('worker/src/object-storage.ts');
   const queueing = await text('worker/src/queueing.ts');
+  const targetRenderer = await text('scripts/render-hubspot-target.mjs');
   const routeFiles = (await readdir(resolve(ROOT, 'worker/src'))).filter((name) => /^routes.*\.ts$/.test(name));
   const routeSource = (await Promise.all(routeFiles.map((name) => text(`worker/src/${name}`)))).join('\n');
 
@@ -70,17 +72,17 @@ async function validateRepository() {
   add('hubspot.platform', hsProject.platformVersion === '2026.03', `HubSpot platform version is ${hsProject.platformVersion}`);
   add('hubspot.marketplace_distribution', appManifest?.config?.distribution === 'marketplace', 'HubSpot app distribution must be marketplace');
 
-  const baseUrl = parsedUrl(process.env.APP_BASE_URL);
-  const normalizedRoot = baseUrl ? `${baseUrl.origin}/` : null;
-  const redirect = baseUrl ? `${baseUrl.origin}/oauth/callback` : null;
-  add('hubspot.fetch_domain', Boolean(normalizedRoot && appManifest?.config?.permittedUrls?.fetch?.includes(normalizedRoot)), normalizedRoot ? `permitted fetch URLs must include ${normalizedRoot}` : 'APP_BASE_URL is invalid');
-  add('hubspot.redirect_domain', Boolean(redirect && appManifest?.config?.auth?.redirectUrls?.includes(redirect)), redirect ? `OAuth redirects must include ${redirect}` : 'APP_BASE_URL is invalid');
+  const canonicalRoot = 'https://dealguard-api.rokad.co/';
+  const canonicalRedirect = 'https://dealguard-api.rokad.co/oauth/callback';
+  add('hubspot.fetch_domain', appManifest?.config?.permittedUrls?.fetch?.includes(canonicalRoot), `canonical manifest must include ${canonicalRoot}`);
+  add('hubspot.redirect_domain', appManifest?.config?.auth?.redirectUrls?.includes(canonicalRedirect), `canonical manifest must include ${canonicalRedirect}`);
+  add('hubspot.target_renderer', /HUBSPOT_TARGET_BASE_URL/.test(targetRenderer) && /dealguard-api-staging\.rokad\.co/.test(targetRenderer) && /replaceAll/.test(targetRenderer), 'HubSpot target renderer must safely produce staging or production manifests');
 
   add('wrangler.node_compat', /nodejs_compat/.test(wrangler), 'Cloudflare nodejs_compat must be enabled for pg and AWS SDK');
   add('wrangler.hyperdrive', /binding\s*=\s*"HYPERDRIVE"/.test(wrangler), 'Hyperdrive binding is required');
   for (const binding of ['SCAN_QUEUE', 'DELIVERY_QUEUE', 'MAINTENANCE_QUEUE']) add(`wrangler.queue.${binding}`, wrangler.includes(`binding = "${binding}"`), `${binding} producer binding is required`);
   add('wrangler.queue.consumers', (wrangler.match(/queues\.consumers/g) ?? []).length >= 6, 'staging and production queue consumers are required');
-  add('wrangler.no_d1', !/d1_databases|D1_DATABASE|wrangler d1/i.test(wrangler), 'Wrangler configuration must not contain D1 bindings');
+  add('wrangler.no_d1', !/d1_databases|D1_DATABASE|wrangler d1/i.test(wrangler), 'Wrangler configuration must not contain legacy database bindings');
   add('runtime.postgres_adapter', /new Client/.test(postgres) && /search_path TO dealguard/.test(postgres), 'PostgreSQL adapter must use pg through the dealguard schema');
   add('runtime.queue_handler', /async queue\(/.test(index) && /processQueueBatch/.test(index), 'Worker queue consumer handler is required');
   add('runtime.tigris', /t3\.storage\.dev/.test(storage) && /PutObjectCommand/.test(storage), 'Tigris S3 object storage adapter is required');
@@ -91,13 +93,14 @@ async function validateRepository() {
   const contiguous = migrationNumbers.every((number, index) => index === 0 ? number === 1 : number === migrationNumbers[index - 1] + 1);
   add('migrations.contiguous', contiguous, `PostgreSQL migration sequence: ${migrationNumbers.join(', ')}`);
   add('migrations.latest', migrationNumbers.at(-1) === 14, `latest migration is ${migrationFiles.at(-1) ?? 'missing'}`);
-  add('migrations.no_d1_directory', !(await readdir(resolve(ROOT, 'worker'))).includes('migrations'), 'legacy D1 migration directory must be removed');
+  add('migrations.no_d1_directory', !(await readdir(resolve(ROOT, 'worker'))).includes('migrations'), 'legacy runtime migration directory must be removed');
 
   const publicDocs = `${deployment}\n${envExample}`;
-  add('repository.no_d1_release', !/Cloudflare D1|wrangler d1|D1_DATABASE_ID/i.test(publicDocs), 'release documentation and environment template must not reference D1');
+  add('repository.no_d1_release', !/Cloudflare D1|wrangler d1|D1_DATABASE_ID/i.test(publicDocs), 'release documentation and environment template must not reference the retired runtime');
   add('repository.neon_documented', /Neon PostgreSQL/i.test(deployment), 'deployment guide must document Neon PostgreSQL');
   add('repository.tigris_documented', /Tigris/i.test(deployment), 'deployment guide must document Tigris');
   add('repository.queues_documented', /Cloudflare Queues/i.test(deployment), 'deployment guide must document Cloudflare Queues');
+  add('repository.cutover_documented', /row-count reconciliation/i.test(migrationGuide) && /rollback/i.test(migrationGuide) && /Tigris/i.test(migrationGuide), 'migration guide must document reconciliation, backup and rollback');
 
   const excluded = new Set(['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN', 'HYPERDRIVE_CONFIG_ID', 'HUBSPOT_CLI_CONFIG_B64']);
   for (const name of requiredEnvironment().filter((item) => !excluded.has(item))) add(`env_example.${name}`, envExample.includes(`${name}=`), `${name} must be documented in .env.example`);

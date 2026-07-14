@@ -1,20 +1,50 @@
-export interface D1Result<T = unknown> {
+export interface DatabaseResult<T = unknown> {
   results?: T[];
   success: boolean;
   meta?: Record<string, unknown>;
 }
 
-export interface D1PreparedStatement {
-  bind(...values: unknown[]): D1PreparedStatement;
+export interface DatabasePreparedStatement {
+  bind(...values: unknown[]): DatabasePreparedStatement;
   first<T = Record<string, unknown>>(column?: string): Promise<T | null>;
-  run<T = unknown>(): Promise<D1Result<T>>;
-  all<T = Record<string, unknown>>(): Promise<D1Result<T>>;
+  run<T = unknown>(): Promise<DatabaseResult<T>>;
+  all<T = Record<string, unknown>>(): Promise<DatabaseResult<T>>;
 }
 
-export interface D1Database {
-  prepare(query: string): D1PreparedStatement;
-  batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]>;
-  exec(query: string): Promise<D1Result>;
+export interface Database {
+  prepare(query: string): DatabasePreparedStatement;
+  batch<T = unknown>(statements: DatabasePreparedStatement[]): Promise<DatabaseResult<T>[]>;
+  exec(query: string): Promise<DatabaseResult>;
+}
+
+export interface HyperdriveBinding {
+  connectionString: string;
+}
+
+export interface QueueSendOptions {
+  contentType?: 'json' | 'text' | 'bytes' | 'v8';
+  delaySeconds?: number;
+}
+
+export interface QueueProducer<T = unknown> {
+  send(message: T, options?: QueueSendOptions): Promise<void>;
+  sendBatch(messages: Array<{ body: T; contentType?: QueueSendOptions['contentType']; delaySeconds?: number }>): Promise<void>;
+}
+
+export interface QueueMessage<T = unknown> {
+  id: string;
+  timestamp: Date;
+  body: T;
+  attempts: number;
+  ack(): void;
+  retry(options?: { delaySeconds?: number }): void;
+}
+
+export interface QueueBatch<T = unknown> {
+  queue: string;
+  messages: QueueMessage<T>[];
+  ackAll(): void;
+  retryAll(options?: { delaySeconds?: number }): void;
 }
 
 export interface ExecutionContext {
@@ -28,7 +58,7 @@ export interface ScheduledEvent {
 }
 
 export interface Env {
-  DB: D1Database;
+  DB: Database;
   APP_BASE_URL: string;
   HUBSPOT_APP_ID: string;
   HUBSPOT_CLIENT_ID: string;
@@ -40,7 +70,35 @@ export interface Env {
   ADMIN_API_KEY?: string;
   SLACK_CLIENT_ID?: string;
   SLACK_CLIENT_SECRET?: string;
+  DODO_API_KEY?: string;
+  DODO_WEBHOOK_SECRET?: string;
+  DODO_ENVIRONMENT?: 'test' | 'live';
+  DODO_GROWTH_MONTHLY_PRODUCT_ID?: string;
+  DODO_GROWTH_YEARLY_PRODUCT_ID?: string;
+  DODO_ENTERPRISE_MONTHLY_PRODUCT_ID?: string;
+  DODO_ENTERPRISE_YEARLY_PRODUCT_ID?: string;
+  DODO_AI_CREDIT_EVENT_NAME?: string;
+  DODO_ACTIVE_DEAL_EVENT_NAME?: string;
+  DODO_EVENT_OVERAGE_EVENT_NAME?: string;
+  DODO_RETENTION_EVENT_NAME?: string;
+  TIGRIS_ENDPOINT?: string;
+  TIGRIS_REGION?: string;
+  TIGRIS_BUCKET?: string;
+  TIGRIS_ACCESS_KEY_ID?: string;
+  TIGRIS_SECRET_ACCESS_KEY?: string;
+  SCAN_QUEUE: QueueProducer<DealGuardQueueMessage>;
+  DELIVERY_QUEUE: QueueProducer<DealGuardQueueMessage>;
+  MAINTENANCE_QUEUE: QueueProducer<DealGuardQueueMessage>;
 }
+
+export interface WorkerBindings extends Omit<Env, 'DB'> {
+  HYPERDRIVE: HyperdriveBinding;
+}
+
+export type DealGuardQueueMessage =
+  | { version: 1; kind: 'scan'; portalId: string; trigger: 'manual' | 'scheduled' | 'install'; scanId: string; requestedAt: string }
+  | { version: 1; kind: 'delivery'; task: 'enterprise_alerts' | 'outbox' | 'siem' | 'billing_usage' | 'digests' | 'data_export'; resourceId?: string; portalId?: string; requestedAt: string }
+  | { version: 1; kind: 'maintenance'; task: 'remediation_escalation' | 'alert_escalation' | 'synthetics' | 'billing_schedule' | 'policy_exceptions' | 'retention' | 'audit_promotion' | 'secure_download_cleanup' | 'maintenance'; requestedAt: string };
 
 export type PlanId = 'free' | 'growth' | 'beta_growth';
 export type AssessmentStatus = 'ready' | 'at_risk' | 'critical';

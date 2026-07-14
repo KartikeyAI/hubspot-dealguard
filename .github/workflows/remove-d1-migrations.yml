@@ -1,0 +1,27 @@
+name: Remove obsolete D1 migrations
+
+on:
+  push:
+    branches: [agent/neon-hyperdrive-tigris-queues]
+    paths: [.github/workflows/remove-d1-migrations.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  remove:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/neon-hyperdrive-tigris-queues
+          fetch-depth: 0
+      - name: Remove D1 schema and one-time workflow
+        run: |
+          rm -rf worker/migrations .github/workflows/remove-d1-migrations.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "remove obsolete D1 migration tree"
+          git push origin HEAD:agent/neon-hyperdrive-tigris-queues

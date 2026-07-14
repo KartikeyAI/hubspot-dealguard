@@ -58,6 +58,7 @@ test('release preflight validates complete enterprise configuration and renders 
   assert.equal(report.target, 'staging');
 
   const wrangler = await readFile('.release/test-wrangler.toml', 'utf8');
+  assert.match(wrangler, /main = "\.\.\/worker\/src\/index\.ts"/);
   assert.match(wrangler, /APP_BASE_URL = "https:\/\/dealguard-api-staging\.rokad\.co"/);
   assert.match(wrangler, /HUBSPOT_APP_ID = "123456"/);
   assert.match(wrangler, /id = "0123456789abcdef0123456789abcdef"/);

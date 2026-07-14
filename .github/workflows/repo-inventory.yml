@@ -1,0 +1,28 @@
+name: Repository inventory
+
+on:
+  push:
+    branches: [agent/neon-hyperdrive-tigris-queues]
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inventory persistence surface
+        shell: bash
+        run: |
+          echo '=== MIGRATION FILES ==='
+          find worker/migrations -maxdepth 1 -type f -name '*.sql' -print | sort
+          echo '=== SQLITE-SPECIFIC SOURCE LINES ==='
+          grep -RInE 'INSERT OR (IGNORE|REPLACE)|json_extract|julianday|datetime\(|strftime\(|PRAGMA|AUTOINCREMENT|last_insert_rowid|\.batch\(' worker/src worker/migrations || true
+          echo '=== DB CALLERS ==='
+          grep -RIl 'env\.DB\|\.DB\.' worker/src | sort
+          echo '=== MIGRATION CONTENT ==='
+          for f in $(find worker/migrations -maxdepth 1 -type f -name '*.sql' -print | sort); do
+            echo "--- $f ---"
+            cat "$f"
+          done

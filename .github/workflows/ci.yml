@@ -91,4 +91,17 @@ jobs:
           fs.writeFileSync('.release/ci-wrangler.toml', value, { mode: 0o600 });
           NODE
       - name: Validate Cloudflare deployment configuration
-        run: npx wrangler deploy --dry-run --env staging --config .release/ci-wrangler.toml --outdir .release/worker-staging
+        id: wrangler_dry_run
+        continue-on-error: true
+        run: npx wrangler deploy --dry-run --env staging --config .release/ci-wrangler.toml --outdir .release/worker-staging > wrangler-dry-run.log 2>&1
+      - name: Upload Wrangler diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wrangler-dry-run-${{ github.sha }}
+          path: wrangler-dry-run.log
+          if-no-files-found: error
+          retention-days: 7
+      - name: Enforce Cloudflare deployment configuration
+        if: steps.wrangler_dry_run.outcome == 'failure'
+        run: cat wrangler-dry-run.log && exit 1

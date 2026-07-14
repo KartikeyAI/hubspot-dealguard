@@ -1,8 +1,10 @@
 import { sha256Hex } from './crypto.js';
+import { deleteTenantObjects } from './object-storage.js';
 import type { Env, RequestIdentity } from './types.js';
 
 export async function finalizePortalDeletion(env: Env, identity: RequestIdentity): Promise<void> {
   const now = new Date().toISOString();
+  await deleteTenantObjects(env, identity.portalId);
   const deletionReference = await sha256Hex(`dealguard-deleted:${identity.portalId}`);
   await env.DB.batch([
     env.DB.prepare(`DELETE FROM slack_connections WHERE portal_id = ?`).bind(identity.portalId),

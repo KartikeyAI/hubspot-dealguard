@@ -122,7 +122,7 @@ export async function promoteLegacyAuditEvents(env: Env, limit = 500): Promise<n
       source: 'legacy_audit_promotion',
       metadata: { ...JSON.parse(row.metadata_json || '{}'), legacyEventId: row.id, legacyCreatedAt: row.created_at },
     });
-    await env.DB.prepare(`INSERT OR IGNORE INTO legacy_audit_promotions (legacy_event_id, immutable_event_id, promoted_at) VALUES (?, ?, ?)`)
+    await env.DB.prepare(`INSERT INTO legacy_audit_promotions (legacy_event_id, immutable_event_id, promoted_at) VALUES (?, ?, ?) ON CONFLICT(legacy_event_id) DO NOTHING`)
       .bind(row.id, immutableId, new Date().toISOString()).run();
     promoted += 1;
   }

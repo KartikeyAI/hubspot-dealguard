@@ -119,7 +119,7 @@ async function aggregate(env: Env, portalId: string, since: string, filters: Rec
     `SELECT
       COUNT(*) AS total,
       SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed,
-      AVG(CASE WHEN confirmed_at IS NOT NULL THEN (julianday(confirmed_at) - julianday(created_at)) * 24 END) AS average_hours
+      AVG(CASE WHEN confirmed_at IS NOT NULL THEN EXTRACT(EPOCH FROM (confirmed_at::timestamptz - created_at::timestamptz)) / 3600.0 END) AS average_hours
      FROM handoffs WHERE portal_id = ? AND created_at >= ?`
   ).bind(portalId, since).first<Record<string, unknown>>();
 

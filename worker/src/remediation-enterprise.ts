@@ -127,7 +127,7 @@ export async function remediationDetail(env: Env, identity: RequestIdentity, cas
   const [comments, evidence, events] = await Promise.all([
     env.DB.prepare(`SELECT id, body, actor_user_id, actor_email, created_at FROM remediation_comments WHERE portal_id = ? AND case_id = ? ORDER BY created_at ASC`)
       .bind(identity.portalId, caseId).all<Record<string, unknown>>(),
-    env.DB.prepare(`SELECT id, evidence_type, label, value, content_hash, submitted_by_user_id, submitted_by_email, created_at FROM remediation_evidence WHERE portal_id = ? AND case_id = ? ORDER BY created_at ASC`)
+    env.DB.prepare(`SELECT id, evidence_type, label, value, content_hash, object_upload_id, object_key, content_type, size_bytes, object_etag, submitted_by_user_id, submitted_by_email, created_at FROM remediation_evidence WHERE portal_id = ? AND case_id = ? ORDER BY created_at ASC`)
       .bind(identity.portalId, caseId).all<Record<string, unknown>>(),
     env.DB.prepare(`SELECT id, action, actor_user_id, actor_email, metadata_json, created_at FROM remediation_events WHERE portal_id = ? AND case_id = ? ORDER BY created_at ASC`)
       .bind(identity.portalId, caseId).all<Record<string, unknown>>(),

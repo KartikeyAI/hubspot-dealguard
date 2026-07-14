@@ -210,10 +210,10 @@ export async function beginApprovedChange(
   const now = new Date();
   const leaseExpiresAt = new Date(now.getTime() + 10 * 60_000).toISOString();
   const inserted = await env.DB.prepare(
-    `INSERT OR IGNORE INTO change_approval_executions
+    `INSERT INTO change_approval_executions
      (approval_id, portal_id, status, attempts, lease_expires_at, started_at,
       applied_by_user_id, applied_by_email, updated_at)
-     VALUES (?, ?, 'applying', 1, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, 'applying', 1, ?, ?, ?, ?, ?) ON CONFLICT(approval_id) DO NOTHING`,
   ).bind(
     approval.id,
     identity.portalId,

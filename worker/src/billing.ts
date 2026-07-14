@@ -621,8 +621,8 @@ export async function recordUsage(
   const id = crypto.randomUUID();
   const occurredAt = new Date().toISOString();
   const result = await env.DB.prepare(
-    `INSERT OR IGNORE INTO billing_usage_events (id, portal_id, event_name, quantity, idempotency_key, status, metadata_json, occurred_at, created_at)
-     VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
+    `INSERT INTO billing_usage_events (id, portal_id, event_name, quantity, idempotency_key, status, metadata_json, occurred_at, created_at)
+     VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?) ON CONFLICT(portal_id, idempotency_key) DO NOTHING`
   ).bind(id, portalId, metric, quantity, idempotencyKey.slice(0, 255), JSON.stringify(metadata), occurredAt, occurredAt).run();
   if (Number(result.meta?.changes ?? 0) === 0) return { recorded: false, reported: false };
   if (status.provider !== 'dodo' || !status.customerId || status.usageMode !== 'metered' || !status.overageEnabled) {

@@ -186,7 +186,7 @@ async function executeSynthetic(env: Env, row: Record<string, unknown>): Promise
 
 export async function runDueSyntheticChecks(env: Env): Promise<void> {
   const rows = await env.DB.prepare(
-    `SELECT * FROM synthetic_checks WHERE enabled = 1 AND (last_checked_at IS NULL OR datetime(last_checked_at, '+' || interval_minutes || ' minutes') <= datetime('now')) LIMIT 100`
+    `SELECT * FROM synthetic_checks WHERE enabled = 1 AND (last_checked_at IS NULL OR last_checked_at::timestamptz + interval_minutes * INTERVAL '1 minute' <= NOW()) LIMIT 100`
   ).all<Record<string, unknown>>();
   for (const row of rows.results ?? []) {
     const result = await executeSynthetic(env, row);

@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import pg from 'pg';
 
@@ -86,10 +88,10 @@ test('fixture snapshot imports transactionally and verifies against PostgreSQL',
   skip: !process.env.DEALGUARD_CUTOVER_TEST_DATABASE_URL,
 }, async () => {
   const databaseUrl = process.env.DEALGUARD_CUTOVER_TEST_DATABASE_URL;
-  const root = '.release/data-cutover-test';
-  const snapshotPath = `${root}/snapshot.json`;
-  const importReportPath = `${root}/import-report.json`;
-  const verificationReportPath = `${root}/verification-report.json`;
+  const root = await mkdtemp(join(tmpdir(), 'dealguard-cutover-'));
+  const snapshotPath = join(root, 'snapshot.json');
+  const importReportPath = join(root, 'import-report.json');
+  const verificationReportPath = join(root, 'verification-report.json');
   const columns = ['state_hash', 'return_to', 'expires_at', 'created_at'];
   const rows = [{
     state_hash: 'cutover-fixture-state',
@@ -113,9 +115,6 @@ test('fixture snapshot imports transactionally and verifies against PostgreSQL',
     tables: [table],
   };
   const snapshot = { ...payload, manifestChecksum: sha256(stableJson(payload)) };
-
-  await rm(root, { recursive: true, force: true });
-  await mkdir(root, { recursive: true });
   await writeFile(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, { mode: 0o600 });
 
   const cleanup = async () => {
@@ -168,5 +167,6 @@ test('fixture snapshot imports transactionally and verifies against PostgreSQL',
     }
   } finally {
     await cleanup();
+    await rm(root, { recursive: true, force: true });
   }
 });

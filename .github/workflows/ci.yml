@@ -68,7 +68,20 @@ jobs:
       - name: Validate PostgreSQL schema and tenant constraints
         run: npm run db:validate
       - name: Run automated tests
-        run: npm test
+        id: automated_tests
+        continue-on-error: true
+        run: npm test > automated-tests.log 2>&1
+      - name: Upload automated test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: automated-tests-${{ github.sha }}
+          path: automated-tests.log
+          if-no-files-found: error
+          retention-days: 7
+      - name: Enforce automated tests
+        if: steps.automated_tests.outcome == 'failure'
+        run: cat automated-tests.log && exit 1
       - name: Validate HubSpot manifests
         run: node -e "for (const file of ['hsproject.json','src/app/app-hsmeta.json','src/app/cards/dealguard-card-hsmeta.json','src/app/settings/dealguard-settings-hsmeta.json','src/app/pages/pages-hsmeta.json','src/app/webhooks/deal-events-hsmeta.json','src/app/workflow-actions/assess-deal-hsmeta.json','src/app/workflow-actions/create-remediation-hsmeta.json']) JSON.parse(require('fs').readFileSync(file, 'utf8')); console.log('manifests valid')"
       - name: Render non-secret staging configuration
@@ -102,7 +115,7 @@ jobs:
         with:
           name: wrangler-dry-run-${{ github.sha }}
           path: wrangler-dry-run.log
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
       - name: Enforce Cloudflare deployment configuration
         if: steps.wrangler_dry_run.outcome == 'failure'

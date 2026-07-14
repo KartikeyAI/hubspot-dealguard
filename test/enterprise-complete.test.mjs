@@ -169,13 +169,14 @@ test('uses bounded exponential backoff with jitter', () => {
   assert.equal(exponentialBackoffWithJitter(20, 1000, 60000, () => 0.5), 60000);
 });
 
-test('enterprise migrations cover every A-H domain and hardening layer', async () => {
-  const migration = await readFile('worker/migrations/0007_enterprise_complete_dodo.sql', 'utf8');
-  const hardening = await readFile('worker/migrations/0009_dodo_event_ordering_and_usage_counters.sql', 'utf8');
-  const planState = await readFile('worker/migrations/0010_dodo_plan_change_state.sql', 'utf8');
-  const scheduleTrigger = await readFile('worker/migrations/0011_preserve_dodo_scheduled_plan_state.sql', 'utf8');
-  const changeExecution = await readFile('worker/migrations/0012_change_approval_execution.sql', 'utf8');
-  const dimensions = await readFile('worker/migrations/0013_policy_dimension_mappings.sql', 'utf8');
+test('enterprise PostgreSQL migrations cover every A-H domain and hardening layer', async () => {
+  const migration = await readFile('database/migrations/0007_enterprise_complete_dodo.sql', 'utf8');
+  const hardening = await readFile('database/migrations/0009_dodo_event_ordering_and_usage_counters.sql', 'utf8');
+  const planState = await readFile('database/migrations/0010_dodo_plan_change_state.sql', 'utf8');
+  const scheduleTrigger = await readFile('database/migrations/0011_preserve_dodo_scheduled_plan_state.sql', 'utf8');
+  const changeExecution = await readFile('database/migrations/0012_change_approval_execution.sql', 'utf8');
+  const dimensions = await readFile('database/migrations/0013_policy_dimension_mappings.sql', 'utf8');
+  const infrastructure = await readFile('database/migrations/0014_neon_tigris_queues.sql', 'utf8');
   const requiredTables = [
     'subscriptions_v2', 'billing_usage_events', 'billing_allowances', 'billing_contracts',
     'enterprise_role_assignments', 'change_approval_requests', 'policy_templates', 'policy_segments',
@@ -191,19 +192,22 @@ test('enterprise migrations cover every A-H domain and hardening layer', async (
   assert.match(planState, /scheduled_interval/);
   assert.match(planState, /scheduled_product_id/);
   assert.match(scheduleTrigger, /preserve_dodo_scheduled_plan_state/);
-  assert.match(scheduleTrigger, /complete_dodo_scheduled_plan_change/);
+  assert.match(scheduleTrigger, /EXECUTE FUNCTION preserve_dodo_scheduled_plan_state_fn/);
   assert.match(changeExecution, /CREATE TABLE IF NOT EXISTS change_approval_executions/);
   assert.match(changeExecution, /lease_expires_at/);
   assert.match(dimensions, /CREATE TABLE IF NOT EXISTS policy_dimension_mappings/);
+  assert.match(infrastructure, /CREATE TABLE object_uploads/);
+  assert.match(infrastructure, /CREATE TABLE async_jobs/);
 });
 
-test('release source uses hardened Dodo, approval, dimension and simulation runtimes', async () => {
+test('release source uses hardened Dodo, approval, dimension, simulation and queue runtimes', async () => {
   const billing = await readFile('worker/src/billing.ts', 'utf8');
   const simulationRouter = await readFile('worker/src/routes-v8.ts', 'utf8');
   const handoffRouter = await readFile('worker/src/routes-v9.ts', 'utf8');
   const planChange = await readFile('worker/src/dodo-plan-change.ts', 'utf8');
   const scheduler = await readFile('worker/src/billing-scheduler.ts', 'utf8');
   const index = await readFile('worker/src/index.ts', 'utf8');
+  const queueing = await readFile('worker/src/queueing.ts', 'utf8');
   const scanner = await readFile('worker/src/scanner.ts', 'utf8');
   const assessment = await readFile('worker/src/assessment-service.ts', 'utf8');
   const simulation = await readFile('worker/src/policy-simulation-enterprise.ts', 'utf8');
@@ -217,9 +221,12 @@ test('release source uses hardened Dodo, approval, dimension and simulation runt
   assert.match(scheduler, /provider = 'manual'/);
   assert.doesNotMatch(scheduler, /provider = 'dodo'/);
   assert.match(index, /routes-v10/);
-  assert.match(index, /applyManualScheduledPlanChanges/);
-  assert.doesNotMatch(index, /applyScheduledPlanChanges/);
-  assert.match(index, /retryAtomicUsageReports/);
+  assert.match(index, /async queue\(/);
+  assert.match(index, /processQueueBatch/);
+  assert.doesNotMatch(index, /applyManualScheduledPlanChanges|retryAtomicUsageReports/);
+  assert.match(queueing, /applyManualScheduledPlanChanges/);
+  assert.match(queueing, /retryAtomicUsageReports/);
+  assert.match(queueing, /billing_schedule/);
   assert.match(simulationRouter, /runEnterprisePolicySimulation/);
   assert.match(handoffRouter, /policyDimensionPropertyNames/);
   assert.match(handoffRouter, /resolveSegmentedRulesForDeal/);

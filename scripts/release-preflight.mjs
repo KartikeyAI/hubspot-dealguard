@@ -1,5 +1,5 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { dirname, relative, resolve } from 'node:path';
 import process from 'node:process';
 
 const ROOT = process.cwd();
@@ -113,7 +113,11 @@ function renderDeploymentWrangler(source) {
   const appId = process.env.HUBSPOT_APP_ID;
   const hyperdrive = process.env.HYPERDRIVE_CONFIG_ID;
   const bucket = process.env.TIGRIS_BUCKET;
+  const sourceMain = source.match(/^main\s*=\s*"([^"]+)"/m)?.[1];
+  if (!sourceMain) throw new Error('Wrangler source configuration is missing main.');
+  const renderedMain = relative(dirname(wranglerOutput), resolve(ROOT, sourceMain)).replaceAll('\\', '/');
   let rendered = source
+    .replace(/^main\s*=\s*"[^"]+"/m, `main = "${renderedMain}"`)
     .replaceAll('REPLACE_WITH_STAGING_HUBSPOT_APP_ID', appId)
     .replaceAll('REPLACE_WITH_PRODUCTION_HUBSPOT_APP_ID', appId)
     .replaceAll('REPLACE_WITH_LOCAL_HUBSPOT_APP_ID', appId)

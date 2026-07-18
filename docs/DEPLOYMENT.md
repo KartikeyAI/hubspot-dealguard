@@ -1,22 +1,28 @@
-# Deployment and enterprise release operations
+# DealGuard 2.1.0 deployment and release operations
 
-DealGuard `2.1.0-rc.1` runs on Cloudflare Workers with Neon PostgreSQL through Cloudflare Hyperdrive, Tigris S3-compatible object storage, Cloudflare Queues, HubSpot developer platform `2026.03`, Dodo Payments, Slack, Resend, and customer-configured delivery or SIEM endpoints.
+DealGuard runs on Cloudflare Workers with Neon PostgreSQL through Cloudflare Hyperdrive, Tigris S3-compatible object storage, Cloudflare Queues, HubSpot developer platform `2026.03`, Dodo Payments, Resend, Slack, and customer-configured delivery or SIEM endpoints.
 
-Repository validation proves source consistency. It does not replace authenticated provider provisioning, a protected staging deployment, signed HubSpot acceptance, backup verification, restore testing, or production approval.
+For the first production deployment, follow these documents in order:
 
-## 1. Protected environments
+1. [`PRODUCTION_DEPLOYMENT_RUNBOOK.md`](PRODUCTION_DEPLOYMENT_RUNBOOK.md)
+2. [`MIGRATION_D1_TO_NEON.md`](MIGRATION_D1_TO_NEON.md)
+3. [`PRODUCTION_ACCEPTANCE_RUNBOOK.md`](PRODUCTION_ACCEPTANCE_RUNBOOK.md)
 
-Create these GitHub Environments:
+This document describes the permanent release model after the initial cutover.
 
-- `dealguard-staging`
-- `dealguard-production`
-- `dealguard-acceptance`
+## Protected environments
+
+Create:
+
+- `dealguard-staging`;
+- `dealguard-production`;
+- `dealguard-acceptance`.
 
 Production must require an approving reviewer. Do not expose protected secrets to untrusted pull-request workflows.
 
 ### Environment variables
 
-Configure these variables separately for staging and production:
+Configure separately for staging and production:
 
 ```text
 APP_BASE_URL
@@ -38,11 +44,16 @@ DODO_EVENT_OVERAGE_EVENT_NAME
 DODO_RETENTION_EVENT_NAME
 ```
 
-Use `https://dealguard-api-staging.rokad.co` for staging and `https://dealguard-api.rokad.co` for production. `DODO_ENVIRONMENT` must be `test` in staging and `live` only after production approval.
+Use:
+
+```text
+staging:    https://dealguard-api-staging.rokad.co
+production: https://dealguard-api.rokad.co
+```
+
+`DODO_ENVIRONMENT` must be `test` in staging and `live` in production.
 
 ### Environment secrets
-
-Configure:
 
 ```text
 NEON_DATABASE_URL
@@ -60,31 +71,27 @@ DODO_API_KEY
 DODO_WEBHOOK_SECRET
 ```
 
-`NEON_DATABASE_URL` is used only by reviewed migration and validation jobs. Runtime database traffic uses the environment-specific Hyperdrive binding. Restrict every credential to the minimum account, database, bucket, queue, Worker, or HubSpot application scope required.
+`NEON_DATABASE_URL` is used by protected migration and validation jobs. Runtime database traffic uses the environment-specific Hyperdrive binding.
 
-The `dealguard-acceptance` environment requires at minimum:
+## Infrastructure isolation
 
-```text
-HUBSPOT_CLIENT_SECRET
-DODO_WEBHOOK_SECRET
-```
+Provision independent staging and production resources:
 
-## 2. Infrastructure prerequisites
+1. Neon database or branch;
+2. Cloudflare Hyperdrive configuration;
+3. Tigris bucket and scoped credentials;
+4. scan queue;
+5. delivery queue;
+6. maintenance queue;
+7. dead-letter queue;
+8. Worker custom domain;
+9. scheduled trigger.
 
-Provision separate staging and production resources:
+Never point staging and production at the same database, Hyperdrive configuration, bucket, queue, HubSpot app, or Dodo environment.
 
-1. Neon PostgreSQL databases or branches with encrypted connections and independent credentials.
-2. Cloudflare Hyperdrive configurations pointing to the corresponding Neon database.
-3. Tigris buckets with versioning or provider retention controls appropriate to the release policy.
-4. Three Cloudflare Queues per environment for scans, delivery, and maintenance.
-5. One dead-letter queue per environment.
-6. Cloudflare Worker custom domains and the 15-minute scheduler.
+## Repository gate
 
-The queue names and Worker bindings are declared in `wrangler.toml`. Provider resource identifiers remain environment-specific and are rendered only into ephemeral release configuration.
-
-## 3. Repository and schema gate
-
-A release candidate must pass:
+A release must pass:
 
 ```bash
 npm install
@@ -96,241 +103,247 @@ npm run db:migrate:check
 npm run db:validate
 ```
 
-CI and Release readiness use a disposable PostgreSQL 17 service for schema application and tenant-isolation validation. This proves that migrations are contiguous and internally consistent without mutating staging or production.
-
 The canonical migration directory is:
 
 ```text
 database/migrations/
 ```
 
-Migrations are immutable after application. `db:migrate:check` rejects a changed filename or checksum and rejects a database missing a committed migration.
+Applied migration filenames and checksums are immutable.
 
-## 4. Release readiness
+## Release identity
 
-Run **Release readiness** for the target environment before deployment. It:
+The package version and Worker health version must match.
 
-1. executes Worker and HubSpot extension typechecks;
-2. runs the full automated test suite;
-3. applies and validates PostgreSQL migrations in a disposable database;
-4. validates protected configuration by presence and format without publishing secret values;
-5. checks package and health-version consistency;
-6. validates the canonical HubSpot marketplace manifest and target renderer;
-7. verifies Hyperdrive, Tigris, Cloudflare Queues, retry, and dead-letter contracts;
-8. verifies migrations through `0014_neon_tigris_queues.sql`;
-9. renders an ephemeral target-specific Wrangler file;
-10. builds the selected Worker environment with `wrangler deploy --dry-run`;
-11. publishes only checksums and non-sensitive evidence.
+For DealGuard 2.1.0:
 
-Equivalent local commands are:
+```text
+package.json:            2.1.0
+worker/src/version.ts:   2.1.0
+GET /health:             2.1.0
+```
+
+`/health` must return:
+
+```json
+{
+  "status": "ok",
+  "service": "dealguard-api",
+  "version": "2.1.0"
+}
+```
+
+## Release readiness
+
+Run **Release readiness** for staging first and production only as a configuration audit.
+
+It validates:
+
+- Worker and HubSpot typechecks;
+- automated tests;
+- PostgreSQL migrations and tenant constraints;
+- protected configuration presence and format;
+- stable release identity;
+- HubSpot marketplace manifest and target rendering;
+- Hyperdrive, Tigris, Queues, retry, and dead-letter contracts;
+- production deployment and acceptance documentation;
+- target-specific Wrangler dry run;
+- non-sensitive checksums and evidence.
+
+Equivalent commands:
 
 ```bash
 npm run release:preflight
 npm run release:bundle
 ```
 
-Do not retain `.release/wrangler.toml` after the release operation.
+The rendered `.release/wrangler.toml` is ephemeral and must not be committed.
 
-## 5. Backup before any database change
+## Backup requirement
 
-Every protected deployment requires an encrypted pre-change PostgreSQL dump uploaded to Tigris. The input `backup_reference` is the object key, for example:
+Every protected deployment requires a verified encrypted PostgreSQL backup object in Tigris.
+
+Example:
 
 ```text
-backups/production/2026-07-14/dealguard-2.1.0-rc.1.sql.enc
+backups/production/2026-07-18/dealguard-2.1.0.sql.enc
 ```
 
-Upload and verify a backup with:
+Upload and verify:
 
 ```bash
-npm run storage:backup:upload -- ./artifacts/dealguard.sql.enc \
-  backups/production/2026-07-14/dealguard-2.1.0-rc.1.sql.enc
+npm run storage:backup:upload -- ./artifacts/dealguard-2.1.0.sql.enc \
+  backups/production/2026-07-18/dealguard-2.1.0.sql.enc
 
 npm run storage:backup:head -- \
-  backups/production/2026-07-14/dealguard-2.1.0-rc.1.sql.enc
+  backups/production/2026-07-18/dealguard-2.1.0.sql.enc
 ```
 
-The upload records a SHA-256 digest in object metadata. The protected deployment fails before migration if the object or checksum metadata is missing.
+Before production, download and restore one protected backup into an isolated Neon branch and record the restore test.
 
-A backup reference is not sufficient by itself. Before production, download one protected backup, verify its digest, restore it into an isolated Neon branch, and record the restore test in release evidence.
+## Controlled deploy
 
-## 6. Legacy data cutover
+Run the **Controlled deploy** workflow.
 
-The first production release on Neon must follow `docs/MIGRATION_D1_TO_NEON.md`.
+Staging requires:
 
-The cutover requires:
+- exact release SHA;
+- verified staging backup reference;
+- acceptance portal and administrator;
+- preferably the `full` profile and a real test deal.
 
-- a bounded write freeze;
-- a final encrypted source export;
-- schema application through migration `0014`;
-- deterministic import into the `dealguard` schema;
-- row-count reconciliation and key integrity checks;
-- tenant-boundary, foreign-key, audit-chain, subscription, policy, and remediation validation;
-- staging acceptance before production;
-- a recorded rollback decision point before traffic is switched.
+Production additionally requires:
 
-Do not deploy the new production Worker against an unverified empty or partially imported database.
+- successful full-profile staging run ID for the exact SHA;
+- `acceptance_profile=full`;
+- a real production acceptance test deal;
+- exact confirmation phrase `DEPLOY DEALGUARD TO PRODUCTION`;
+- production environment approval.
 
-## 7. Controlled deployment
+The workflow executes:
 
-Run **Controlled deploy** with:
+1. immutable input validation;
+2. exact SHA checkout;
+3. stable semantic-version validation;
+4. repository gate;
+5. protected release preflight;
+6. staging evidence verification for production;
+7. Tigris backup verification;
+8. PostgreSQL migration and checksum verification;
+9. tenant constraint validation;
+10. target-specific Worker deployment;
+11. health identity verification;
+12. public smoke checks;
+13. signed acceptance;
+14. release and migration checksums;
+15. deployment evidence generation.
 
-- exact 40-character release commit SHA;
-- target environment;
-- verified Tigris backup object key;
-- successful staging deployment run ID for production;
-- acceptance profile and test portal details.
+## Public smoke verification
 
-The workflow:
-
-1. checks out the immutable commit without persisted credentials;
-2. runs the repository gate and release preflight;
-3. verifies matching staging evidence for production promotion;
-4. verifies the Tigris backup object;
-5. applies PostgreSQL migrations through the direct Neon migration credential;
-6. verifies migration checksums and tenant constraints;
-7. deploys the selected Wrangler environment;
-8. checks `/health` and exact release version;
-9. runs signed post-deployment acceptance;
-10. records source, manifest, and migration checksums;
-11. publishes a deployment evidence record retained for 90 days.
-
-Application deployment command:
+Run independently with:
 
 ```bash
-npx wrangler deploy --config .release/wrangler.toml --env staging
-# or
-npx wrangler deploy --config .release/wrangler.toml --env production
+PRODUCTION_SMOKE_BASE_URL=https://dealguard-api.rokad.co \
+npm run production:smoke
 ```
 
-## 8. Runtime database access
+The smoke suite verifies:
 
-The Worker receives a `HYPERDRIVE` binding. `worker/src/postgres.ts` connects through `HYPERDRIVE.connectionString` and establishes the `dealguard, public` search path.
+- exact HTTPS production origin;
+- health and release identity;
+- public status response;
+- docs, privacy, terms, and support;
+- unsigned API rejection;
+- HubSpot OAuth redirect contract;
+- absence of obvious secret leakage.
 
-Operational rules:
+Evidence is written under `.release/production-smoke/`.
 
-- never embed a direct Neon credential in Worker source or public configuration;
-- use one Hyperdrive configuration per protected environment;
-- use advisory locking for schema migrations;
-- preserve immutable migration checksums;
-- enforce tenant ownership through composite constraints where child relationships are tenant-owned;
-- monitor connection errors, transaction failures, statement latency, and pool pressure.
+## Signed acceptance
 
-## 9. Object storage
-
-Tigris stores large immutable or downloadable artifacts such as evidence attachments, generated exports, and encrypted backup files.
-
-Operational rules:
-
-- object keys must be tenant-scoped for customer artifacts;
-- upload completion must validate expected size and SHA-256;
-- database rows store metadata and object references, not unbounded file bodies;
-- signed access must be time-limited and permission-checked;
-- deletion and legal-hold behavior must be tested together;
-- backup objects must not share customer-download authorization paths.
-
-## 10. Queue operations
-
-Cloudflare Queues separate request handling from scans, external delivery, exports, and maintenance.
-
-Current queue classes:
-
-- scan queue: portal scans and resumable scan work;
-- delivery queue: alerts, outbox, SIEM, billing usage, digests, and data exports;
-- maintenance queue: remediation escalation, alert escalation, synthetics, billing schedules, policy exceptions, retention, audit promotion, secure-download cleanup, and maintenance.
-
-Consumers use bounded retries. Exhausted messages are acknowledged only after the configured retry limit and are also routed by Cloudflare to the environment dead-letter queue. Monitor queue depth, age, retries, consumer failures, and dead-letter volume before production promotion.
-
-## 11. HubSpot project upload
-
-The committed HubSpot project remains canonical for production. Before staging upload, render a temporary target copy in a clean checkout or disposable worktree:
+Run the `full` profile for final production certification:
 
 ```bash
-HUBSPOT_TARGET_BASE_URL=https://dealguard-api-staging.rokad.co \
-  npm run hubspot:render-target
+ACCEPTANCE_PROFILE=full \
+ACCEPTANCE_BASE_URL=https://dealguard-api.rokad.co \
+ACCEPTANCE_PORTAL_ID=<portal-id> \
+ACCEPTANCE_USER_EMAIL=<admin-email> \
+ACCEPTANCE_TEST_DEAL_ID=<deal-id> \
+HUBSPOT_APP_ID=<app-id> \
+HUBSPOT_CLIENT_SECRET=<secret> \
+DODO_WEBHOOK_SECRET=<secret> \
+npm run acceptance:live
+```
+
+See [`PRODUCTION_ACCEPTANCE_RUNBOOK.md`](PRODUCTION_ACCEPTANCE_RUNBOOK.md) for the complete automated and manual test matrix.
+
+## HubSpot project upload
+
+Render target-specific files only in a clean checkout or disposable worktree.
+
+Staging:
+
+```bash
+HUBSPOT_TARGET_BASE_URL=https://dealguard-api-staging.rokad.co npm run hubspot:render-target
 npm run hubspot:deps
 npm run hubspot:upload
 ```
 
-For production, use `https://dealguard-api.rokad.co`. Do not commit target-rendered files over the canonical production manifest.
-
-Authenticated upload must validate:
-
-- App Home V3;
-- deal readiness card;
-- settings extension;
-- webhook subscriptions;
-- **Assess deal with DealGuard** workflow action;
-- **Create DealGuard remediation** workflow action;
-- OAuth redirects and permitted fetch URL.
-
-Repository JSON parsing is not HubSpot platform-schema approval.
-
-## 12. HubSpot scopes and reauthorization
-
-Current required scopes are:
-
-```text
-crm.objects.deals.read
-crm.objects.deals.write
-crm.objects.contacts.read
-crm.objects.companies.read
-crm.objects.tasks.write
-crm.schemas.deals.read
-crm.schemas.deals.write
-```
-
-Existing installations must reauthorize after scope changes. DealGuard writes only its namespaced derived properties and explicitly requested remediation tasks; it does not autonomously rewrite core commercial fields.
-
-## 13. Dodo Payments
-
-Create Growth and Enterprise monthly and annual products. Configure the Customer Portal and the appropriate environment webhook endpoint.
-
-Validate in Dodo test mode:
-
-- hosted checkout and Customer Portal;
-- activation, renewal, `past_due`, recovery, cancellation, and expiry;
-- immediate and next-billing-date changes;
-- cancellation of scheduled changes;
-- stale-event and terminal-state protections;
-- webhook idempotency;
-- cumulative and gauge usage meters;
-- hard caps, optional overage, and manual Enterprise contracts.
-
-Only verified `subscription.*` events can change commercial entitlement.
-
-## 14. Signed acceptance
-
-After deployment and HubSpot installation, run the protected acceptance profile.
-
-Use `read-only` first, then `full`. The full profile may create an uncompleted checkout session, run a scan, assess a designated test deal, preview a plan change, validate signature isolation, and verify single-use exports. It must not pay, cancel, delete tenant data, publish policy, change roles, or mutate a subscription plan.
-
-Complete manual account-bound validation for governance, analytics, remediation, routed delivery, queue retries, dead-letter handling, audit continuity, object uploads, legal holds, backup restore, and disaster recovery.
-
-## 15. Rollback and incident boundary
-
-Before traffic cutover, rollback means keeping the previous Worker active and discarding the candidate Neon branch after preserving evidence.
-
-After traffic cutover:
-
-1. stop new release activity and pause queue producers if data integrity is uncertain;
-2. identify the last known-good Worker deployment and database restore point;
-3. preserve logs, queue state, migration records, and backup references;
-4. restore into an isolated Neon branch first;
-5. validate tenant counts, audit continuity, subscriptions, policies, remediation, and object references;
-6. switch Hyperdrive only through an approved incident change;
-7. deploy the compatible Worker version;
-8. run read-only acceptance before reopening writes.
-
-Never reverse an applied production schema migration automatically. Prefer forward repair or verified restore-and-switch.
-
-## 16. Local development
-
-Create `.dev.vars` from `.env.example`, provide a local PostgreSQL database, and run:
+Production:
 
 ```bash
-npm run db:migrate
-npm run db:validate
-npm run dev:worker
+HUBSPOT_TARGET_BASE_URL=https://dealguard-api.rokad.co npm run hubspot:render-target
+npm run hubspot:deps
+npm run hubspot:upload
 ```
 
-HubSpot UI extensions cannot fetch arbitrary localhost origins. Use HubSpot local development tooling with its proxy or an approved temporary HTTPS Worker URL included in the rendered test manifest.
+Validate App Home, the deal card, settings, webhooks, both workflow actions, OAuth redirects, permitted fetch URLs, and all declared scopes.
+
+## Database operations
+
+Operational rules:
+
+- never embed direct Neon credentials in Worker source or public configuration;
+- use one Hyperdrive configuration per protected environment;
+- use advisory locking for migrations;
+- preserve immutable migration checksums;
+- enforce composite tenant constraints for tenant-owned relationships;
+- monitor connection errors, transaction failures, latency, and pool pressure;
+- never automatically reverse an applied production migration.
+
+## Tigris operations
+
+Tigris stores large evidence, exports, attachments, and encrypted backups.
+
+Rules:
+
+- tenant-scope customer artifact keys;
+- validate upload size and SHA-256;
+- keep unbounded file bodies outside PostgreSQL;
+- use permission-checked, time-limited access;
+- test legal hold and deletion together;
+- isolate backup authorization from customer downloads.
+
+## Queue operations
+
+Queue classes:
+
+- scan queue: portal scans and resumable scan work;
+- delivery queue: alerts, outbox, SIEM, billing usage, digests, and exports;
+- maintenance queue: escalation, synthetics, billing schedules, exceptions, retention, audit promotion, and cleanup.
+
+Monitor queue depth, age, retries, consumer failures, and dead-letter volume. Every dead-letter item must be explained before production release approval.
+
+## Rollback
+
+Before writes reopen, rollback means retaining the previous production runtime and source of truth while discarding the candidate target after preserving evidence.
+
+After writes reopen:
+
+1. pause writes and queue producers;
+2. preserve logs and queue state;
+3. reconcile the post-cutover write interval;
+4. restore into an isolated branch;
+5. validate tenant and domain invariants;
+6. switch Hyperdrive only through an approved incident change;
+7. deploy the compatible Worker;
+8. run public smoke and read-only signed acceptance;
+9. reopen writes only after approval.
+
+Prefer forward repair or verified restore-and-switch. Do not use automatic reverse schema migrations.
+
+## Deployment evidence
+
+Retain:
+
+- deployment record;
+- release preflight;
+- health response;
+- public smoke JSON and Markdown;
+- signed acceptance JSON and Markdown;
+- release checksums;
+- migration checksums;
+- backup reference and restore evidence;
+- migration reconciliation reports;
+- HubSpot and provider-console evidence;
+- final go/no-go approval.

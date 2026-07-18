@@ -4,11 +4,12 @@ import process from 'node:process';
 
 const root = process.cwd();
 const packageJson = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
+const allowNonProduction = String(process.env.PRODUCTION_SMOKE_ALLOW_NON_PRODUCTION ?? 'false') === 'true';
 const baseUrl = cleanBaseUrl(valueAfter('--base-url') ?? process.env.PRODUCTION_SMOKE_BASE_URL ?? process.env.APP_BASE_URL);
 const output = resolve(root, valueAfter('--output') ?? process.env.PRODUCTION_SMOKE_OUTPUT ?? '.release/production-smoke/evidence.json');
 const timeoutMs = boundedNumber(process.env.PRODUCTION_SMOKE_TIMEOUT_MS ?? '20000', 1000, 60000);
-const allowNonProduction = String(process.env.PRODUCTION_SMOKE_ALLOW_NON_PRODUCTION ?? 'false') === 'true';
 const expectedVersion = String(process.env.PRODUCTION_SMOKE_EXPECT_VERSION ?? packageJson.version).trim();
+const target = allowNonProduction ? 'staging' : 'production';
 const checks = [];
 
 function valueAfter(name) {
@@ -133,12 +134,12 @@ await run('DG-PROD-006', 'hubspot', 'OAuth install redirect contract', async () 
   ensure([301, 302, 303, 307, 308].includes(response.status), `/oauth/install returned ${response.status}.`);
   const location = response.headers.location;
   ensure(location, 'OAuth install response is missing Location.');
-  const target = new URL(location);
-  ensure(target.protocol === 'https:', 'OAuth redirect is not HTTPS.');
-  ensure(target.hostname === 'app.hubspot.com', `OAuth redirect host is ${target.hostname}.`);
-  for (const parameter of ['client_id', 'redirect_uri', 'scope', 'state']) ensure(target.searchParams.has(parameter), `OAuth redirect is missing ${parameter}.`);
-  ensure(target.searchParams.get('redirect_uri') === `${baseUrl.origin}/oauth/callback`, 'OAuth redirect URI does not match production origin.');
-  return { status: response.status, target: sanitizedUrl(target), scopeCount: String(target.searchParams.get('scope') ?? '').split(' ').filter(Boolean).length };
+  const oauthTarget = new URL(location);
+  ensure(oauthTarget.protocol === 'https:', 'OAuth redirect is not HTTPS.');
+  ensure(oauthTarget.hostname === 'app.hubspot.com', `OAuth redirect host is ${oauthTarget.hostname}.`);
+  for (const parameter of ['client_id', 'redirect_uri', 'scope', 'state']) ensure(oauthTarget.searchParams.has(parameter), `OAuth redirect is missing ${parameter}.`);
+  ensure(oauthTarget.searchParams.get('redirect_uri') === `${baseUrl.origin}/oauth/callback`, 'OAuth redirect URI does not match target origin.');
+  return { status: response.status, target: sanitizedUrl(oauthTarget), scopeCount: String(oauthTarget.searchParams.get('scope') ?? '').split(' ').filter(Boolean).length };
 });
 
 await run('DG-PROD-007', 'security', 'No obvious secret leakage on public surfaces', async () => {
@@ -159,7 +160,7 @@ const summary = {
 const evidence = {
   schemaVersion: 1,
   generatedAt: new Date().toISOString(),
-  target: 'production',
+  target,
   baseUrl: sanitizedUrl(baseUrl),
   expectedVersion,
   operator: process.env.GITHUB_ACTOR ?? process.env.USER ?? 'unknown',
@@ -174,6 +175,7 @@ await writeFile(markdown, [
   '# DealGuard production smoke evidence',
   '',
   `- Generated: ${evidence.generatedAt}`,
+  `- Environment: ${evidence.target}`,
   `- Target: ${evidence.baseUrl}`,
   `- Expected version: ${evidence.expectedVersion}`,
   `- Result: ${summary.failed === 0 ? 'PASSED' : 'FAILED'} (${summary.passed}/${summary.total})`,

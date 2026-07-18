@@ -6,6 +6,7 @@ const root = process.cwd();
 const output = resolve(root, valueAfter('--output') ?? '.release/deployment-record.json');
 const preflightPath = resolve(root, valueAfter('--preflight') ?? '.release/preflight.json');
 const healthPath = resolve(root, valueAfter('--health') ?? '.release/health.json');
+const smokePath = resolve(root, valueAfter('--smoke') ?? '.release/production-smoke/evidence.json');
 const acceptanceDir = resolve(root, valueAfter('--acceptance-dir') ?? 'artifacts/acceptance');
 
 function valueAfter(name) {
@@ -15,6 +16,10 @@ function valueAfter(name) {
 
 async function json(path) {
   return JSON.parse(await readFile(path, 'utf8'));
+}
+
+async function optionalJson(path) {
+  try { return await json(path); } catch { return null; }
 }
 
 async function findAcceptance() {
@@ -28,6 +33,7 @@ async function findAcceptance() {
 
 const preflight = await json(preflightPath);
 const health = await json(healthPath);
+const smoke = await optionalJson(smokePath);
 const acceptance = await findAcceptance();
 const packageJson = await json(resolve(root, 'package.json'));
 const target = process.env.RELEASE_TARGET === 'production' ? 'production' : 'staging';
@@ -35,7 +41,7 @@ const commit = String(process.env.RELEASE_SHA ?? process.env.GITHUB_SHA ?? '').t
 const backupReference = String(process.env.BACKUP_REFERENCE ?? '').trim();
 
 const record = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   generatedAt: new Date().toISOString(),
   repository: process.env.GITHUB_REPOSITORY ?? null,
   workflow: process.env.GITHUB_WORKFLOW ?? null,
@@ -47,8 +53,15 @@ const record = {
   preflight: preflight.summary,
   health: {
     status: health.status ?? health.ok ?? null,
+    service: health.service ?? null,
     version: health.version ?? null,
   },
+  smoke: smoke ? {
+    target: smoke.target ?? null,
+    baseUrl: smoke.baseUrl ?? null,
+    expectedVersion: smoke.expectedVersion ?? null,
+    summary: smoke.summary ?? null,
+  } : null,
   acceptance: acceptance ? {
     profile: acceptance.profile ?? null,
     summary: acceptance.summary ?? null,
@@ -59,8 +72,12 @@ const failures = [];
 if (!/^[0-9a-f]{40}$/i.test(record.commit)) failures.push('release commit is not a full SHA');
 if (!record.backupReference) failures.push('backup reference is missing');
 if (record.preflight?.failed !== 0) failures.push('release preflight did not pass');
+if (record.health.status !== 'ok' || record.health.service !== 'dealguard-api') failures.push('deployed health identity is invalid');
 if (record.health.version !== record.version) failures.push('deployed health version does not match package version');
+if (!record.smoke || Number(record.smoke.summary?.failed ?? 1) !== 0) failures.push('public deployment smoke did not pass');
+if (record.smoke?.expectedVersion !== record.version) failures.push('public smoke version does not match package version');
 if (!record.acceptance || Number(record.acceptance.summary?.failed ?? 1) !== 0) failures.push('signed acceptance did not pass');
+if (target === 'production' && record.acceptance?.profile !== 'full') failures.push('production acceptance profile is not full');
 
 record.result = failures.length ? 'failed' : 'passed';
 record.failures = failures;

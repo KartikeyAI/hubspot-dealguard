@@ -58,17 +58,19 @@ async function validateRepository() {
   const wrangler = await text('wrangler.toml');
   const deployment = await text('docs/DEPLOYMENT.md');
   const migrationGuide = await text('docs/MIGRATION_D1_TO_NEON.md');
+  const productionRunbook = await text('docs/PRODUCTION_DEPLOYMENT_RUNBOOK.md');
+  const acceptanceRunbook = await text('docs/PRODUCTION_ACCEPTANCE_RUNBOOK.md');
   const envExample = await text('.env.example');
   const index = await text('worker/src/index.ts');
+  const versionSource = await text('worker/src/version.ts');
   const postgres = await text('worker/src/postgres.ts');
   const storage = await text('worker/src/object-storage.ts');
   const queueing = await text('worker/src/queueing.ts');
   const targetRenderer = await text('scripts/render-hubspot-target.mjs');
-  const routeFiles = (await readdir(resolve(ROOT, 'worker/src'))).filter((name) => /^routes.*\.ts$/.test(name));
-  const routeSource = (await Promise.all(routeFiles.map((name) => text(`worker/src/${name}`)))).join('\n');
+  const smokeSource = await text('scripts/production-smoke.mjs');
 
-  add('package.version.release_candidate', /^2\.1\.0-rc\.\d+$/.test(packageJson.version), `package version is ${packageJson.version}`);
-  add('runtime.version.matches', routeSource.includes(`version: '${packageJson.version}'`) || routeSource.includes(`version: \"${packageJson.version}\"`), 'health endpoint version must match package.json');
+  add('package.version.production', /^2\.1\.0$/.test(packageJson.version), `package version is ${packageJson.version}`);
+  add('runtime.version.matches', versionSource.includes(`DEALGUARD_VERSION = '${packageJson.version}'`) && /DEALGUARD_VERSION/.test(index), 'central Worker health identity must match package.json');
   add('hubspot.platform', hsProject.platformVersion === '2026.03', `HubSpot platform version is ${hsProject.platformVersion}`);
   add('hubspot.marketplace_distribution', appManifest?.config?.distribution === 'marketplace', 'HubSpot app distribution must be marketplace');
 
@@ -87,6 +89,7 @@ async function validateRepository() {
   add('runtime.queue_handler', /async queue\(/.test(index) && /processQueueBatch/.test(index), 'Worker queue consumer handler is required');
   add('runtime.tigris', /t3\.storage\.dev/.test(storage) && /PutObjectCommand/.test(storage), 'Tigris S3 object storage adapter is required');
   add('runtime.queue_retry', /MAX_QUEUE_ATTEMPTS/.test(queueing) && /retry\(/.test(queueing), 'Queue retry and dead-letter behavior is required');
+  add('runtime.production_smoke', /DG-PROD-007/.test(smokeSource) && /dealguard-api\.rokad\.co/.test(smokeSource), 'production smoke verification must cover release identity, OAuth, public surfaces and secret leakage');
 
   const migrationFiles = (await readdir(resolve(ROOT, 'database/migrations'))).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
   const migrationNumbers = migrationFiles.map((name) => Number(name.slice(0, 4)));
@@ -95,12 +98,14 @@ async function validateRepository() {
   add('migrations.latest', migrationNumbers.at(-1) === 14, `latest migration is ${migrationFiles.at(-1) ?? 'missing'}`);
   add('migrations.no_d1_directory', !(await readdir(resolve(ROOT, 'worker'))).includes('migrations'), 'legacy runtime migration directory must be removed');
 
-  const publicDocs = `${deployment}\n${envExample}`;
-  add('repository.no_d1_release', !/Cloudflare D1|wrangler d1|D1_DATABASE_ID/i.test(publicDocs), 'release documentation and environment template must not reference the retired runtime');
+  const publicDocs = `${deployment}\n${productionRunbook}\n${acceptanceRunbook}\n${envExample}`;
+  add('repository.no_d1_release', !/Cloudflare D1 database|wrangler d1|D1_DATABASE_ID|production D1 backup/i.test(publicDocs), 'production documentation and environment template must not describe D1 as the runtime');
   add('repository.neon_documented', /Neon PostgreSQL/i.test(deployment), 'deployment guide must document Neon PostgreSQL');
   add('repository.tigris_documented', /Tigris/i.test(deployment), 'deployment guide must document Tigris');
   add('repository.queues_documented', /Cloudflare Queues/i.test(deployment), 'deployment guide must document Cloudflare Queues');
   add('repository.cutover_documented', /row-count reconciliation/i.test(migrationGuide) && /rollback/i.test(migrationGuide) && /Tigris/i.test(migrationGuide), 'migration guide must document reconciliation, backup and rollback');
+  add('repository.production_runbook', /Production go\/no-go/i.test(productionRunbook) && /Controlled deploy/i.test(productionRunbook) && /rollback/i.test(productionRunbook), 'production deployment runbook must contain go/no-go, controlled deploy and rollback procedures');
+  add('repository.acceptance_runbook', /DG-PROD-001/.test(acceptanceRunbook) && /DG-LIVE-014/.test(acceptanceRunbook), 'production acceptance runbook must map automated smoke and signed acceptance checks');
 
   const excluded = new Set(['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN', 'HYPERDRIVE_CONFIG_ID', 'HUBSPOT_CLI_CONFIG_B64']);
   for (const name of requiredEnvironment().filter((item) => !excluded.has(item))) add(`env_example.${name}`, envExample.includes(`${name}=`), `${name} must be documented in .env.example`);
@@ -141,7 +146,7 @@ async function main() {
     add('output.wrangler', true, `rendered ${wranglerOutput}`, 'output');
   }
   const failed = checks.filter((item) => !item.ok);
-  const report = { schemaVersion: 2, generatedAt: new Date().toISOString(), target, releaseVersion: repository.packageJson.version, includeHubSpotUpload, commit: process.env.GITHUB_SHA ?? null, summary: { total: checks.length, passed: checks.length - failed.length, failed: failed.length }, checks };
+  const report = { schemaVersion: 3, generatedAt: new Date().toISOString(), target, releaseVersion: repository.packageJson.version, includeHubSpotUpload, commit: process.env.GITHUB_SHA ?? null, summary: { total: checks.length, passed: checks.length - failed.length, failed: failed.length }, checks };
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
   for (const item of checks) console.log(`${item.ok ? 'PASS' : 'FAIL'} ${item.id}: ${item.detail}`);

@@ -1,4 +1,4 @@
-PRAGMA foreign_keys = ON;
+SET search_path TO dealguard, public;
 
 CREATE TABLE IF NOT EXISTS governance_roles (
   id TEXT PRIMARY KEY,
@@ -104,7 +104,7 @@ CREATE INDEX IF NOT EXISTS idx_policy_exceptions_portal_status ON policy_excepti
 CREATE TABLE IF NOT EXISTS assessment_context (
   portal_id TEXT NOT NULL,
   deal_id TEXT NOT NULL,
-  deal_amount REAL,
+  deal_amount DOUBLE PRECISION,
   owner_id TEXT,
   pipeline_id TEXT NOT NULL DEFAULT '',
   stage_id TEXT NOT NULL DEFAULT '',
@@ -123,8 +123,8 @@ CREATE TABLE IF NOT EXISTS analytics_snapshots (
   at_risk_deals INTEGER NOT NULL,
   critical_deals INTEGER NOT NULL,
   average_score INTEGER NOT NULL,
-  total_pipeline_amount REAL NOT NULL DEFAULT 0,
-  amount_at_risk REAL NOT NULL DEFAULT 0,
+  total_pipeline_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+  amount_at_risk DOUBLE PRECISION NOT NULL DEFAULT 0,
   incomplete_handoffs INTEGER NOT NULL DEFAULT 0,
   policy_id TEXT,
   captured_at TEXT NOT NULL,

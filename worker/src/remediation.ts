@@ -227,7 +227,7 @@ export async function remediationSummary(env: Env, portalId: string): Promise<{ 
       SUM(CASE WHEN status = 'overdue' THEN 1 ELSE 0 END) AS overdue_count,
       SUM(CASE WHEN severity = 'critical' AND status IN ('open', 'acknowledged', 'in_progress', 'overdue') THEN 1 ELSE 0 END) AS critical_count,
       SUM(CASE WHEN due_at IS NOT NULL AND due_at <= ? AND status IN ('open', 'acknowledged', 'in_progress') THEN 1 ELSE 0 END) AS due_soon,
-      AVG(CASE WHEN resolved_at IS NOT NULL THEN (julianday(resolved_at) - julianday(created_at)) * 24 END) AS average_resolution_hours
+      AVG(CASE WHEN resolved_at IS NOT NULL THEN EXTRACT(EPOCH FROM (resolved_at::timestamptz - created_at::timestamptz)) / 3600.0 END) AS average_resolution_hours
      FROM remediation_cases WHERE portal_id = ?`
   ).bind(new Date(Date.now() + 24 * 60 * 60_000).toISOString(), portalId).first<Record<string, unknown>>();
   return {

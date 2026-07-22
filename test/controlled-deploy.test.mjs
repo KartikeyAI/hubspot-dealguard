@@ -4,15 +4,22 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 
 const commit = 'a'.repeat(40);
-const version = '2.0.0-rc.1';
+const { version } = JSON.parse(await readFile('package.json', 'utf8'));
 const root = '.release/controlled-deploy-test';
 
 async function fixture() {
   await rm(root, { recursive: true, force: true });
   await mkdir(`${root}/acceptance`, { recursive: true });
-  await writeFile(`${root}/preflight.json`, JSON.stringify({ summary: { total: 40, passed: 40, failed: 0 } }));
-  await writeFile(`${root}/health.json`, JSON.stringify({ status: 'ok', version }));
-  await writeFile(`${root}/acceptance/result.json`, JSON.stringify({ profile: 'full', summary: { total: 20, passed: 20, failed: 0, skipped: 0 } }));
+  await mkdir(`${root}/production-smoke`, { recursive: true });
+  await writeFile(`${root}/preflight.json`, JSON.stringify({ summary: { total: 48, passed: 48, failed: 0 } }));
+  await writeFile(`${root}/health.json`, JSON.stringify({ status: 'ok', service: 'dealguard-api', version }));
+  await writeFile(`${root}/production-smoke/evidence.json`, JSON.stringify({
+    target: 'production',
+    baseUrl: 'https://dealguard-api.rokad.co/',
+    expectedVersion: version,
+    summary: { total: 7, passed: 7, failed: 0 },
+  }));
+  await writeFile(`${root}/acceptance/result.json`, JSON.stringify({ profile: 'full', summary: { total: 14, passed: 14, failed: 0, skipped: 0 } }));
 }
 
 function deploymentRecord(extraEnvironment = {}) {
@@ -21,6 +28,7 @@ function deploymentRecord(extraEnvironment = {}) {
     '--output', `${root}/deployment-record.json`,
     '--preflight', `${root}/preflight.json`,
     '--health', `${root}/health.json`,
+    '--smoke', `${root}/production-smoke/evidence.json`,
     '--acceptance-dir', `${root}/acceptance`,
   ], {
     cwd: process.cwd(),
@@ -29,7 +37,7 @@ function deploymentRecord(extraEnvironment = {}) {
       ...process.env,
       RELEASE_TARGET: 'staging',
       RELEASE_SHA: commit,
-      BACKUP_REFERENCE: 'cloudflare-time-travel:bookmark-123',
+      BACKUP_REFERENCE: `backups/staging/dealguard-${version}.sql.enc`,
       GITHUB_REPOSITORY: 'rokadhq/hubspot-dealguard',
       GITHUB_WORKFLOW: 'Controlled deploy',
       GITHUB_RUN_ID: '123',
@@ -38,7 +46,7 @@ function deploymentRecord(extraEnvironment = {}) {
   });
 }
 
-test('deployment evidence requires preflight, health, acceptance, immutable SHA and backup reference', async () => {
+test('deployment evidence requires preflight, health, smoke, acceptance, immutable SHA and backup reference', async () => {
   await fixture();
   const result = deploymentRecord();
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
@@ -47,6 +55,8 @@ test('deployment evidence requires preflight, health, acceptance, immutable SHA 
   assert.equal(record.target, 'staging');
   assert.equal(record.commit, commit);
   assert.equal(record.version, version);
+  assert.equal(record.health.service, 'dealguard-api');
+  assert.equal(record.smoke.summary.failed, 0);
   assert.equal(record.acceptance.summary.failed, 0);
 });
 
@@ -57,6 +67,24 @@ test('deployment evidence fails closed without a backup reference', async () => 
   const record = JSON.parse(await readFile(`${root}/deployment-record.json`, 'utf8'));
   assert.equal(record.result, 'failed');
   assert.ok(record.failures.includes('backup reference is missing'));
+});
+
+test('deployment evidence fails closed when public smoke is missing or failed', async () => {
+  await fixture();
+  await writeFile(`${root}/production-smoke/evidence.json`, JSON.stringify({ expectedVersion: version, summary: { total: 7, passed: 6, failed: 1 } }));
+  const result = deploymentRecord();
+  assert.notEqual(result.status, 0);
+  const record = JSON.parse(await readFile(`${root}/deployment-record.json`, 'utf8'));
+  assert.ok(record.failures.includes('public deployment smoke did not pass'));
+});
+
+test('production deployment evidence requires full signed acceptance', async () => {
+  await fixture();
+  await writeFile(`${root}/acceptance/result.json`, JSON.stringify({ profile: 'read-only', summary: { total: 7, passed: 7, failed: 0, skipped: 0 } }));
+  const result = deploymentRecord({ RELEASE_TARGET: 'production' });
+  assert.notEqual(result.status, 0);
+  const record = JSON.parse(await readFile(`${root}/deployment-record.json`, 'utf8'));
+  assert.ok(record.failures.includes('production acceptance profile is not full'));
 });
 
 test('production promotion accepts only passing staging evidence for the exact release', async () => {
@@ -88,18 +116,28 @@ test('production promotion accepts only passing staging evidence for the exact r
   assert.match(reject.stderr, /staging commit does not match requested production commit/);
 });
 
-test('controlled deployment workflow retains enterprise release invariants', async () => {
+test('controlled deployment workflow retains production release invariants', async () => {
   const workflow = await readFile('.github/workflows/controlled-deploy.yml', 'utf8');
   assert.match(workflow, /ref: \$\{\{ inputs\.release_sha \}\}/);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /backup_reference is required/);
+  assert.match(workflow, /DEPLOY DEALGUARD TO PRODUCTION/);
+  assert.match(workflow, /production requires the full acceptance profile/);
+  assert.match(workflow, /test_deal_id is required for production certification/);
   assert.match(workflow, /inputs\.target == 'production'/);
   assert.match(workflow, /gh run download/);
   assert.match(workflow, /release:verify-staging/);
-  assert.match(workflow, /d1 migrations apply dealguard-production --remote/);
+  assert.match(workflow, /storage:backup:head/);
+  assert.match(workflow, /npm run db:migrate/);
+  assert.match(workflow, /npm run db:migrate:check/);
+  assert.match(workflow, /npm run db:validate/);
+  assert.doesNotMatch(workflow, /wrangler d1|D1_DATABASE_ID/i);
   assert.match(workflow, /wrangler deploy --config \.release\/wrangler\.toml/);
+  assert.match(workflow, /production:smoke/);
   assert.match(workflow, /acceptance:live/);
   assert.match(workflow, /release:record/);
+  assert.match(workflow, /worker\/src\/version\.ts/);
+  assert.match(workflow, /database\/migrations/);
   assert.match(workflow, /retention-days: 90/);
   assert.doesNotMatch(workflow, /wrangler secret (put|bulk)/);
 });

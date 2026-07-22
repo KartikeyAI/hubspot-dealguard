@@ -146,17 +146,19 @@ async function recordSumUsage(
 ) {
   return env.DB.batch([
     env.DB.prepare(
-      `INSERT OR IGNORE INTO billing_usage_counters (portal_id, metric, period_start, consumed_quantity, updated_at)
+      `INSERT INTO billing_usage_counters (portal_id, metric, period_start, consumed_quantity, updated_at)
        SELECT ?, ?, ?, COALESCE(SUM(quantity), 0), ? FROM billing_usage_events
-       WHERE portal_id = ? AND event_name = ? AND occurred_at >= ?`,
+       WHERE portal_id = ? AND event_name = ? AND occurred_at >= ?
+       ON CONFLICT(portal_id, metric, period_start) DO NOTHING`,
     ).bind(input.portalId, input.metric, input.start, input.occurredAt, input.portalId, input.metric, input.start),
     env.DB.prepare(
-      `INSERT OR IGNORE INTO billing_usage_events
+      `INSERT INTO billing_usage_events
        (id, portal_id, event_name, quantity, idempotency_key, status, metadata_json, occurred_at, created_at)
        SELECT ?, ?, ?, ?, ?, 'pending', ?, ?, ?
        WHERE (? = 1 OR ? IS NULL OR
          COALESCE((SELECT consumed_quantity FROM billing_usage_counters
-                   WHERE portal_id = ? AND metric = ? AND period_start = ?), 0) + ? <= ?)`,
+                   WHERE portal_id = ? AND metric = ? AND period_start = ?), 0) + ? <= ?)
+       ON CONFLICT(portal_id, idempotency_key) DO NOTHING`,
     ).bind(
       input.id, input.portalId, input.metric, input.quantity, input.key, input.metadataJson,
       input.occurredAt, input.occurredAt, input.overageAllowed, input.hardLimit,
@@ -189,22 +191,22 @@ async function recordGaugeUsage(
 ) {
   return env.DB.batch([
     env.DB.prepare(
-      `INSERT OR IGNORE INTO billing_usage_counters (portal_id, metric, period_start, consumed_quantity, updated_at)
+      `INSERT INTO billing_usage_counters (portal_id, metric, period_start, consumed_quantity, updated_at)
        SELECT ?, ?, ?, COALESCE(MAX(
-         CASE WHEN json_valid(metadata_json)
-           THEN COALESCE(CAST(json_extract(metadata_json, '$.provider_quantity') AS REAL), quantity)
-           ELSE quantity END
+         COALESCE(NULLIF(metadata_json::jsonb ->> 'provider_quantity', '')::DOUBLE PRECISION, quantity)
        ), 0), ? FROM billing_usage_events
-       WHERE portal_id = ? AND event_name = ? AND occurred_at >= ?`,
+       WHERE portal_id = ? AND event_name = ? AND occurred_at >= ?
+       ON CONFLICT(portal_id, metric, period_start) DO NOTHING`,
     ).bind(input.portalId, input.metric, input.start, input.occurredAt, input.portalId, input.metric, input.start),
     env.DB.prepare(
-      `INSERT OR IGNORE INTO billing_usage_events
+      `INSERT INTO billing_usage_events
        (id, portal_id, event_name, quantity, idempotency_key, status, metadata_json, occurred_at, created_at)
-       SELECT ?, ?, ?, MAX(0, ? - COALESCE((
+       SELECT ?, ?, ?, GREATEST(0, ? - COALESCE((
          SELECT consumed_quantity FROM billing_usage_counters
          WHERE portal_id = ? AND metric = ? AND period_start = ?
        ), 0)), ?, 'pending', ?, ?, ?
-       WHERE (? = 1 OR ? IS NULL OR ? <= ?)`,
+       WHERE (? = 1 OR ? IS NULL OR ? <= ?)
+       ON CONFLICT(portal_id, idempotency_key) DO NOTHING`,
     ).bind(
       input.id,
       input.portalId,
@@ -227,7 +229,7 @@ async function recordGaugeUsage(
       `INSERT INTO billing_usage_counters (portal_id, metric, period_start, consumed_quantity, updated_at)
        SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM billing_usage_events WHERE id = ?)
        ON CONFLICT(portal_id, metric, period_start) DO UPDATE SET
-         consumed_quantity = MAX(billing_usage_counters.consumed_quantity, excluded.consumed_quantity),
+         consumed_quantity = GREATEST(billing_usage_counters.consumed_quantity, excluded.consumed_quantity),
          updated_at = excluded.updated_at`,
     ).bind(input.portalId, input.metric, input.start, input.quantity, input.occurredAt, input.id),
   ]);

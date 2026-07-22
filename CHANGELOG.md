@@ -1,5 +1,40 @@
 # Changelog
 
+## 2.1.0 — 2026-07-18
+
+### Production platform
+
+- Migrated DealGuard persistence from Cloudflare D1 to Neon PostgreSQL through Cloudflare Hyperdrive.
+- Added immutable PostgreSQL migrations, advisory locking, checksum verification, and tenant-constraint validation.
+- Added Tigris object storage for evidence, exports, attachments, and encrypted backups.
+- Added Cloudflare scan, delivery, and maintenance queues with bounded retry and dead-letter behavior.
+- Added deterministic source snapshot, transactional import, row-count reconciliation, normalized content hashes, primary-key hashes, and self-referential policy-history import.
+
+### Release safety
+
+- Added stable `2.1.0` release identity shared by the package and Worker health endpoint.
+- Added public production smoke checks `DG-PROD-001` through `DG-PROD-007`.
+- Hardened Controlled deploy with exact production confirmation, mandatory full acceptance, required test deal, staging evidence, backup verification, and production environment approval.
+- Added smoke evidence to the deployment record and 90-day deployment artifact.
+- Added production deployment, migration, acceptance, rollback, and evidence runbooks.
+
+### HubSpot and commercial operations
+
+- Retained HubSpot developer platform `2026.03` support for App Home, deal card, settings, workflow actions, webhooks, and Marketplace OAuth distribution.
+- Retained Dodo Payments Growth and Enterprise monthly and annual products, hosted checkout, Customer Portal, signed lifecycle webhooks, usage meters, scheduled plan changes, and manual Enterprise contracts.
+
+### Verification
+
+- Added real PostgreSQL cutover fixtures, including self-referential policy-version history.
+- Added production smoke fixtures for correct and incorrect release identities.
+- Updated CI, Release readiness, and Controlled deploy for the Neon, Hyperdrive, Tigris, and Queue architecture.
+
+### Upgrade notes
+
+- Existing installations must reauthorize when required HubSpot scopes differ from the installed grant.
+- The first production deployment must follow `docs/MIGRATION_D1_TO_NEON.md` and `docs/PRODUCTION_DEPLOYMENT_RUNBOOK.md`.
+- Do not deploy the Worker against an empty or partially imported production database.
+
 ## 1.4.0-beta.1 — 2026-07-13
 
 ### Added

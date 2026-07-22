@@ -1,4 +1,5 @@
-PRAGMA foreign_keys = ON;
+CREATE SCHEMA IF NOT EXISTS dealguard;
+SET search_path TO dealguard, public;
 
 CREATE TABLE IF NOT EXISTS tenants (
   portal_id TEXT PRIMARY KEY,

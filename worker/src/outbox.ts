@@ -3,6 +3,7 @@ import { decryptSecret, encryptSecret, randomToken } from './crypto.js';
 import { sendEmail } from './email.js';
 import { AppError } from './errors.js';
 import { Repository } from './repository.js';
+import { wakeDeliveryQueue } from './queue-publisher.js';
 import type { Env, IssueSeverity, RequestIdentity } from './types.js';
 
 export type DestinationType = 'teams_workflow' | 'webhook' | 'email';
@@ -215,6 +216,7 @@ export async function enqueueOutboxEvent(
     `INSERT INTO outbox_events (id, portal_id, event_type, severity, pipeline_id, aggregate_type, aggregate_id, payload_json, status, available_at, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
   ).bind(id, input.portalId, input.eventType.slice(0, 128), input.severity ?? 'info', input.pipelineId ?? null, input.aggregateType.slice(0, 64), input.aggregateId.slice(0, 128), JSON.stringify(input.payload), now, now).run();
+  await Promise.all([wakeDeliveryQueue(env, 'enterprise_alerts'), wakeDeliveryQueue(env, 'outbox')]);
   return id;
 }
 
@@ -349,4 +351,5 @@ export async function replayOutboxEvent(env: Env, identity: RequestIdentity, eve
     .bind(new Date().toISOString(), eventId, identity.portalId).run();
   if (Number(result.meta?.changes ?? 0) === 0) throw new AppError(404, 'outbox_event_not_replayable', 'The delivery event does not exist or is not replayable.');
   await new Repository(env).audit(identity.portalId, identity.userId, identity.userEmail, 'outbox.replayed', { eventId });
+  await Promise.all([wakeDeliveryQueue(env, 'enterprise_alerts'), wakeDeliveryQueue(env, 'outbox')]);
 }

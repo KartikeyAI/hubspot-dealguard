@@ -141,4 +141,4 @@ export const REQUIRED_HUBSPOT_SCOPES = [
   'crm.schemas.deals.write',
 ] as const;
 
-export const APP_VERSION = '2.0.0-rc.1';
+export const APP_VERSION = '2.1.0-rc.1';

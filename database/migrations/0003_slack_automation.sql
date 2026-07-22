@@ -1,4 +1,4 @@
-PRAGMA foreign_keys = ON;
+SET search_path TO dealguard, public;
 
 CREATE TABLE IF NOT EXISTS integration_oauth_states (
   state_hash TEXT PRIMARY KEY,

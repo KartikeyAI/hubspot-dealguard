@@ -1,4 +1,4 @@
-PRAGMA foreign_keys = ON;
+SET search_path TO dealguard, public;
 
 ALTER TABLE tenants ADD COLUMN commercial_tier TEXT NOT NULL DEFAULT 'free';
 ALTER TABLE tenants ADD COLUMN trial_ends_at TEXT;

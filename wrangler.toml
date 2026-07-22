@@ -1,19 +1,114 @@
-name = "dealguard-api"
+name = "dealguard-api-local"
 main = "worker/src/index.ts"
 compatibility_date = "2026-07-01"
+compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
 [vars]
-APP_BASE_URL = "https://dealguard-api.rokad.co"
-HUBSPOT_APP_ID = "REPLACE_WITH_HUBSPOT_APP_ID"
+APP_BASE_URL = "http://localhost:8787"
+HUBSPOT_APP_ID = "REPLACE_WITH_LOCAL_HUBSPOT_APP_ID"
 EMAIL_FROM = "DealGuard <dealguard@rokad.co>"
 SUPPORT_EMAIL = "company@rokad.co"
+TIGRIS_ENDPOINT = "https://t3.storage.dev"
+TIGRIS_REGION = "auto"
+TIGRIS_BUCKET = "REPLACE_WITH_LOCAL_TIGRIS_BUCKET"
 
-[[d1_databases]]
-binding = "DB"
-database_name = "dealguard-production"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
-migrations_dir = "worker/migrations"
+[env.staging]
+name = "dealguard-api-staging"
+workers_dev = true
+routes = [{ pattern = "dealguard-api-staging.rokad.co", custom_domain = true }]
 
-[triggers]
+[env.staging.vars]
+APP_BASE_URL = "https://dealguard-api-staging.rokad.co"
+HUBSPOT_APP_ID = "REPLACE_WITH_STAGING_HUBSPOT_APP_ID"
+EMAIL_FROM = "DealGuard Staging <dealguard@rokad.co>"
+SUPPORT_EMAIL = "company@rokad.co"
+TIGRIS_ENDPOINT = "https://t3.storage.dev"
+TIGRIS_REGION = "auto"
+TIGRIS_BUCKET = "REPLACE_WITH_STAGING_TIGRIS_BUCKET"
+
+[[env.staging.hyperdrive]]
+binding = "HYPERDRIVE"
+id = "REPLACE_WITH_STAGING_HYPERDRIVE_ID"
+
+[[env.staging.queues.producers]]
+binding = "SCAN_QUEUE"
+queue = "dealguard-scans-staging"
+[[env.staging.queues.producers]]
+binding = "DELIVERY_QUEUE"
+queue = "dealguard-delivery-staging"
+[[env.staging.queues.producers]]
+binding = "MAINTENANCE_QUEUE"
+queue = "dealguard-maintenance-staging"
+
+[[env.staging.queues.consumers]]
+queue = "dealguard-scans-staging"
+max_batch_size = 5
+max_batch_timeout = 5
+max_retries = 8
+dead_letter_queue = "dealguard-dead-letter-staging"
+[[env.staging.queues.consumers]]
+queue = "dealguard-delivery-staging"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 8
+dead_letter_queue = "dealguard-dead-letter-staging"
+[[env.staging.queues.consumers]]
+queue = "dealguard-maintenance-staging"
+max_batch_size = 10
+max_batch_timeout = 10
+max_retries = 8
+dead_letter_queue = "dealguard-dead-letter-staging"
+
+[env.staging.triggers]
+crons = ["*/15 * * * *"]
+
+[env.production]
+name = "dealguard-api"
+workers_dev = false
+routes = [{ pattern = "dealguard-api.rokad.co", custom_domain = true }]
+
+[env.production.vars]
+APP_BASE_URL = "https://dealguard-api.rokad.co"
+HUBSPOT_APP_ID = "REPLACE_WITH_PRODUCTION_HUBSPOT_APP_ID"
+EMAIL_FROM = "DealGuard <dealguard@rokad.co>"
+SUPPORT_EMAIL = "company@rokad.co"
+TIGRIS_ENDPOINT = "https://t3.storage.dev"
+TIGRIS_REGION = "auto"
+TIGRIS_BUCKET = "REPLACE_WITH_PRODUCTION_TIGRIS_BUCKET"
+
+[[env.production.hyperdrive]]
+binding = "HYPERDRIVE"
+id = "REPLACE_WITH_PRODUCTION_HYPERDRIVE_ID"
+
+[[env.production.queues.producers]]
+binding = "SCAN_QUEUE"
+queue = "dealguard-scans-production"
+[[env.production.queues.producers]]
+binding = "DELIVERY_QUEUE"
+queue = "dealguard-delivery-production"
+[[env.production.queues.producers]]
+binding = "MAINTENANCE_QUEUE"
+queue = "dealguard-maintenance-production"
+
+[[env.production.queues.consumers]]
+queue = "dealguard-scans-production"
+max_batch_size = 5
+max_batch_timeout = 5
+max_retries = 8
+dead_letter_queue = "dealguard-dead-letter-production"
+[[env.production.queues.consumers]]
+queue = "dealguard-delivery-production"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 8
+dead_letter_queue = "dealguard-dead-letter-production"
+[[env.production.queues.consumers]]
+queue = "dealguard-maintenance-production"
+max_batch_size = 10
+max_batch_timeout = 10
+max_retries = 8
+dead_letter_queue = "dealguard-dead-letter-production"
+
+[env.production.triggers]
 crons = ["*/15 * * * *"]

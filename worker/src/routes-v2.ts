@@ -72,7 +72,7 @@ import { executeRemediationWorkflow } from './remediation-workflow.js';
 import { publicStatus } from './reliability.js';
 import { Repository } from './repository.js';
 import { assessDeal } from './scoring.js';
-import { scanPortal } from './scanner.js';
+import { enqueueScan } from './queue-publisher.js';
 import { completeSlackAuthorization, createSlackAuthorization, disconnectSlack, getSlackStatus, notifyHandoffConfirmed, sendSlackTest } from './slack.js';
 import { validateHubSpotRequest, validateHubSpotSignature } from './signature.js';
 import type { Env, PlanId } from './types.js';
@@ -110,7 +110,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   const repository = new Repository(env);
 
   if (url.pathname === '/' && request.method === 'GET') return html(landingPage(env));
-  if (url.pathname === '/health' && request.method === 'GET') return json({ status: 'ok', service: 'dealguard-api', version: '2.0.0-rc.1' });
+  if (url.pathname === '/health' && request.method === 'GET') return json({ status: 'ok', service: 'dealguard-api', version: '2.1.0-rc.1' });
   if (url.pathname === '/status' && request.method === 'GET') return json(await publicStatus(env));
   if (url.pathname === '/docs' && request.method === 'GET') return html(docsPage(env));
   if (url.pathname === '/privacy' && request.method === 'GET') return html(privacyPage(env));
@@ -147,7 +147,12 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
       throw new AppError(401, 'oauth_app_mismatch', 'OAuth token belongs to a different HubSpot app.');
     }
     await repository.upsertTenant(tokens, info);
-    ctx.waitUntil(scanPortal(env, String(info.hub_id), 'install'));
+    const installPortalId = String(info.hub_id);
+    const installScanId = await repository.startScan(installPortalId, 'install');
+    ctx.waitUntil(enqueueScan(env, { portalId: installPortalId, trigger: 'install', scanId: installScanId }).catch(async (error) => {
+      await repository.failScan(installScanId, installPortalId, error instanceof Error ? error.message : String(error)).catch(() => undefined);
+      console.error(JSON.stringify({ level: 'error', task: 'install_scan_enqueue', portalId: installPortalId, scanId: installScanId, error: error instanceof Error ? error.message : String(error) }));
+    }));
     return redirect(`${env.APP_BASE_URL}/install/success`);
   }
 
@@ -464,8 +469,9 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
       return json({ error: { code: 'scan_too_frequent', message: `Your plan allows a portal scan every ${PLAN_LIMITS[tenant.plan].minScanIntervalMinutes} minutes.`, retryAfterSeconds } }, 429, { 'retry-after': String(retryAfterSeconds) });
     }
     const scanId = await repository.startScan(identity.portalId, 'manual');
-    ctx.waitUntil(scanPortal(env, identity.portalId, 'manual', scanId).catch((error) => {
-      console.error(JSON.stringify({ level: 'error', task: 'manual_scan', portalId: identity.portalId, scanId, error: error instanceof Error ? error.message : String(error) }));
+    ctx.waitUntil(enqueueScan(env, { portalId: identity.portalId, trigger: 'manual', scanId }).catch(async (error) => {
+      await repository.failScan(scanId, identity.portalId, error instanceof Error ? error.message : String(error)).catch(() => undefined);
+      console.error(JSON.stringify({ level: 'error', task: 'manual_scan_enqueue', portalId: identity.portalId, scanId, error: error instanceof Error ? error.message : String(error) }));
     }));
     return json({ ok: true, scanId, status: 'running' }, 202);
   }

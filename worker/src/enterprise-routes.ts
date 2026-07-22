@@ -1,3 +1,4 @@
+import { attachmentDownloadUrl, completeAttachmentUpload, createAttachmentUpload } from './attachments.js';
 import {
   createCustomerPortalSession,
   getBillingStatus,
@@ -59,6 +60,7 @@ import {
 } from './remediation-enterprise.js';
 import {
   createDataExport,
+  dataExportStatus,
   createLegalHold,
   createSiemDestination,
   downloadDataExport,
@@ -359,6 +361,24 @@ export async function routeEnterpriseApi(
     return json({ ok: true });
   }
 
+  if (path === '/api/v1/enterprise/storage/uploads') {
+    if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    await requireEnterprise(env, identity);
+    return json(await createAttachmentUpload(env, identity, await readJson<unknown>(request)), 201);
+  }
+  const uploadComplete = idMatch(path, /^\/api\/v1\/enterprise\/storage\/uploads\/([^/]+)\/complete$/);
+  if (uploadComplete) {
+    if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    await requireEnterprise(env, identity);
+    return json(await completeAttachmentUpload(env, identity, uploadComplete[1]!));
+  }
+  const uploadDownload = idMatch(path, /^\/api\/v1\/enterprise\/storage\/uploads\/([^/]+)\/download$/);
+  if (uploadDownload) {
+    if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    await requireEnterprise(env, identity);
+    return json(await attachmentDownloadUrl(env, identity, uploadDownload[1]!));
+  }
+
   if (path === '/api/v1/enterprise/compliance') {
     await requireEnterprise(env, identity);
     if (request.method === 'GET') return json(await getComplianceSettings(env, identity));
@@ -404,6 +424,12 @@ export async function routeEnterpriseApi(
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     await requireEnterprise(env, identity);
     return json(await createDataExport(env, identity, await readJson<unknown>(request)), 201);
+  }
+  const exportStatus = idMatch(path, /^\/api\/v1\/enterprise\/compliance\/exports\/([^/]+)$/);
+  if (exportStatus) {
+    if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    await requireEnterprise(env, identity);
+    return json(await dataExportStatus(env, identity, exportStatus[1]!));
   }
   const exportDownload = idMatch(path, /^\/api\/v1\/enterprise\/compliance\/exports\/([^/]+)\/download$/);
   if (exportDownload) {

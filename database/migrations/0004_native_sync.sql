@@ -1,4 +1,4 @@
-PRAGMA foreign_keys = ON;
+SET search_path TO dealguard, public;
 
 CREATE TABLE IF NOT EXISTS native_sync_state (
   portal_id TEXT PRIMARY KEY,

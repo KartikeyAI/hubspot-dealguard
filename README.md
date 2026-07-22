@@ -2,7 +2,7 @@
 
 DealGuard is an enterprise HubSpot revenue-governance application that detects incomplete, stale, and risky deals; governs policy lifecycle; makes readiness signals native inside HubSpot; manages remediation SLAs; delivers operational events reliably; and provides auditable commercial, compliance, and reliability controls.
 
-## What ships in v2.0.0-rc.1
+## What ships in v2.1.0
 
 ### Revenue governance
 
@@ -37,7 +37,7 @@ DealGuard is an enterprise HubSpot revenue-governance application that detects i
 - Multiple Slack webhooks, Microsoft Teams Workflows, email channels, and HMAC-signed customer webhooks.
 - Routing by event type, severity, pipeline, team, owner, and region.
 - Direct owner/manager delivery, quiet hours, holidays, suppression, acknowledgement, and escalation policies.
-- Durable outbox, processing leases, retry, dead-letter state, replay, and delivery history.
+- Durable outbox, Cloudflare Queue processing, retry, dead-letter state, replay, and delivery history.
 
 ### Compliance and audit
 
@@ -46,12 +46,14 @@ DealGuard is an enterprise HubSpot revenue-governance application that detects i
 - Chain verification; CSV, JSON, and JSONL exports; SIEM streaming; legal holds; and customer-requested complete data exports.
 - Configurable retention controls that stop destructive retention while a legal hold is active.
 - Single-use export links that expire after ten minutes.
+- Tigris-backed evidence, exports, attachments, and encrypted backup artifacts.
 
 ### Reliability
 
 - Service SLOs, latency/success telemetry, synthetic checks, incident management, and a public status endpoint.
 - Resumable scans using processed-deal checkpoints stable across HubSpot result reordering.
 - Recoverable job leases, exponential backoff with jitter, service health, backup manifests, and restore-test evidence.
+- Neon PostgreSQL through Cloudflare Hyperdrive, with immutable migrations and tenant constraint validation.
 
 ### Commercial infrastructure
 
@@ -59,7 +61,7 @@ DealGuard is an enterprise HubSpot revenue-governance application that detects i
 - Test/live environments, monthly and annual products, hosted checkout, Customer Portal, signed/idempotent webhooks, ordered subscription state, trial/grace/cancellation state, and scheduled plan changes.
 - Manual Enterprise contracts with contract and purchase-order references.
 - Hybrid capped/metered usage, included allowances, atomic hard limits, optional overage, idempotent usage reporting, and retry.
-- Provider-neutral entitlement schema; legacy Stripe tables remain only for rollback/audit and are not authoritative.
+- Provider-neutral entitlement schema; legacy provider records remain only for rollback or audit and are not authoritative.
 
 ### Security boundaries
 
@@ -67,14 +69,16 @@ DealGuard is an enterprise HubSpot revenue-governance application that detects i
 - Least-privilege application scopes and product-level authorization.
 - DealGuard never autonomously changes deal stage, owner, amount, close date, or forecast category.
 - Deterministic policy remains the readiness system of record.
+- Direct Neon credentials are reserved for protected migration jobs; runtime access uses Hyperdrive.
 
 ## Repository layout
 
 ```text
 src/app/                 HubSpot app, App Home, card, settings, workflow actions, and webhooks
 worker/src/              Cloudflare Worker backend
-worker/migrations/       D1 schema migrations
-test/                    Automated contract and regression tests
+database/migrations/     Canonical PostgreSQL schema migrations
+scripts/                 Release, migration, backup, smoke, and acceptance tooling
+test/                    Automated contract, migration, smoke, and regression tests
 docs/                    Product, deployment, security, compliance, billing, and Marketplace documents
 ```
 
@@ -83,16 +87,23 @@ docs/                    Product, deployment, security, compliance, billing, and
 ```bash
 npm install
 npm run check
-rm -rf .wrangler/state
-npm run db:migrate:local
+npm run db:migrate
+npm run db:migrate:check
+npm run db:validate
 ```
 
 ## Deploy and test
 
-Follow [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md), [`docs/DODO_PAYMENTS_IMPLEMENTATION.md`](docs/DODO_PAYMENTS_IMPLEMENTATION.md), [`docs/ENTERPRISE_COMPLETE_ACCEPTANCE.md`](docs/ENTERPRISE_COMPLETE_ACCEPTANCE.md), and [`docs/PRODUCTION_ACCEPTANCE_RUNBOOK.md`](docs/PRODUCTION_ACCEPTANCE_RUNBOOK.md).
+Start with:
 
-Existing installations must reauthorize for deal-property and HubSpot task-write scopes. Production enablement requires a Cloudflare Worker/D1 deployment, Dodo Payments products and webhook, HubSpot project upload, email and integration credentials, backup/restore procedures, and the live acceptance suite.
+1. [`docs/PRODUCTION_DEPLOYMENT_RUNBOOK.md`](docs/PRODUCTION_DEPLOYMENT_RUNBOOK.md)
+2. [`docs/MIGRATION_D1_TO_NEON.md`](docs/MIGRATION_D1_TO_NEON.md)
+3. [`docs/PRODUCTION_ACCEPTANCE_RUNBOOK.md`](docs/PRODUCTION_ACCEPTANCE_RUNBOOK.md)
+4. [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+5. [`docs/DODO_PAYMENTS_IMPLEMENTATION.md`](docs/DODO_PAYMENTS_IMPLEMENTATION.md)
+
+Production enablement requires protected staging evidence, an encrypted and restore-tested backup, exact migration reconciliation, a production Worker deployment, HubSpot project upload and reauthorization, Dodo live configuration, production smoke evidence, and full signed acceptance.
 
 ## Current release
 
-`2.0.0-rc.1` — complete enterprise release candidate implementing policy, analytics, access, remediation, alerting, compliance, reliability, and Dodo Payments commercial operations. Live provider/platform acceptance and independent security review remain deployment gates rather than unfinished product functions.
+`2.1.0` — production release of DealGuard on Neon PostgreSQL, Cloudflare Hyperdrive, Tigris object storage, Cloudflare Queues, HubSpot developer platform `2026.03`, and Dodo Payments.

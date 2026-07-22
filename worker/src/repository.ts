@@ -3,7 +3,7 @@ import { DEFAULT_SETTINGS, PLAN_LIMITS } from './config.js';
 import { decryptSecret, encryptSecret } from './crypto.js';
 import { AppError } from './errors.js';
 import type {
-  D1Database,
+  Database,
   DealAssessment,
   DashboardSummary,
   Env,
@@ -393,7 +393,7 @@ export class Repository {
       portalId, action, actorUserId: userId, actorEmail: userEmail, source: 'repository',
       metadata: { ...(metadata && typeof metadata === 'object' ? metadata as Record<string, unknown> : { value: metadata }), legacyEventId, legacyCreatedAt: createdAt },
     });
-    await this.env.DB.prepare(`INSERT OR IGNORE INTO legacy_audit_promotions (legacy_event_id, immutable_event_id, promoted_at) VALUES (?, ?, ?)`)
+    await this.env.DB.prepare(`INSERT INTO legacy_audit_promotions (legacy_event_id, immutable_event_id, promoted_at) VALUES (?, ?, ?) ON CONFLICT(legacy_event_id) DO NOTHING`)
       .bind(legacyEventId, immutableEventId, new Date().toISOString()).run();
   }
 

@@ -2,8 +2,8 @@
   "uid": "dealguard_deal_readiness_card",
   "type": "card",
   "config": {
-    "name": "DealGuard Deal Intelligence",
-    "description": "Explainable readiness, risk contributors, stage requirements, next best actions, and deal changes.",
+    "name": "DealGuard — Readiness",
+    "description": "Deal readiness score, status, top risks, review state, and closed-won handoff controls.",
     "location": "crm.record.tab",
     "entrypoint": "/app/cards/DealGuardCard.tsx",
     "objectTypes": ["DEALS"]

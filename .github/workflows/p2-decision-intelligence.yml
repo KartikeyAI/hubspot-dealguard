@@ -1,0 +1,60 @@
+name: P2 Decision Intelligence
+
+on:
+  pull_request:
+    paths:
+      - 'worker/src/enterprise-analytics-v2.ts'
+      - 'src/app/pages/EnterpriseHomeV4.tsx'
+      - 'test/p2-intelligence-contract.test.mjs'
+      - '.github/workflows/p2-decision-intelligence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  decision-intelligence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: dealguard
+          POSTGRES_PASSWORD: dealguard-test-password
+          POSTGRES_DB: dealguard_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dealguard -d dealguard_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
+      DEALGUARD_CUTOVER_TEST_DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: |
+          npm install --ignore-scripts --silent
+          npm install --ignore-scripts --silent --prefix src/app/pages
+      - name: Typecheck analytics worker
+        run: npm run typecheck
+      - name: Typecheck enterprise Home
+        run: npm run typecheck --prefix src/app/pages
+      - name: Apply canonical PostgreSQL migrations
+        run: npm run db:migrate
+      - name: Validate PostgreSQL schema
+        run: |
+          npm run db:migrate:check
+          npm run db:validate
+      - name: Run P2 contract tests
+        run: node --test test/p2-intelligence-contract.test.mjs
+      - name: Run full automated test suite
+        run: npm test

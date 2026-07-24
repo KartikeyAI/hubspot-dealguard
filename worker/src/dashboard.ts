@@ -1,4 +1,5 @@
 import { Repository } from './repository.js';
+import { containsInternalImplementationDetail } from './errors.js';
 import type { DashboardSummary, Env, ScanStatus } from './types.js';
 
 export async function dashboardForPortal(env: Env, portalId: string): Promise<DashboardSummary> {
@@ -49,6 +50,10 @@ export async function dashboardForPortal(env: Env, portalId: string): Promise<Da
     `SELECT id, trigger_type, status, started_at, completed_at, scanned_count, error_message
      FROM scan_runs WHERE portal_id = ? ORDER BY started_at DESC LIMIT 1`
   ).bind(portalId).first<Record<string, unknown>>();
+  const rawScanError = latestScanRow?.error_message ? String(latestScanRow.error_message) : null;
+  const publicScanError = rawScanError && containsInternalImplementationDetail(rawScanError)
+    ? 'The scan could not be completed. Please try again.'
+    : rawScanError;
 
   return {
     plan: tenant.plan,
@@ -81,7 +86,7 @@ export async function dashboardForPortal(env: Env, portalId: string): Promise<Da
       startedAt: String(latestScanRow.started_at),
       completedAt: latestScanRow.completed_at ? String(latestScanRow.completed_at) : null,
       scannedCount: Number(latestScanRow.scanned_count ?? 0),
-      errorMessage: latestScanRow.error_message ? String(latestScanRow.error_message) : null,
+      errorMessage: publicScanError,
     } : null,
   };
 }

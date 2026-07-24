@@ -1,5 +1,5 @@
 import { APP_VERSION } from './config.js';
-import { AppError, asAppError } from './errors.js';
+import { AppError, asAppError, publicErrorDetails, publicErrorMessage } from './errors.js';
 
 const SECURITY_HEADERS: Record<string, string> = {
   'content-security-policy': "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' https://app.hubspot.com https://app-eu1.hubspot.com",
@@ -59,13 +59,14 @@ export async function readJson<T>(request: Request, maxBytes = 64_000): Promise<
 
 export function errorResponse(error: unknown, requestId: string): Response {
   const appError = asAppError(error);
+  const details = publicErrorDetails(appError);
   return json(
     {
       error: {
-        code: appError.code,
-        message: appError.status >= 500 ? 'DealGuard could not complete the request.' : appError.message,
+        code: appError.status >= 500 ? 'internal_error' : appError.code,
+        message: publicErrorMessage(appError),
         requestId,
-        ...(appError.status < 500 && appError.details !== undefined ? { details: appError.details } : {}),
+        ...(details !== undefined ? { details } : {}),
       },
     },
     appError.status,

@@ -1,7 +1,0 @@
-{
-  "uid": "dealguard_plan_overview_settings",
-  "type": "settings",
-  "config": {
-    "entrypoint": "/app/settings/DealGuardPlanOverview.tsx"
-  }
-}

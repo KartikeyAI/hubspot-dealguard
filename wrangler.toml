@@ -6,17 +6,16 @@ workers_dev = true
 
 [vars]
 APP_BASE_URL = "http://localhost:8787"
-HUBSPOT_APP_ID = "REPLACE_WITH_LOCAL_HUBSPOT_APP_ID"
+HUBSPOT_APP_ID = "46621299"
 EMAIL_FROM = "DealGuard <dealguard@rokad.co>"
 SUPPORT_EMAIL = "company@rokad.co"
 TIGRIS_ENDPOINT = "https://t3.storage.dev"
 TIGRIS_REGION = "auto"
-TIGRIS_BUCKET = "REPLACE_WITH_LOCAL_TIGRIS_BUCKET"
+TIGRIS_BUCKET = "hubspot-dealguard"
 
 [env.staging]
 name = "dealguard-api-staging"
 workers_dev = true
-routes = [{ pattern = "dealguard-api-staging.rokad.co", custom_domain = true }]
 
 [env.staging.vars]
 APP_BASE_URL = "https://dealguard-api-staging.rokad.co"
@@ -25,11 +24,11 @@ EMAIL_FROM = "DealGuard Staging <dealguard@rokad.co>"
 SUPPORT_EMAIL = "company@rokad.co"
 TIGRIS_ENDPOINT = "https://t3.storage.dev"
 TIGRIS_REGION = "auto"
-TIGRIS_BUCKET = "REPLACE_WITH_STAGING_TIGRIS_BUCKET"
+TIGRIS_BUCKET = "hubspot-dealguard"
 
 [[env.staging.hyperdrive]]
 binding = "HYPERDRIVE"
-id = "REPLACE_WITH_STAGING_HYPERDRIVE_ID"
+id = "f2222cfdafe14554b47c856471e2922a"
 
 [[env.staging.queues.producers]]
 binding = "SCAN_QUEUE"
@@ -66,20 +65,34 @@ crons = ["*/15 * * * *"]
 [env.production]
 name = "dealguard-api"
 workers_dev = false
-routes = [{ pattern = "dealguard-api.rokad.co", custom_domain = true }]
+
+[observability]
+enabled = false
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
 
 [env.production.vars]
 APP_BASE_URL = "https://dealguard-api.rokad.co"
-HUBSPOT_APP_ID = "REPLACE_WITH_PRODUCTION_HUBSPOT_APP_ID"
+HUBSPOT_APP_ID = "46621299"
 EMAIL_FROM = "DealGuard <dealguard@rokad.co>"
 SUPPORT_EMAIL = "company@rokad.co"
 TIGRIS_ENDPOINT = "https://t3.storage.dev"
 TIGRIS_REGION = "auto"
-TIGRIS_BUCKET = "REPLACE_WITH_PRODUCTION_TIGRIS_BUCKET"
+TIGRIS_BUCKET = "hubspot-dealguard"
 
 [[env.production.hyperdrive]]
 binding = "HYPERDRIVE"
-id = "REPLACE_WITH_PRODUCTION_HYPERDRIVE_ID"
+id = "f2222cfdafe14554b47c856471e2922a"
 
 [[env.production.queues.producers]]
 binding = "SCAN_QUEUE"

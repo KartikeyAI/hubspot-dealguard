@@ -92,7 +92,8 @@ export interface Env {
 }
 
 export interface WorkerBindings extends Omit<Env, 'DB'> {
-  HYPERDRIVE: HyperdriveBinding;
+  HYPERDRIVE?: HyperdriveBinding;
+  NEON_DATABASE_URL?: string;
 }
 
 export type DealGuardQueueMessage =

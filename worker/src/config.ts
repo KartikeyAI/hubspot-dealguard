@@ -136,7 +136,6 @@ export const REQUIRED_HUBSPOT_SCOPES = [
   'crm.objects.deals.write',
   'crm.objects.contacts.read',
   'crm.objects.companies.read',
-  'crm.objects.tasks.write',
   'crm.schemas.deals.read',
   'crm.schemas.deals.write',
 ] as const;

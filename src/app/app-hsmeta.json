@@ -17,7 +17,6 @@
         "crm.objects.deals.write",
         "crm.objects.contacts.read",
         "crm.objects.companies.read",
-        "crm.objects.tasks.write",
         "crm.schemas.deals.read",
         "crm.schemas.deals.write"
       ],
@@ -25,14 +24,16 @@
       "conditionallyRequiredScopes": []
     },
     "permittedUrls": {
-      "fetch": ["https://dealguard-api.rokad.co/"],
+      "fetch": [
+        "https://dealguard-api.rokad.co/"
+      ],
       "iframe": [],
       "img": []
     },
     "support": {
       "supportEmail": "company@rokad.co",
-      "documentationUrl": "https://dealguard-api.rokad.co/docs",
-      "supportUrl": "https://dealguard-api.rokad.co/support"
+      "documentationUrl": "https://rokad.co/docs/dealguard",
+      "supportUrl": "https://rokad.co/support?product=hubspot-dealguard"
     }
   }
 }

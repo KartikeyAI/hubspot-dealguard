@@ -21,8 +21,8 @@
     "hubspot:dev": "hs project dev",
     "hubspot:upload": "hs project upload",
     "typecheck:ui": "npm run typecheck --prefix src/app/cards && npm run typecheck --prefix src/app/settings && npm run typecheck --prefix src/app/pages",
-    "db:migrate": "node scripts/postgres-migrate.mjs",
-    "db:migrate:check": "node scripts/postgres-migrate.mjs --check",
+    "db:migrate": "node --env-file=.env scripts/postgres-migrate.mjs",
+    "db:migrate:check": "node --env-file=.env scripts/postgres-migrate.mjs --check",
     "db:migrate:dry-run": "node scripts/postgres-migrate.mjs --dry-run",
     "db:validate": "node scripts/postgres-validate.mjs",
     "migration:d1:snapshot": "node scripts/d1-to-neon.mjs snapshot",
@@ -33,6 +33,7 @@
     "storage:backup:upload": "node scripts/tigris-backup.mjs upload",
     "storage:backup:head": "node scripts/tigris-backup.mjs head",
     "storage:backup:download": "node scripts/tigris-backup.mjs download",
+    "storage:smoke": "node scripts/object-storage-smoke.mjs",
     "hubspot:render-target": "node scripts/render-hubspot-target.mjs"
   },
   "engines": {
@@ -40,13 +41,12 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260713.1",
+    "@types/pg": "8.15.5",
     "typescript": "5.9.3",
-    "wrangler": "4.110.0",
-    "@types/pg": "8.15.5"
+    "wrangler": "4.110.0"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "3.894.0",
-    "@aws-sdk/s3-request-presigner": "3.894.0",
+    "aws4fetch": "^1.0.20",
     "pg": "8.16.3"
   }
 }

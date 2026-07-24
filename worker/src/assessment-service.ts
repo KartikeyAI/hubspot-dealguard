@@ -1,5 +1,6 @@
 import { saveAssessmentContext } from './assessment-context.js';
 import { recordUsageAtomic } from './billing-usage.js';
+import { buildDealIntelligence, previousDealHistory } from './deal-intelligence.js';
 import { recordAssessmentHistory } from './enterprise-analytics-v2.js';
 import { HubSpotClient } from './hubspot.js';
 import { syncAssessmentIfEnabled } from './native-sync.js';
@@ -35,6 +36,16 @@ export async function assessDealForPortal(
     policyId: policy.policyId,
   });
   const stored = await repository.getAssessment(portalId, dealId);
+  const history = await previousDealHistory(env, portalId, dealId, assessment.assessedAt);
+  const intelligence = buildDealIntelligence(deal, policy.rules, assessment, history);
+  if (history?.stageAgeDays !== null && history?.stageAgeDays !== undefined) {
+    const currentHistory = await env.DB.prepare(
+      `SELECT stage_age_days FROM assessment_history WHERE portal_id = ? AND deal_id = ? AND assessed_at = ? LIMIT 1`,
+    ).bind(portalId, dealId, assessment.assessedAt).first<{ stage_age_days: number | null }>();
+    if (currentHistory?.stage_age_days !== null && currentHistory?.stage_age_days !== undefined) {
+      intelligence.change.stageAgeDeltaDays = Number(currentHistory.stage_age_days) - history.stageAgeDays;
+    }
+  }
   try {
     await notifyAssessmentTransition(env, portalId, previous, assessment, client.settings, client.plan, trigger, forceSlack);
   } catch (error) {
@@ -64,5 +75,5 @@ export async function assessDealForPortal(
   }
   await recordOperationalMetric(env, { portalId, service: `assessment.${trigger}`, metric: 'success', value: 1 });
   await recordOperationalMetric(env, { portalId, service: `assessment.${trigger}`, metric: 'latency_ms', value: Date.now() - startedAt });
-  return stored;
+  return stored ? { ...stored, intelligence, policy: { id: policy.policyId, segmentIds: policy.segmentIds } } : null;
 }

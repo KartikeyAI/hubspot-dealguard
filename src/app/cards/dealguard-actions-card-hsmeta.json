@@ -1,0 +1,11 @@
+{
+  "uid": "dealguard_deal_actions_card",
+  "type": "card",
+  "config": {
+    "name": "DealGuard — Actions",
+    "description": "Prioritised next best actions ranked by readiness impact.",
+    "location": "crm.record.tab",
+    "entrypoint": "/app/cards/DealGuardActionsCard.tsx",
+    "objectTypes": ["DEALS"]
+  }
+}

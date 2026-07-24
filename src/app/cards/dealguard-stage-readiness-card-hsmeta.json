@@ -1,0 +1,11 @@
+{
+  "uid": "dealguard_stage_readiness_card",
+  "type": "card",
+  "config": {
+    "name": "DealGuard — Stage Readiness",
+    "description": "Current-stage requirements, completion, and progression blockers.",
+    "location": "crm.record.tab",
+    "entrypoint": "/app/cards/DealGuardStageReadinessCard.tsx",
+    "objectTypes": ["DEALS"]
+  }
+}

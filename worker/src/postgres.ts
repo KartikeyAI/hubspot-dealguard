@@ -20,6 +20,16 @@ const APP_RELATIONS = new Set([
   'billing_usage','billing_usage_counters','billing_schedules','data_retention_policies','retention_runs',
   'secure_downloads','change_approvals','change_approval_executions','policy_dimension_mappings','async_jobs',
   'dead_letter_jobs','object_attachments','outbox_events','siem_destinations','synthetic_checks',
+  'alert_instances','alert_suppressions','analytics_saved_views','assessment_history','audit_events_v2',
+  'backup_manifests','billing_allowances','billing_contracts','billing_usage_events','business_calendars',
+  'change_approval_requests','compliance_settings','data_export_jobs','enterprise_role_assignments',
+  'escalation_policies','inbound_events','incidents','integration_oauth_states','job_leases',
+  'legacy_audit_promotions','legal_holds','notification_channels','notification_destinations',
+  'notification_events','notification_routes','object_uploads','operational_metrics','outbox_deliveries',
+  'policy_diffs','policy_exception_comments','policy_exception_evidence','policy_import_exports',
+  'policy_segments','policy_templates','remediation_bulk_jobs','remediation_comments','remediation_evidence',
+  'restore_tests','scan_checkpoints','secure_download_tokens','service_health','service_slos','slack_connections',
+  'subscriptions','subscriptions_v2',
 ]);
 
 function placeholders(sql: string): string {

@@ -3,7 +3,7 @@
   "version": "2.1.0",
   "private": true,
   "type": "module",
-  "description": "DealGuard by Rokad — enterprise HubSpot revenue governance on Neon PostgreSQL, Hyperdrive, Tigris object storage, Cloudflare Queues, and Dodo Payments.",
+  "description": "DealGuard by Rokad — enterprise HubSpot revenue governance on Neon PostgreSQL, Tigris object storage, Cloudflare Queues, and Dodo Payments.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -36,16 +36,14 @@
     "storage:smoke": "node scripts/object-storage-smoke.mjs",
     "hubspot:render-target": "node scripts/render-hubspot-target.mjs"
   },
-  "engines": {
-    "node": ">=20"
-  },
+  "engines": { "node": ">=20" },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260713.1",
-    "@types/pg": "8.15.5",
     "typescript": "5.9.3",
     "wrangler": "4.110.0"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
     "aws4fetch": "^1.0.20",
     "pg": "8.16.3"
   }

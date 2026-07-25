@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Alert, Button, Card, Divider, Flex, Heading, Link, LoadingSpinner, StatusTag, Text, hubspot } from '@hubspot/ui-extensions';
-import { PLAN_COMPARISON, productPlanLabel, safeProductError, subscriptionLabel } from '../product-ui';
+import { PLAN_COMPARISON, productPlanLabel, safeProductError, subscriptionLabel } from './product-ui';
 
 const API_BASE = 'https://dealguard-api.rokad.co/api/v1';
 type Billing = { tier: string; status: string; currentPeriodEnd: string | null; checkoutConfigured: boolean; portalConfigured: boolean };

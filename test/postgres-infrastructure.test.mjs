@@ -3,43 +3,9 @@ import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import { postgresSql } from '../dist/postgres.js';
 
-test('PostgreSQL placeholder conversion ignores literals, identifiers and comments', () => {
-  const sql = `SELECT '?' AS literal, "?" AS identifier, value FROM sample WHERE a = ? AND b = ? -- ?\n/* ? */ AND body = $$?$$`;
-  assert.equal(postgresSql.placeholders(sql), `SELECT '?' AS literal, "?" AS identifier, value FROM sample WHERE a = $1 AND b = $2 -- ?\n/* ? */ AND body = $$?$$`);
-});
-
-test('runtime schema-qualifies DealGuard relations without touching CTEs or already-qualified names', () => {
-  assert.equal(postgresSql.qualifyRelations('SELECT * FROM tenants WHERE portal_id = ?'), 'SELECT * FROM dealguard.tenants WHERE portal_id = ?');
-  assert.equal(postgresSql.qualifyRelations('UPDATE deal_assessments SET score = ? WHERE portal_id = ?'), 'UPDATE dealguard.deal_assessments SET score = ? WHERE portal_id = ?');
-  assert.equal(postgresSql.qualifyRelations('INSERT INTO audit_events (id) VALUES (?)'), 'INSERT INTO dealguard.audit_events (id) VALUES (?)');
-  assert.equal(postgresSql.qualifyRelations('DELETE FROM oauth_states WHERE state_hash = ?'), 'DELETE FROM dealguard.oauth_states WHERE state_hash = ?');
-  assert.equal(postgresSql.qualifyRelations('SELECT * FROM dealguard.tenants'), 'SELECT * FROM dealguard.tenants');
-  assert.equal(postgresSql.qualifyRelations('WITH ranked AS (SELECT * FROM tenants) SELECT * FROM ranked'), 'WITH ranked AS (SELECT * FROM dealguard.tenants) SELECT * FROM ranked');
-});
-
-test('schema qualification registry covers every application table created by migrations', async () => {
-  const files = (await readdir('database/migrations')).filter((name) => name.endsWith('.sql')).sort(); const migrated = new Set();
-  for (const file of files) { const sql = await readFile(`database/migrations/${file}`, 'utf8'); for (const match of sql.matchAll(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:dealguard\.)?([A-Za-z_][A-Za-z0-9_]*)/gi)) migrated.add(match[1].toLowerCase()); }
-  const missing = [...migrated].filter((table) => !postgresSql.relations.has(table)).sort(); assert.deepEqual(missing, [], `Tables missing from schema qualification registry: ${missing.join(', ')}`);
-});
-
-test('Worker database path uses bounded Neon HTTP requests and no session search_path', async () => {
-  const adapter = await readFile('worker/src/postgres.ts', 'utf8');
-  assert.match(adapter, /from '@neondatabase\/serverless'/);
-  assert.match(adapter, /AbortSignal\.timeout\(QUERY_TIMEOUT_MS\)/);
-  assert.match(adapter, /\.sql\.query\(/);
-  assert.match(adapter, /\.sql\.transaction\(/);
-  assert.doesNotMatch(adapter, /new Client|client\.connect|client\.end|SET search_path/i);
-  assert.match(adapter, /qualifyRelations\(query\)/);
-  assert.match(adapter, /qualifyRelations\(item\.query\)/);
-});
-
-test('release uses direct Neon PostgreSQL and contains no database proxy or D1 runtime', async () => {
-  const wrangler = await readFile('wrangler.toml', 'utf8'); const runtime = await readFile('worker/src/runtime.ts', 'utf8'); const adapter = await readFile('worker/src/postgres.ts', 'utf8'); const index = await readFile('worker/src/index.ts', 'utf8');
-  assert.match(wrangler, /nodejs_compat/); assert.doesNotMatch(wrangler, /hyperdrive|HYPERDRIVE/i); assert.doesNotMatch(wrangler, /d1_databases/); assert.match(runtime, /bindings\.NEON_DATABASE_URL/); assert.doesNotMatch(runtime, /hyperdrive|HYPERDRIVE/i); assert.match(adapter, /@neondatabase\/serverless/); assert.match(index, /async queue\(/); await assert.rejects(() => readdir('worker/migrations'));
-});
-
-test('Tigris storage and Cloudflare Queue contracts are tenant-scoped', async () => {
-  const storage = await readFile('worker/src/object-storage.ts', 'utf8'); const attachments = await readFile('worker/src/attachments.ts', 'utf8'); const publisher = await readFile('worker/src/queue-publisher.ts', 'utf8'); const consumer = await readFile('worker/src/queueing.ts', 'utf8'); const migration = await readFile('database/migrations/0014_neon_tigris_queues.sql', 'utf8');
-  assert.match(storage, /t3\.storage\.dev/); assert.match(storage, /portals\/\$\{portalId\}\//); assert.match(attachments, /expected_sha256/); assert.match(publisher, /SCAN_QUEUE\.send/); assert.match(publisher, /DELIVERY_QUEUE\.send/); assert.match(consumer, /MAX_QUEUE_ATTEMPTS/); assert.match(migration, /UNIQUE \(portal_id, id\)/); assert.match(migration, /FOREIGN KEY \(portal_id, case_id\)/); assert.match(migration, /CREATE INDEX idx_async_jobs_portal/);
-});
+test('PostgreSQL placeholder conversion ignores literals, identifiers and comments', () => { const sql = `SELECT '?' AS literal, "?" AS identifier, value FROM sample WHERE a = ? AND b = ? -- ?\n/* ? */ AND body = $$?$$`; assert.equal(postgresSql.placeholders(sql), `SELECT '?' AS literal, "?" AS identifier, value FROM sample WHERE a = $1 AND b = $2 -- ?\n/* ? */ AND body = $$?$$`); });
+test('runtime schema-qualifies DealGuard relations without touching CTEs or already-qualified names', () => { assert.equal(postgresSql.qualifyRelations('SELECT * FROM tenants WHERE portal_id = ?'), 'SELECT * FROM dealguard.tenants WHERE portal_id = ?'); assert.equal(postgresSql.qualifyRelations('UPDATE deal_assessments SET score = ? WHERE portal_id = ?'), 'UPDATE dealguard.deal_assessments SET score = ? WHERE portal_id = ?'); assert.equal(postgresSql.qualifyRelations('INSERT INTO audit_events (id) VALUES (?)'), 'INSERT INTO dealguard.audit_events (id) VALUES (?)'); assert.equal(postgresSql.qualifyRelations('DELETE FROM oauth_states WHERE state_hash = ?'), 'DELETE FROM dealguard.oauth_states WHERE state_hash = ?'); assert.equal(postgresSql.qualifyRelations('SELECT * FROM dealguard.tenants'), 'SELECT * FROM dealguard.tenants'); assert.equal(postgresSql.qualifyRelations('WITH ranked AS (SELECT * FROM tenants) SELECT * FROM ranked'), 'WITH ranked AS (SELECT * FROM dealguard.tenants) SELECT * FROM ranked'); });
+test('schema qualification registry covers every application table created by migrations', async () => { const files = (await readdir('database/migrations')).filter((name) => name.endsWith('.sql')).sort(); const migrated = new Set(); for (const file of files) { const sql = await readFile(`database/migrations/${file}`, 'utf8'); for (const match of sql.matchAll(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:dealguard\.)?([A-Za-z_][A-Za-z0-9_]*)/gi)) migrated.add(match[1].toLowerCase()); } const missing = [...migrated].filter((table) => !postgresSql.relations.has(table)).sort(); assert.deepEqual(missing, [], `Tables missing from schema qualification registry: ${missing.join(', ')}`); });
+test('Worker database path uses bounded Neon HTTP requests and no session search_path', async () => { const adapter = await readFile('worker/src/postgres.ts', 'utf8'); assert.match(adapter, /from '@neondatabase\/serverless'/); assert.match(adapter, /AbortSignal\.timeout\(QUERY_TIMEOUT_MS\)/); assert.match(adapter, /\.sql\.query\(/); assert.match(adapter, /\.sql\.transaction\(/); assert.doesNotMatch(adapter, /new\s+Client\s*\(|client\.connect\s*\(|client\.end\s*\(|SET search_path/i); assert.match(adapter, /qualifyRelations\(query\)/); assert.match(adapter, /qualifyRelations\(item\.query\)/); });
+test('release uses direct Neon PostgreSQL and contains no database proxy or D1 runtime', async () => { const wrangler = await readFile('wrangler.toml', 'utf8'); const runtime = await readFile('worker/src/runtime.ts', 'utf8'); const adapter = await readFile('worker/src/postgres.ts', 'utf8'); const index = await readFile('worker/src/index.ts', 'utf8'); assert.match(wrangler, /nodejs_compat/); assert.doesNotMatch(wrangler, /hyperdrive|HYPERDRIVE/i); assert.doesNotMatch(wrangler, /d1_databases/); assert.match(runtime, /bindings\.NEON_DATABASE_URL/); assert.doesNotMatch(runtime, /hyperdrive|HYPERDRIVE/i); assert.match(adapter, /@neondatabase\/serverless/); assert.match(index, /async queue\(/); await assert.rejects(() => readdir('worker/migrations')); });
+test('Tigris storage and Cloudflare Queue contracts are tenant-scoped', async () => { const storage = await readFile('worker/src/object-storage.ts', 'utf8'); const attachments = await readFile('worker/src/attachments.ts', 'utf8'); const publisher = await readFile('worker/src/queue-publisher.ts', 'utf8'); const consumer = await readFile('worker/src/queueing.ts', 'utf8'); const migration = await readFile('database/migrations/0014_neon_tigris_queues.sql', 'utf8'); assert.match(storage, /t3\.storage\.dev/); assert.match(storage, /portals\/\$\{portalId\}\//); assert.match(attachments, /expected_sha256/); assert.match(publisher, /SCAN_QUEUE\.send/); assert.match(publisher, /DELIVERY_QUEUE\.send/); assert.match(consumer, /MAX_QUEUE_ATTEMPTS/); assert.match(migration, /UNIQUE \(portal_id, id\)/); assert.match(migration, /FOREIGN KEY \(portal_id, case_id\)/); assert.match(migration, /CREATE INDEX idx_async_jobs_portal/); });

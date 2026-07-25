@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Button, Card, Divider, Flex, Heading, Link, LoadingSpinner, StatusTag, Text, hubspot } from '@hubspot/ui-extensions';
-import { PLAN_COMPARISON, productPlanLabel, safeProductError, subscriptionLabel } from '../product-ui';
+import { PLAN_COMPARISON, productPlanLabel, safeProductError, subscriptionLabel } from './product-ui';
 const API_BASE = 'https://dealguard-api.rokad.co/api/v1'; type Json = Record<string, any>;
 type Billing = { tier:string; status:string; currentPeriodEnd:string|null; checkoutConfigured:boolean; portalConfigured:boolean; entitled:boolean }; type Access={role:string;entitled:boolean}; type Dashboard={totalDeals?:number;readyDeals?:number;atRiskDeals?:number;criticalDeals?:number;averageScore?:number;incompleteHandoffs?:number;lastScanAt?:string|null;nextScanAt?:string|null;topIssues?:Array<{code:string;label:string;count:number}>};
 type Analytics={redacted?:boolean;current?:Json;trend?:Array<Json>;benchmarking?:{workspaceAverageScore:number;owners:Array<Json>;teams:Array<Json>};predictiveRisk?:{methodology:string;deals:Array<Json>;highRiskDeals:number};outcomeCorrelation?:{sampleSize:number;won:number;lost:number;winRate:number;wonAverageScore:number;lostAverageScore:number;scoreDelta:number;wonAverageIssues:number;lostAverageIssues:number;wonAverageStageAgeDays:number;lostAverageStageAgeDays:number;confidence:string}};

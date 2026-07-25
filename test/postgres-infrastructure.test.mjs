@@ -8,16 +8,16 @@ test('PostgreSQL placeholder conversion ignores literals, identifiers and commen
   assert.equal(postgresSql.placeholders(sql), `SELECT '?' AS literal, "?" AS identifier, value FROM sample WHERE a = $1 AND b = $2 -- ?\n/* ? */ AND body = $$?$$`);
 });
 
-test('release uses Neon PostgreSQL through Hyperdrive and contains no D1 runtime', async () => {
+test('release uses direct Neon PostgreSQL and contains no database proxy or D1 runtime', async () => {
   const wrangler = await readFile('wrangler.toml', 'utf8');
   const runtime = await readFile('worker/src/runtime.ts', 'utf8');
   const adapter = await readFile('worker/src/postgres.ts', 'utf8');
   const index = await readFile('worker/src/index.ts', 'utf8');
   assert.match(wrangler, /nodejs_compat/);
-  assert.match(wrangler, /\[\[env\.staging\.hyperdrive\]\]/);
-  assert.match(wrangler, /\[\[env\.production\.hyperdrive\]\]/);
+  assert.doesNotMatch(wrangler, /hyperdrive|HYPERDRIVE/i);
   assert.doesNotMatch(wrangler, /d1_databases/);
-  assert.match(runtime, /HYPERDRIVE\.connectionString/);
+  assert.match(runtime, /bindings\.NEON_DATABASE_URL/);
+  assert.doesNotMatch(runtime, /hyperdrive|HYPERDRIVE/i);
   assert.match(adapter, /from 'pg'/);
   assert.match(index, /async queue\(/);
   await assert.rejects(() => readdir('worker/migrations'));

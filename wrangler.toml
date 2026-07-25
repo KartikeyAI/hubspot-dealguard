@@ -26,10 +26,6 @@ TIGRIS_ENDPOINT = "https://t3.storage.dev"
 TIGRIS_REGION = "auto"
 TIGRIS_BUCKET = "hubspot-dealguard"
 
-[[env.staging.hyperdrive]]
-binding = "HYPERDRIVE"
-id = "f2222cfdafe14554b47c856471e2922a"
-
 [[env.staging.queues.producers]]
 binding = "SCAN_QUEUE"
 queue = "dealguard-scans-staging"
@@ -89,10 +85,6 @@ SUPPORT_EMAIL = "company@rokad.co"
 TIGRIS_ENDPOINT = "https://t3.storage.dev"
 TIGRIS_REGION = "auto"
 TIGRIS_BUCKET = "hubspot-dealguard"
-
-[[env.production.hyperdrive]]
-binding = "HYPERDRIVE"
-id = "f2222cfdafe14554b47c856471e2922a"
 
 [[env.production.queues.producers]]
 binding = "SCAN_QUEUE"

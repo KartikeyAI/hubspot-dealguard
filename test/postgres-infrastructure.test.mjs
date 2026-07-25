@@ -8,6 +8,33 @@ test('PostgreSQL placeholder conversion ignores literals, identifiers and commen
   assert.equal(postgresSql.placeholders(sql), `SELECT '?' AS literal, "?" AS identifier, value FROM sample WHERE a = $1 AND b = $2 -- ?\n/* ? */ AND body = $$?$$`);
 });
 
+test('runtime schema-qualifies DealGuard relations without touching CTEs or already-qualified names', () => {
+  assert.equal(postgresSql.qualifyRelations('SELECT * FROM tenants WHERE portal_id = ?'), 'SELECT * FROM dealguard.tenants WHERE portal_id = ?');
+  assert.equal(postgresSql.qualifyRelations('UPDATE deal_assessments SET score = ? WHERE portal_id = ?'), 'UPDATE dealguard.deal_assessments SET score = ? WHERE portal_id = ?');
+  assert.equal(postgresSql.qualifyRelations('INSERT INTO audit_events (id) VALUES (?)'), 'INSERT INTO dealguard.audit_events (id) VALUES (?)');
+  assert.equal(postgresSql.qualifyRelations('DELETE FROM oauth_states WHERE state_hash = ?'), 'DELETE FROM dealguard.oauth_states WHERE state_hash = ?');
+  assert.equal(postgresSql.qualifyRelations('SELECT * FROM dealguard.tenants'), 'SELECT * FROM dealguard.tenants');
+  assert.equal(postgresSql.qualifyRelations('WITH ranked AS (SELECT * FROM tenants) SELECT * FROM ranked'), 'WITH ranked AS (SELECT * FROM dealguard.tenants) SELECT * FROM ranked');
+});
+
+test('schema qualification registry covers every application table created by migrations', async () => {
+  const files = (await readdir('database/migrations')).filter((name) => name.endsWith('.sql')).sort();
+  const migrated = new Set();
+  for (const file of files) {
+    const sql = await readFile(`database/migrations/${file}`, 'utf8');
+    for (const match of sql.matchAll(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:dealguard\.)?([A-Za-z_][A-Za-z0-9_]*)/gi)) migrated.add(match[1].toLowerCase());
+  }
+  const missing = [...migrated].filter((table) => !postgresSql.relations.has(table)).sort();
+  assert.deepEqual(missing, [], `Tables missing from schema qualification registry: ${missing.join(', ')}`);
+});
+
+test('PostgreSQL runtime correctness does not depend on search_path session state', async () => {
+  const adapter = await readFile('worker/src/postgres.ts', 'utf8');
+  assert.doesNotMatch(adapter, /SET search_path/i);
+  assert.match(adapter, /qualifyRelations\(query\)/);
+  assert.match(adapter, /qualifyRelations\(item\.query\)/);
+});
+
 test('release uses direct Neon PostgreSQL and contains no database proxy or D1 runtime', async () => {
   const wrangler = await readFile('wrangler.toml', 'utf8');
   const runtime = await readFile('worker/src/runtime.ts', 'utf8');

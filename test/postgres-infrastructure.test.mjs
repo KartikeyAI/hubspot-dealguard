@@ -17,6 +17,17 @@ test('runtime schema-qualifies DealGuard relations without touching CTEs or alre
   assert.equal(postgresSql.qualifyRelations('WITH ranked AS (SELECT * FROM tenants) SELECT * FROM ranked'), 'WITH ranked AS (SELECT * FROM dealguard.tenants) SELECT * FROM ranked');
 });
 
+test('schema qualification registry covers every application table created by migrations', async () => {
+  const files = (await readdir('database/migrations')).filter((name) => name.endsWith('.sql')).sort();
+  const migrated = new Set();
+  for (const file of files) {
+    const sql = await readFile(`database/migrations/${file}`, 'utf8');
+    for (const match of sql.matchAll(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:dealguard\.)?([A-Za-z_][A-Za-z0-9_]*)/gi)) migrated.add(match[1].toLowerCase());
+  }
+  const missing = [...migrated].filter((table) => !postgresSql.relations.has(table)).sort();
+  assert.deepEqual(missing, [], `Tables missing from schema qualification registry: ${missing.join(', ')}`);
+});
+
 test('PostgreSQL runtime correctness does not depend on search_path session state', async () => {
   const adapter = await readFile('worker/src/postgres.ts', 'utf8');
   assert.doesNotMatch(adapter, /SET search_path/i);

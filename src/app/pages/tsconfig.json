@@ -8,5 +8,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["EnterpriseHome.tsx"]
+  "include": ["EnterpriseHomeV3.tsx"]
 }

@@ -3,10 +3,17 @@ name: P2 Decision Intelligence
 on:
   pull_request:
     paths:
+      - 'worker/src/config.ts'
       - 'worker/src/enterprise-analytics-v2.ts'
+      - 'database/migrations/0015_trustworthy_intelligence_currency.sql'
+      - 'src/app/pages/EnterpriseHomeV3.tsx'
       - 'src/app/pages/EnterpriseHomeV4.tsx'
+      - 'src/app/pages/tsconfig.json'
       - 'test/p2-intelligence-contract.test.mjs'
+      - 'test/trustworthy-intelligence.test.mjs'
       - 'scripts/postgres-migrate.mjs'
+      - 'scripts/postgres-validate.mjs'
+      - 'docs/ENTERPRISE_ANALYTICS.md'
       - '.github/workflows/p2-decision-intelligence.yml'
   workflow_dispatch:
 
@@ -19,7 +26,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: dealguard
           POSTGRES_PASSWORD: dealguard-test-password
@@ -44,7 +51,7 @@ jobs:
           npm install --ignore-scripts --silent --prefix src/app/pages
       - name: Typecheck analytics worker
         run: npm run typecheck
-      - name: Typecheck enterprise Home
+      - name: Typecheck deployed enterprise Home
         run: npm run typecheck --prefix src/app/pages
       - name: Apply canonical PostgreSQL migrations
         id: migrations
@@ -64,6 +71,8 @@ jobs:
         run: |
           npm run db:migrate:check
           npm run db:validate
+      - name: Run trustworthy-intelligence tests
+        run: node --test test/trustworthy-intelligence.test.mjs
       - name: Run P2 contract tests
         run: node --test test/p2-intelligence-contract.test.mjs
       - name: Run full automated test suite

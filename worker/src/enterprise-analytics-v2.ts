@@ -13,6 +13,7 @@ const FILTER_DIMENSIONS = [
 
 type AnalyticsFilters = Record<string, string>;
 type AnalyticsRow = Record<string, unknown>;
+type MonetaryMode = 'company_currency' | 'single_deal_currency' | 'unavailable';
 
 interface BreakdownRow extends Record<string, unknown> {
   id: string;
@@ -21,8 +22,34 @@ interface BreakdownRow extends Record<string, unknown> {
   averageScore: number;
   critical: number;
   criticalDeals: number;
-  amountAtRisk: number;
+  amountAtRisk: number | null;
+  amountWithReadinessGaps: number | null;
+  monetaryMode: 'company_currency' | 'unavailable';
+  companyCurrencyCoveragePercent: number;
+}
+
+interface SourceCurrencyRow {
+  currencyCode: string | null;
+  totalDeals: number;
+  dealsWithAmount: number;
+  pipelineAmount: number;
   amountWithReadinessGaps: number;
+}
+
+interface MonetarySummary {
+  canAggregate: boolean;
+  mode: MonetaryMode;
+  currencyCode: string | null;
+  currencyLabel: string;
+  pipelineAmount: number | null;
+  amountWithReadinessGaps: number | null;
+  amountCoveragePercent: number;
+  companyCurrencyCoveragePercent: number;
+  sourceCurrencyCoveragePercent: number;
+  sourceCurrencyCount: number;
+  unknownCurrencyDeals: number;
+  sourceCurrencies: SourceCurrencyRow[];
+  reason: string | null;
 }
 
 export const TRUSTWORTHY_INTELLIGENCE_SEMANTICS = {
@@ -31,11 +58,18 @@ export const TRUSTWORTHY_INTELLIGENCE_SEMANTICS = {
   outcomeEvidence: 'latest_open_assessment_before_latest_close_per_deal',
   failurePatterns: 'latest_open_assessment_per_deal',
   amountAtRisk: 'recorded_deal_amount_with_readiness_gaps_not_expected_loss',
-  currency: 'source_currency_not_available_in_assessment_history',
+  currency: 'company_currency_when_fully_covered_else_single_source_currency_else_not_aggregated',
+  attentionPriority: 'deterministic_prioritisation_signal_not_win_probability',
 } as const;
 
 function number(value: unknown): number {
   return Number.isFinite(Number(value)) ? Number(value) : 0;
+}
+
+function optionalNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function round(value: number, digits = 1): number {
@@ -45,6 +79,12 @@ function round(value: number, digits = 1): number {
 
 function percentage(numerator: number, denominator: number): number {
   return denominator > 0 ? round((numerator / denominator) * 100) : 0;
+}
+
+function normalizeCurrencyCode(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const code = value.trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(code) ? code : null;
 }
 
 function stageAgeDays(
@@ -90,6 +130,89 @@ function currentStateWhere(alias: string, filters: AnalyticsFilters): string {
   return `${alias}.is_closed = 0 AND ${filterSql(alias, filters)}`;
 }
 
+function safeCompanyCurrencyAmount(
+  row: AnalyticsRow,
+  amountKey: string,
+  dealsWithAmountKey: string,
+  dealsWithCompanyAmountKey: string,
+): number | null {
+  const dealsWithAmount = number(row[dealsWithAmountKey]);
+  const dealsWithCompanyAmount = number(row[dealsWithCompanyAmountKey]);
+  if (dealsWithAmount === 0) return null;
+  return dealsWithCompanyAmount === dealsWithAmount ? number(row[amountKey]) : null;
+}
+
+function monetarySummary(current: AnalyticsRow | null, sourceCurrencies: SourceCurrencyRow[]): MonetarySummary {
+  const totalDeals = number(current?.total_deals);
+  const dealsWithAmount = number(current?.deals_with_amount);
+  const dealsWithCompanyCurrencyAmount = number(current?.deals_with_company_currency_amount);
+  const dealsWithCurrencyCode = number(current?.deals_with_currency_code);
+  const knownCurrencies = sourceCurrencies.filter((row) => row.currencyCode !== null);
+  const unknownCurrencyDeals = sourceCurrencies
+    .filter((row) => row.currencyCode === null)
+    .reduce((sum, row) => sum + row.dealsWithAmount, 0);
+
+  const base = {
+    amountCoveragePercent: percentage(dealsWithAmount, totalDeals),
+    companyCurrencyCoveragePercent: percentage(dealsWithCompanyCurrencyAmount, dealsWithAmount),
+    sourceCurrencyCoveragePercent: percentage(dealsWithCurrencyCode, dealsWithAmount),
+    sourceCurrencyCount: knownCurrencies.length,
+    unknownCurrencyDeals,
+    sourceCurrencies,
+  };
+
+  if (dealsWithAmount === 0) {
+    return {
+      ...base,
+      canAggregate: false,
+      mode: 'unavailable',
+      currencyCode: null,
+      currencyLabel: 'Currency unavailable',
+      pipelineAmount: null,
+      amountWithReadinessGaps: null,
+      reason: 'No current open deal amounts are recorded.',
+    };
+  }
+
+  if (dealsWithCompanyCurrencyAmount === dealsWithAmount) {
+    return {
+      ...base,
+      canAggregate: true,
+      mode: 'company_currency',
+      currencyCode: null,
+      currencyLabel: 'Company currency',
+      pipelineAmount: number(current?.pipeline_amount_in_company_currency),
+      amountWithReadinessGaps: number(current?.amount_with_readiness_gaps_in_company_currency),
+      reason: null,
+    };
+  }
+
+  if (knownCurrencies.length === 1 && dealsWithCurrencyCode === dealsWithAmount && unknownCurrencyDeals === 0) {
+    const single = knownCurrencies[0]!;
+    return {
+      ...base,
+      canAggregate: true,
+      mode: 'single_deal_currency',
+      currencyCode: single.currencyCode,
+      currencyLabel: single.currencyCode ?? 'Deal currency',
+      pipelineAmount: single.pipelineAmount,
+      amountWithReadinessGaps: single.amountWithReadinessGaps,
+      reason: null,
+    };
+  }
+
+  return {
+    ...base,
+    canAggregate: false,
+    mode: 'unavailable',
+    currencyCode: null,
+    currencyLabel: 'Mixed or incomplete currencies',
+    pipelineAmount: null,
+    amountWithReadinessGaps: null,
+    reason: 'Deal amounts span multiple or unknown currencies and company-currency coverage is incomplete. DealGuard will not sum them.',
+  };
+}
+
 export async function recordAssessmentHistory(
   env: Env,
   portalId: string,
@@ -102,12 +225,17 @@ export async function recordAssessmentHistory(
 ): Promise<void> {
   const props = input.properties ?? {};
   const active = input.policyId === undefined ? await activePolicy(env, portalId) : null;
+  const dealAmount = assessment.dealAmount ?? optionalNumber(props.amount);
+  const dealCurrencyCode = normalizeCurrencyCode(props.deal_currency_code);
+  const dealAmountInCompanyCurrency = optionalNumber(props.amount_in_home_currency);
+
   await env.DB.prepare(
     `INSERT INTO assessment_history (
       id, portal_id, deal_id, score, grade, status, issue_codes_json, issue_count,
       pipeline_id, pipeline_label, stage_id, stage_label, owner_id, team_id, region_code,
-      deal_type, deal_amount, stage_age_days, is_closed, is_won, policy_id, trigger_type, assessed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      deal_type, deal_amount, deal_currency_code, deal_amount_in_company_currency,
+      stage_age_days, is_closed, is_won, policy_id, trigger_type, assessed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     crypto.randomUUID(),
     portalId,
@@ -125,7 +253,9 @@ export async function recordAssessmentHistory(
     props.hs_team_id ?? props.dealguard_team_id ?? null,
     props.region ?? props.dealguard_region ?? null,
     props.dealtype ?? props.deal_type ?? null,
-    assessment.dealAmount ?? (props.amount ? Number(props.amount) : null),
+    dealAmount,
+    dealCurrencyCode,
+    dealAmountInCompanyCurrency,
     stageAgeDays(props, assessment.stageId ?? props.dealstage ?? undefined),
     assessment.isClosed ? 1 : 0,
     assessment.isWon ? 1 : 0,
@@ -151,10 +281,18 @@ async function aggregate(
       SUM(CASE WHEN latest.status = 'critical' THEN 1 ELSE 0 END) AS critical_deals,
       SUM(CASE WHEN latest.status = 'at_risk' THEN 1 ELSE 0 END) AS at_risk_deals,
       SUM(CASE WHEN latest.status = 'ready' THEN 1 ELSE 0 END) AS ready_deals,
-      SUM(CASE WHEN latest.status != 'ready' THEN COALESCE(latest.deal_amount, 0) ELSE 0 END) AS amount_with_readiness_gaps,
-      SUM(COALESCE(latest.deal_amount, 0)) AS pipeline_amount,
+      SUM(CASE WHEN latest.status != 'ready'
+        THEN COALESCE(latest.deal_amount_in_company_currency, 0) ELSE 0 END
+      ) AS amount_with_readiness_gaps_in_company_currency,
+      SUM(COALESCE(latest.deal_amount_in_company_currency, 0)) AS pipeline_amount_in_company_currency,
       AVG(latest.stage_age_days) AS average_stage_age,
       SUM(CASE WHEN latest.deal_amount IS NOT NULL THEN 1 ELSE 0 END) AS deals_with_amount,
+      SUM(CASE WHEN latest.deal_amount IS NOT NULL
+        AND latest.deal_amount_in_company_currency IS NOT NULL THEN 1 ELSE 0 END
+      ) AS deals_with_company_currency_amount,
+      SUM(CASE WHEN latest.deal_amount IS NOT NULL
+        AND latest.deal_currency_code ~ '^[A-Z]{3}$' THEN 1 ELSE 0 END
+      ) AS deals_with_currency_code,
       SUM(CASE WHEN latest.stage_age_days IS NOT NULL THEN 1 ELSE 0 END) AS deals_with_stage_age,
       SUM(CASE WHEN latest.owner_id IS NOT NULL AND latest.owner_id != '' THEN 1 ELSE 0 END) AS deals_with_owner,
       MIN(latest.assessed_at) AS oldest_assessment_at,
@@ -162,6 +300,29 @@ async function aggregate(
     FROM latest_assessments latest
     WHERE ${currentStateWhere('latest', filters)}`,
   ).bind(portalId, ...scopedParams).first<AnalyticsRow>();
+
+  const sourceCurrencyRows = await env.DB.prepare(
+    `WITH ${latestAssessmentCte()}
+    SELECT
+      NULLIF(upper(trim(latest.deal_currency_code)), '') AS currency_code,
+      COUNT(*) AS total_deals,
+      SUM(CASE WHEN latest.deal_amount IS NOT NULL THEN 1 ELSE 0 END) AS deals_with_amount,
+      SUM(COALESCE(latest.deal_amount, 0)) AS pipeline_amount,
+      SUM(CASE WHEN latest.status != 'ready' THEN COALESCE(latest.deal_amount, 0) ELSE 0 END) AS amount_with_readiness_gaps
+    FROM latest_assessments latest
+    WHERE ${currentStateWhere('latest', filters)} AND latest.deal_amount IS NOT NULL
+    GROUP BY NULLIF(upper(trim(latest.deal_currency_code)), '')
+    ORDER BY currency_code NULLS LAST`,
+  ).bind(portalId, ...scopedParams).all<AnalyticsRow>();
+
+  const sourceCurrencies: SourceCurrencyRow[] = (sourceCurrencyRows.results ?? []).map((row) => ({
+    currencyCode: normalizeCurrencyCode(row.currency_code),
+    totalDeals: number(row.total_deals),
+    dealsWithAmount: number(row.deals_with_amount),
+    pipelineAmount: number(row.pipeline_amount),
+    amountWithReadinessGaps: number(row.amount_with_readiness_gaps),
+  }));
+  const monetary = monetarySummary(current, sourceCurrencies);
 
   const trend = await env.DB.prepare(
     `WITH daily_latest AS (
@@ -174,7 +335,13 @@ async function aggregate(
       substr(daily.assessed_at, 1, 10) AS date,
       AVG(daily.score) AS average_score,
       SUM(CASE WHEN daily.status = 'critical' THEN 1 ELSE 0 END) AS critical_deals,
-      SUM(CASE WHEN daily.status != 'ready' THEN COALESCE(daily.deal_amount, 0) ELSE 0 END) AS amount_with_readiness_gaps,
+      SUM(CASE WHEN daily.status != 'ready'
+        THEN COALESCE(daily.deal_amount_in_company_currency, 0) ELSE 0 END
+      ) AS amount_with_readiness_gaps_in_company_currency,
+      SUM(CASE WHEN daily.deal_amount IS NOT NULL THEN 1 ELSE 0 END) AS deals_with_amount,
+      SUM(CASE WHEN daily.deal_amount IS NOT NULL
+        AND daily.deal_amount_in_company_currency IS NOT NULL THEN 1 ELSE 0 END
+      ) AS deals_with_company_currency_amount,
       COUNT(*) AS assessed_deals
     FROM daily_latest daily
     WHERE ${currentStateWhere('daily', filters)}
@@ -192,17 +359,32 @@ async function aggregate(
         COUNT(*) AS total_deals,
         AVG(latest.score) AS average_score,
         SUM(CASE WHEN latest.status = 'critical' THEN 1 ELSE 0 END) AS critical_deals,
-        SUM(CASE WHEN latest.status != 'ready' THEN COALESCE(latest.deal_amount, 0) ELSE 0 END) AS amount_with_readiness_gaps
+        SUM(CASE WHEN latest.status != 'ready'
+          THEN COALESCE(latest.deal_amount_in_company_currency, 0) ELSE 0 END
+        ) AS amount_with_readiness_gaps_in_company_currency,
+        SUM(CASE WHEN latest.deal_amount IS NOT NULL THEN 1 ELSE 0 END) AS deals_with_amount,
+        SUM(CASE WHEN latest.deal_amount IS NOT NULL
+          AND latest.deal_amount_in_company_currency IS NOT NULL THEN 1 ELSE 0 END
+        ) AS deals_with_company_currency_amount
       FROM latest_assessments latest
       WHERE ${currentStateWhere('latest', filters)}
       GROUP BY latest.${column}, latest.${label}
-      ORDER BY amount_with_readiness_gaps DESC
+      ORDER BY critical_deals DESC, total_deals DESC
       LIMIT 250`,
     ).bind(portalId, ...scopedParams).all<AnalyticsRow>();
 
     return (rows.results ?? []).map((row) => {
       const criticalDeals = number(row.critical_deals);
-      const amountWithReadinessGaps = number(row.amount_with_readiness_gaps);
+      const amountWithReadinessGaps = safeCompanyCurrencyAmount(
+        row,
+        'amount_with_readiness_gaps_in_company_currency',
+        'deals_with_amount',
+        'deals_with_company_currency_amount',
+      );
+      const companyCurrencyCoveragePercent = percentage(
+        number(row.deals_with_company_currency_amount),
+        number(row.deals_with_amount),
+      );
       return {
         id: String(row.id),
         label: String(row.label),
@@ -212,6 +394,8 @@ async function aggregate(
         criticalDeals,
         amountAtRisk: amountWithReadinessGaps,
         amountWithReadinessGaps,
+        monetaryMode: amountWithReadinessGaps === null ? 'unavailable' : 'company_currency',
+        companyCurrencyCoveragePercent,
       };
     });
   };
@@ -236,6 +420,7 @@ async function aggregate(
       latest.status,
       latest.issue_count,
       latest.deal_amount,
+      latest.deal_currency_code,
       latest.stage_age_days,
       latest.owner_id,
       latest.team_id,
@@ -249,25 +434,28 @@ async function aggregate(
     LIMIT 10000`,
   ).bind(portalId, ...scopedParams).all<AnalyticsRow>();
 
-  const predictive = (latest.results ?? [])
+  const attentionDeals = (latest.results ?? [])
     .map((row) => {
       const score = number(row.score);
       const age = number(row.stage_age_days);
       const issues = number(row.issue_count);
-      const signal = Math.min(100, Math.max(0, Math.round((100-score)*.55+Math.min(30,age)*.8+Math.min(10,issues)*3)));
+      const signal = Math.min(100, Math.max(0, Math.round((100 - score) * .55 + Math.min(30, age) * .8 + Math.min(10, issues) * 3)));
       return {
         dealId: String(row.deal_id),
+        attentionScore: signal,
+        // Compatibility alias for clients on the former deterministic-risk contract.
         riskSignal: signal,
         band: signal >= 70 ? 'high' : signal >= 40 ? 'medium' : 'low',
         score,
         issueCount: issues,
         stageAgeDays: age,
-        amount: number(row.deal_amount),
+        amount: optionalNumber(row.deal_amount),
+        currencyCode: normalizeCurrencyCode(row.deal_currency_code),
         ownerId: row.owner_id ? String(row.owner_id) : null,
         stage: row.stage_label ? String(row.stage_label) : null,
       };
     })
-    .sort((left, right) => right.riskSignal - left.riskSignal)
+    .sort((left, right) => right.attentionScore - left.attentionScore)
     .slice(0, 25);
 
   const outcomeFilter = filterSql('pre', filters);
@@ -389,7 +577,13 @@ async function aggregate(
       COUNT(*) AS assessed_deals,
       AVG(latest.score) AS average_score,
       SUM(CASE WHEN latest.status = 'critical' THEN 1 ELSE 0 END) AS critical_deals,
-      SUM(CASE WHEN latest.status != 'ready' THEN COALESCE(latest.deal_amount, 0) ELSE 0 END) AS amount_with_readiness_gaps
+      SUM(CASE WHEN latest.status != 'ready'
+        THEN COALESCE(latest.deal_amount_in_company_currency, 0) ELSE 0 END
+      ) AS amount_with_readiness_gaps_in_company_currency,
+      SUM(CASE WHEN latest.deal_amount IS NOT NULL THEN 1 ELSE 0 END) AS deals_with_amount,
+      SUM(CASE WHEN latest.deal_amount IS NOT NULL
+        AND latest.deal_amount_in_company_currency IS NOT NULL THEN 1 ELSE 0 END
+      ) AS deals_with_company_currency_amount
     FROM policy_latest latest
     JOIN policy_period period ON latest.policy_id IS NOT DISTINCT FROM period.policy_id
     LEFT JOIN policy_versions policy ON policy.id = latest.policy_id
@@ -402,14 +596,22 @@ async function aggregate(
   const criticalDeals = number(current?.critical_deals);
   const atRiskDeals = number(current?.at_risk_deals);
   const readyDeals = number(current?.ready_deals);
-  const amountWithReadinessGaps = number(current?.amount_with_readiness_gaps);
   const dealsWithAmount = number(current?.deals_with_amount);
+  const dealsWithCompanyCurrencyAmount = number(current?.deals_with_company_currency_amount);
+  const dealsWithCurrencyCode = number(current?.deals_with_currency_code);
   const dealsWithStageAge = number(current?.deals_with_stage_age);
   const dealsWithOwner = number(current?.deals_with_owner);
+
+  const attentionPriority = {
+    methodology: 'deterministic_attention_signal',
+    deals: attentionDeals,
+    highPriorityDeals: attentionDeals.filter((row) => row.band === 'high').length,
+  };
 
   return {
     semantics: TRUSTWORTHY_INTELLIGENCE_SEMANTICS,
     generatedAt: new Date().toISOString(),
+    monetary,
     current: {
       totalDeals,
       averageScore: Math.round(baseline),
@@ -420,21 +622,30 @@ async function aggregate(
       criticalEvents: criticalDeals,
       atRiskEvents: atRiskDeals,
       readyEvents: readyDeals,
-      amountWithReadinessGaps,
-      amountAtRisk: amountWithReadinessGaps,
-      pipelineAmount: number(current?.pipeline_amount),
+      amountWithReadinessGaps: monetary.amountWithReadinessGaps,
+      amountAtRisk: monetary.amountWithReadinessGaps,
+      pipelineAmount: monetary.pipelineAmount,
+      monetaryMode: monetary.mode,
+      currencyCode: monetary.currencyCode,
       averageStageAgeDays: round(number(current?.average_stage_age)),
       oldestAssessmentAt: current?.oldest_assessment_at ?? null,
       latestAssessmentAt: current?.latest_assessment_at ?? null,
       coverage: {
         amountPercent: percentage(dealsWithAmount, totalDeals),
+        companyCurrencyAmountPercent: percentage(dealsWithCompanyCurrencyAmount, dealsWithAmount),
+        currencyCodePercent: percentage(dealsWithCurrencyCode, dealsWithAmount),
         stageAgePercent: percentage(dealsWithStageAge, totalDeals),
         ownerPercent: percentage(dealsWithOwner, totalDeals),
       },
     },
     trend: (trend.results ?? []).map((row) => {
       const critical = number(row.critical_deals);
-      const amount = number(row.amount_with_readiness_gaps);
+      const amount = safeCompanyCurrencyAmount(
+        row,
+        'amount_with_readiness_gaps_in_company_currency',
+        'deals_with_amount',
+        'deals_with_company_currency_amount',
+      );
       return {
         date: String(row.date),
         averageScore: Math.round(number(row.average_score)),
@@ -442,6 +653,11 @@ async function aggregate(
         criticalDeals: critical,
         amountAtRisk: amount,
         amountWithReadinessGaps: amount,
+        monetaryMode: amount === null ? 'unavailable' : 'company_currency',
+        companyCurrencyCoveragePercent: percentage(
+          number(row.deals_with_company_currency_amount),
+          number(row.deals_with_amount),
+        ),
         assessedDeals: number(row.assessed_deals),
       };
     }),
@@ -476,7 +692,12 @@ async function aggregate(
     },
     policyImpact: (policyImpact.results ?? []).map((row) => {
       const critical = number(row.critical_deals);
-      const amount = number(row.amount_with_readiness_gaps);
+      const amount = safeCompanyCurrencyAmount(
+        row,
+        'amount_with_readiness_gaps_in_company_currency',
+        'deals_with_amount',
+        'deals_with_company_currency_amount',
+      );
       return {
         policyId: row.policy_id ? String(row.policy_id) : null,
         policyName: String(row.policy_name),
@@ -488,6 +709,11 @@ async function aggregate(
         criticalDeals: critical,
         amountAtRisk: amount,
         amountWithReadinessGaps: amount,
+        monetaryMode: amount === null ? 'unavailable' : 'company_currency',
+        companyCurrencyCoveragePercent: percentage(
+          number(row.deals_with_company_currency_amount),
+          number(row.deals_with_amount),
+        ),
       };
     }),
     benchmarking: {
@@ -495,10 +721,13 @@ async function aggregate(
       owners: benchmark(ownerRows),
       teams: benchmark(teamRows),
     },
+    attentionPriority,
+    // Compatibility contract retained while clients migrate to attentionPriority.
     predictiveRisk: {
-      methodology:'deterministic_signal',
-      deals: predictive,
-      highRiskDeals: predictive.filter((row) => row.band === 'high').length,
+      methodology: 'deterministic_signal',
+      deals: attentionDeals,
+      highRiskDeals: attentionPriority.highPriorityDeals,
+      deprecated: true,
     },
     outcomeCorrelation: {
       methodology: TRUSTWORTHY_INTELLIGENCE_SEMANTICS.outcomeEvidence,
@@ -513,7 +742,7 @@ async function aggregate(
       lostAverageIssues: average(lost, 'issue_count'),
       wonAverageStageAgeDays: average(won, 'stage_age_days'),
       lostAverageStageAgeDays: average(lost, 'stage_age_days'),
-      confidence:closed.length>=100?'strong':closed.length>=30?'directional':'limited',
+      confidence: closed.length >= 100 ? 'strong' : closed.length >= 30 ? 'directional' : 'limited',
     },
   };
 }
@@ -666,8 +895,9 @@ export async function exportAnalyticsCsv(
   await requireEnterprisePermission(env, identity, 'analytics.export');
   const data = await enterpriseAnalyticsV2(env, identity, url);
   const rows = data.byPipeline as Array<Record<string, unknown>>;
+  const monetary = data.monetary as MonetarySummary;
   const lines = [
-    'pipeline_id,pipeline,total_deals,average_score,critical_deals,amount_with_readiness_gaps',
+    'pipeline_id,pipeline,total_deals,average_score,critical_deals,amount_with_readiness_gaps,currency_basis,currency_code,company_currency_coverage_percent',
   ];
 
   for (const row of rows) {
@@ -678,6 +908,9 @@ export async function exportAnalyticsCsv(
       row.averageScore,
       row.criticalDeals,
       row.amountWithReadinessGaps,
+      row.monetaryMode,
+      row.monetaryMode === 'company_currency' ? monetary.currencyCode : null,
+      row.companyCurrencyCoveragePercent,
     ].map(csv).join(','));
   }
 

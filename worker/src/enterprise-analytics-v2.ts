@@ -81,7 +81,7 @@ function latestAssessmentCte(): string {
   return `latest_assessments AS (
     SELECT DISTINCT ON (deal_id) *
     FROM assessment_history
-    WHERE portal_id = ? AND assessed_at >= ?
+    WHERE portal_id = ?
     ORDER BY deal_id, assessed_at DESC, id DESC
   )`;
 }
@@ -161,7 +161,7 @@ async function aggregate(
       MAX(latest.assessed_at) AS latest_assessment_at
     FROM latest_assessments latest
     WHERE ${currentStateWhere('latest', filters)}`,
-  ).bind(portalId, since, ...scopedParams).first<AnalyticsRow>();
+  ).bind(portalId, ...scopedParams).first<AnalyticsRow>();
 
   const trend = await env.DB.prepare(
     `WITH daily_latest AS (
@@ -198,7 +198,7 @@ async function aggregate(
       GROUP BY latest.${column}, latest.${label}
       ORDER BY amount_with_readiness_gaps DESC
       LIMIT 250`,
-    ).bind(portalId, since, ...scopedParams).all<AnalyticsRow>();
+    ).bind(portalId, ...scopedParams).all<AnalyticsRow>();
 
     return (rows.results ?? []).map((row) => {
       const criticalDeals = number(row.critical_deals);
@@ -247,7 +247,7 @@ async function aggregate(
     WHERE ${currentStateWhere('latest', filters)}
     ORDER BY latest.assessed_at DESC
     LIMIT 10000`,
-  ).bind(portalId, since, ...scopedParams).all<AnalyticsRow>();
+  ).bind(portalId, ...scopedParams).all<AnalyticsRow>();
 
   const predictive = (latest.results ?? [])
     .map((row) => {
@@ -330,7 +330,7 @@ async function aggregate(
     WHERE ${currentStateWhere('latest', filters)}
     ORDER BY latest.assessed_at DESC
     LIMIT 10000`,
-  ).bind(portalId, since, ...scopedParams).all<{ issue_codes_json: string }>();
+  ).bind(portalId, ...scopedParams).all<{ issue_codes_json: string }>();
 
   const issues = new Map<string, number>();
   for (const row of issueRows.results ?? []) {
@@ -352,7 +352,7 @@ async function aggregate(
     WHERE ${currentStateWhere('latest', filters)}
     GROUP BY latest.pipeline_label, latest.stage_label
     ORDER BY pipeline, average_age DESC`,
-  ).bind(portalId, since, ...scopedParams).all<AnalyticsRow>();
+  ).bind(portalId, ...scopedParams).all<AnalyticsRow>();
 
   const handoff = await env.DB.prepare(
     `SELECT

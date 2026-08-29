@@ -9,6 +9,8 @@ test('current analytics use one latest open assessment per deal', () => {
   assert.equal(TRUSTWORTHY_INTELLIGENCE_SEMANTICS.currentState, 'latest_open_assessment_per_deal');
   assert.match(source, /SELECT DISTINCT ON \(deal_id\) \*/);
   assert.match(source, /ORDER BY deal_id, assessed_at DESC, id DESC/);
+  const latestCte = source.match(/function latestAssessmentCte\(\): string \{[\s\S]*?\n\}/)?.[0] ?? '';
+  assert.doesNotMatch(latestCte, /assessed_at >=/, 'current state must not disappear outside the trend window');
   assert.match(source, /return `\$\{alias\}\.is_closed = 0 AND \$\{filterSql\(alias, filters\)\}`/);
   assert.match(source, /FROM latest_assessments latest\s+WHERE \$\{currentStateWhere\('latest', filters\)\}/);
   assert.doesNotMatch(

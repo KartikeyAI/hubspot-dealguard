@@ -37,7 +37,7 @@ async function processMessage(env: Env, message: DealGuardQueueMessage): Promise
     else if (message.task === 'outbox') {
       await Promise.all([
         dispatchOutbox(env),
-        dispatchQueuedRecommendationFollowups(env, 1),
+        dispatchQueuedRecommendationFollowups(env, 10),
       ]);
     }
     else if (message.task === 'siem') await dispatchSiemEvents(env);

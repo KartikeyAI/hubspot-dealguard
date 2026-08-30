@@ -15,11 +15,21 @@ on:
       - 'worker/src/buyer-committee.ts'
       - 'worker/src/deal-brief-types.ts'
       - 'worker/src/deal-brief.ts'
+      - 'worker/src/deal-brief-engagement.ts'
+      - 'worker/src/engagement-metadata-types.ts'
+      - 'worker/src/engagement-metadata-data.ts'
+      - 'worker/src/engagement-metadata-utils.ts'
+      - 'worker/src/engagement-analysis.ts'
+      - 'worker/src/engagement-signals.ts'
+      - 'worker/src/engagement-actions.ts'
+      - 'worker/src/engagement-intelligence.ts'
       - 'worker/src/assessment-service.ts'
       - 'worker/src/routes-v2.ts'
       - 'worker/src/routes-v10.ts'
       - 'worker/src/enterprise-analytics-v2.ts'
       - 'database/migrations/0015_trustworthy_intelligence_currency.sql'
+      - 'src/app/cards/DealGuardEngagementCard.tsx'
+      - 'src/app/cards/dealguard-engagement-card-hsmeta.json'
       - 'src/app/cards/**'
       - 'src/app/pages/EnterpriseHomeV3.tsx'
       - 'src/app/pages/EnterpriseHomeV4.tsx'
@@ -33,12 +43,16 @@ on:
       - 'test/buyer-committee-contract.test.mjs'
       - 'test/deal-brief.test.mjs'
       - 'test/deal-brief-contract.test.mjs'
+      - 'test/engagement-intelligence.test.mjs'
+      - 'test/engagement-intelligence-contract.test.mjs'
+      - 'test/deal-brief-engagement.test.mjs'
       - 'scripts/postgres-migrate.mjs'
       - 'scripts/postgres-validate.mjs'
       - 'docs/ENTERPRISE_ANALYTICS.md'
       - 'docs/DEAL_MOMENTUM_AND_CLOSE_DATE.md'
       - 'docs/BUYER_COMMITTEE_INTELLIGENCE.md'
       - 'docs/DEAL_BRIEF.md'
+      - 'docs/ENGAGEMENT_INTELLIGENCE.md'
       - '.github/workflows/p2-decision-intelligence.yml'
   workflow_dispatch:
 
@@ -107,6 +121,8 @@ jobs:
         run: node --test test/buyer-committee.test.mjs test/buyer-committee-contract.test.mjs
       - name: Run Deal Brief tests
         run: node --test test/deal-brief.test.mjs test/deal-brief-contract.test.mjs
+      - name: Run engagement-intelligence tests
+        run: node --test test/engagement-intelligence.test.mjs test/engagement-intelligence-contract.test.mjs test/deal-brief-engagement.test.mjs
       - name: Run P2 contract tests
         run: node --test test/p2-intelligence-contract.test.mjs
       - name: Run full automated test suite

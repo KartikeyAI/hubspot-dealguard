@@ -1,0 +1,11 @@
+{
+  "uid": "dealguard_deal_engagement_card",
+  "type": "card",
+  "config": {
+    "name": "DealGuard — Engagement Evidence",
+    "description": "Metadata-only email, call, and meeting engagement evidence with deterministic recency, response-gap, cadence, and next-action signals.",
+    "location": "crm.record.tab",
+    "entrypoint": "/app/cards/DealGuardEngagementCard.tsx",
+    "objectTypes": ["DEALS"]
+  }
+}

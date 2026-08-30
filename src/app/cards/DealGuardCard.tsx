@@ -6,6 +6,7 @@ import {
   attentionVariant,
   briefVariant,
   credibilityVariant,
+  engagementVariant,
   formatAgeHours,
   formatDate,
   freshnessVariant,
@@ -27,6 +28,7 @@ const DealGuardBriefCard = ({ dealId }: { dealId: string }) => {
   const momentum = intelligence?.momentum;
   const closeDate = intelligence?.closeDateCredibility;
   const relationship = intelligence?.relationshipCoverage;
+  const engagement = intelligence?.engagement;
   const nextAction = brief?.nextAction;
 
   return <Flex direction="column" gap="medium">
@@ -113,6 +115,11 @@ const DealGuardBriefCard = ({ dealId }: { dealId: string }) => {
           <StatusTag variant={relationship ? relationshipVariant(relationship.status) : 'default'}>{relationship?.status ?? 'Unavailable'}</StatusTag>
         </Flex>
         <Flex direction="column" gap="extra-small">
+          <Text variant="microcopy">ENGAGEMENT METADATA</Text>
+          <Heading>{engagement?.score === null || engagement?.score === undefined ? '—' : `${engagement.score}/100`}</Heading>
+          <StatusTag variant={engagement ? engagementVariant(engagement.status) : 'default'}>{engagement?.status.replaceAll('_', ' ') ?? 'Unavailable'}</StatusTag>
+        </Flex>
+        <Flex direction="column" gap="extra-small">
           <Text variant="microcopy">STAGE READINESS</Text>
           <Heading>{intelligence?.stageReadiness.percent ?? assessment.score}%</Heading>
           <Text>{intelligence?.stageReadiness.satisfied ?? 0} of {intelligence?.stageReadiness.total ?? 0} configured requirements</Text>
@@ -120,10 +127,10 @@ const DealGuardBriefCard = ({ dealId }: { dealId: string }) => {
       </Flex>
 
       {brief.coverage.percent < 100 && <Alert title="Evidence is incomplete" variant="warning">
-        Available dimensions: readiness{brief.coverage.momentum ? ', momentum' : ''}{brief.coverage.closeDate ? ', close date' : ''}{brief.coverage.relationship ? ', relationship coverage' : ''}. Missing or bounded evidence lowers confidence; it does not imply the deal will be lost.
+        Available dimensions: readiness{brief.coverage.momentum ? ', momentum' : ''}{brief.coverage.closeDate ? ', close date' : ''}{brief.coverage.relationship ? ', relationship coverage' : ''}{brief.coverage.engagement ? ', engagement metadata' : ''}. Missing or bounded evidence lowers confidence; it does not imply the deal will be lost.
       </Alert>}
       <Alert title="How to read this brief" variant="info">
-        The Deal Brief synthesises deterministic readiness, CRM movement, close-date, and structured relationship evidence. Attention priority is not buyer intent, a forecast category, a win probability, or an expected-loss estimate.
+        The Deal Brief synthesises deterministic readiness, CRM movement, close-date, structured relationship, and metadata-only engagement evidence. Attention priority is not buyer intent, sentiment, a forecast category, a win probability, or an expected-loss estimate.
       </Alert>
     </> : <Alert title="Refresh to build the full Deal Brief" variant="info">
       The stored readiness assessment is available, but the unified evidence synthesis has not yet been generated for this record.

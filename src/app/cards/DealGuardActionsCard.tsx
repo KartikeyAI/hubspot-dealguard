@@ -17,9 +17,9 @@ const DealGuardActionsCard = ({ dealId }: { dealId: string }) => {
     {notice && <Alert title="Done" variant="success">{notice}</Alert>}
     <Heading>Recommended actions</Heading>
     {decisionActions.length === 0
-      ? <Alert title="No evidence-backed intervention detected" variant="success">DealGuard has no additional momentum, close-date, or relationship action for this deal.</Alert>
+      ? <Alert title="No evidence-backed intervention detected" variant="success">DealGuard has no additional momentum, close-date, relationship, or engagement action for this deal.</Alert>
       : <Flex direction="column" gap="small">
-          <Text>Prioritised from structured CRM movement, close-date, and relationship evidence. DealGuard does not autonomously edit commercial fields or stakeholder roles.</Text>
+          <Text>Prioritised from structured CRM movement, close-date, relationship, and activity metadata. DealGuard does not inspect communication content or autonomously edit commercial fields or stakeholder roles.</Text>
           {decisionActions.map((item, index) => <Flex key={item.code} direction="column" gap="extra-small">
             <Flex direction="row" justify="between" gap="small">
               <Text format={{ fontWeight: 'bold' }}>{index + 1}. {item.label}</Text>

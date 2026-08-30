@@ -30,8 +30,19 @@ export type RelationshipCoverage = {
   signals: Array<{ code: string; label: string; direction: 'positive' | 'negative' | 'neutral'; severity: Severity; detail: string; evidenceCodes: string[] }>;
   relationshipActions: DecisionAction[]; fetchedAt: string; contactsTruncated: boolean; companiesTruncated: boolean; limitations: string[]; notBuyerIntent: true; notWinProbability: true;
 };
+export type EngagementSignal = { code: string; label: string; direction: 'positive' | 'negative' | 'neutral'; severity: Severity; detail: string; observedAt: string | null; evidenceCodes: string[] };
+export type Engagement = {
+  methodology: 'hubspot_activity_metadata'; windowDays: 90; score: number | null; status: 'active' | 'watch' | 'disengaged' | 'insufficient_data'; confidence: 'high' | 'medium' | 'low'; summary: string;
+  lastBuyerActivityAt: string | null; lastInboundEmailAt: string | null; lastOutboundEmailAt: string | null; unansweredOutboundSince: string | null; emailResponseGapDays: number | null;
+  lastCompletedCallAt: string | null; lastCompletedMeetingAt: string | null; nextScheduledMeetingAt: string | null;
+  counts: { inboundEmails: number; outboundEmails: number; forwardedEmails: number; failedOrBouncedEmails: number; inboundCalls: number; outboundCalls: number; completedCalls: number; completedMeetings: number; scheduledMeetings: number; noShowMeetings: number; canceledMeetings: number; totalMaterialActivities: number };
+  cadence: { recent14Days: number; previous14Days: number; activeWeeks8: number; trend: 'accelerating' | 'steady' | 'declining' | 'inactive' | 'insufficient_data' };
+  reciprocity: { inboundEmailCount: number; outboundEmailCount: number; ratio: number | null; status: 'balanced' | 'outbound_heavy' | 'inbound_led' | 'unavailable' };
+  coverage: { emails: boolean; calls: boolean; meetings: boolean; percent: number; truncated: boolean; missingTypes: Array<'email' | 'call' | 'meeting'> };
+  signals: EngagementSignal[]; fetchedAt: string; limitations: string[]; contentProcessed: false; notBuyerIntent: true; notWinProbability: true; notSentimentAnalysis: true;
+};
 export type DealBriefItem = {
-  code: string; label: string; dimension: 'readiness' | 'momentum' | 'close_date' | 'relationship' | 'change'; direction: 'positive' | 'negative';
+  code: string; label: string; dimension: 'readiness' | 'momentum' | 'close_date' | 'relationship' | 'engagement' | 'change'; direction: 'positive' | 'negative';
   severity: Severity; detail: string; observedAt: string | null; evidenceCodes: string[];
 };
 export type DealBriefChange = { code: string; label: string; detail: string; observedAt: string | null };
@@ -39,7 +50,7 @@ export type DealBrief = {
   methodology: 'deterministic_evidence_synthesis'; generatedAt: string; status: 'on_track' | 'watch' | 'intervention_required' | 'insufficient_evidence';
   attentionScore: number; confidence: 'high' | 'medium' | 'low'; summary: string; risks: DealBriefItem[]; positiveSignals: DealBriefItem[]; changes: DealBriefChange[];
   nextAction: DecisionAction | null;
-  coverage: { readiness: true; momentum: boolean; closeDate: boolean; relationship: boolean; percent: number; missingDimensions: Array<'momentum' | 'close_date' | 'relationship'>; truncated: boolean };
+  coverage: { readiness: true; momentum: boolean; closeDate: boolean; relationship: boolean; engagement?: boolean; percent: number; missingDimensions: Array<'momentum' | 'close_date' | 'relationship' | 'engagement'>; truncated: boolean };
   freshness: { assessedAt: string; ageHours: number | null; status: 'fresh' | 'aging' | 'stale' | 'unavailable' };
   limitations: string[]; notWinProbability: true; notBuyerIntent: true; notForecastCategory: true;
 };
@@ -53,6 +64,8 @@ export type Intelligence = {
   closeDateCredibility?: CloseDateCredibility;
   relationshipCoverage?: RelationshipCoverage;
   relationshipActions?: DecisionAction[];
+  engagement?: Engagement;
+  engagementActions?: DecisionAction[];
   dealBrief?: DealBrief;
 };
 export type Assessment = {
@@ -82,6 +95,12 @@ export function relationshipVariant(status: NonNullable<Intelligence['relationsh
   if (status === 'partial') return 'warning';
   return 'danger';
 }
+export function engagementVariant(status: NonNullable<Intelligence['engagement']>['status']): 'success' | 'warning' | 'danger' | 'default' {
+  if (status === 'active') return 'success';
+  if (status === 'watch') return 'warning';
+  if (status === 'disengaged') return 'danger';
+  return 'default';
+}
 export function briefVariant(status: NonNullable<Intelligence['dealBrief']>['status']): 'success' | 'warning' | 'danger' | 'default' {
   if (status === 'on_track') return 'success';
   if (status === 'watch') return 'warning';
@@ -98,6 +117,14 @@ export function freshnessVariant(status: NonNullable<Intelligence['dealBrief']>[
   if (status === 'aging') return 'warning';
   if (status === 'stale') return 'danger';
   return 'default';
+}
+export function roleCoverageVariant(status: BuyerRoleCoverage['status']): 'success' | 'warning' | 'danger' {
+  if (status === 'explicit') return 'success';
+  if (status === 'inferred_only') return 'warning';
+  return 'danger';
+}
+export function buyerRoleLabel(role: BuyerRole): string {
+  return role.split('_').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
 }
 export function issueName(assessment: Assessment, code: string): string {
   return assessment.issues.find((item) => item.code === code)?.label ?? code.replace(/^custom_/, '').replace(/_/g, ' ');

@@ -3,12 +3,16 @@ import { recordUsageAtomic } from './billing-usage.js';
 import { loadBuyerCommitteeData } from './buyer-committee-data.js';
 import { buildBuyerCommittee } from './buyer-committee.js';
 import type { BuyerCommitteeIntelligence } from './buyer-committee-types.js';
+import { augmentDealBriefWithEngagement } from './deal-brief-engagement.js';
 import { buildDealBrief } from './deal-brief.js';
 import type { DealBriefIntelligence } from './deal-brief-types.js';
 import { loadDealHistory } from './deal-history.js';
 import { buildDealIntelligence, previousDealHistory, type DealIntelligence } from './deal-intelligence.js';
 import { buildDealMomentum, type DealMomentumIntelligence } from './deal-momentum.js';
 import type { DecisionAction } from './deal-momentum-types.js';
+import { buildEngagementIntelligence } from './engagement-intelligence.js';
+import { loadEngagementMetadata } from './engagement-metadata-data.js';
+import type { EngagementMetadataIntelligence } from './engagement-metadata-types.js';
 import { recordAssessmentHistory } from './enterprise-analytics-v2.js';
 import { HubSpotClient } from './hubspot.js';
 import { syncAssessmentIfEnabled } from './native-sync.js';
@@ -29,6 +33,7 @@ const enrichmentInFlight = new Map<string, Promise<Record<string, unknown> | nul
 type CompleteIntelligence = DealIntelligence
   & Partial<DealMomentumIntelligence>
   & Partial<BuyerCommitteeIntelligence>
+  & Partial<EngagementMetadataIntelligence>
   & DealBriefIntelligence;
 
 function cacheKey(portalId: string, dealId: string): string {
@@ -46,16 +51,11 @@ function putCache(key: string, value: Record<string, unknown>): void {
 async function recordOptionalMetric(
   env: Env,
   portalId: string,
-  service: 'deal_history_enrichment' | 'buyer_committee_enrichment',
+  service: 'deal_history_enrichment' | 'buyer_committee_enrichment' | 'engagement_metadata_enrichment',
   metric: string,
   value: number,
 ): Promise<void> {
-  await recordOperationalMetric(env, {
-    portalId,
-    service,
-    metric,
-    value,
-  }).catch(() => undefined);
+  await recordOperationalMetric(env, { portalId, service, metric, value }).catch(() => undefined);
 }
 
 async function optionalMomentumIntelligence(
@@ -115,13 +115,44 @@ async function optionalBuyerCommitteeIntelligence(
   }
 }
 
+async function optionalEngagementIntelligence(
+  env: Env,
+  portalId: string,
+  dealId: string,
+  client: HubSpotClient,
+  deal: NormalizedDeal,
+): Promise<EngagementMetadataIntelligence | null> {
+  const startedAt = Date.now();
+  try {
+    const metadata = await loadEngagementMetadata(client, dealId);
+    const intelligence = buildEngagementIntelligence(metadata, deal);
+    await recordOptionalMetric(env, portalId, 'engagement_metadata_enrichment', 'success', 1);
+    await recordOptionalMetric(env, portalId, 'engagement_metadata_enrichment', 'latency_ms', Date.now() - startedAt);
+    await recordOptionalMetric(env, portalId, 'engagement_metadata_enrichment', 'coverage_percent', intelligence.engagement.coverage.percent);
+    return intelligence;
+  } catch (error) {
+    console.error(JSON.stringify({
+      level: 'warn',
+      task: 'engagement_metadata_enrichment',
+      portalId,
+      dealId,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    await recordOptionalMetric(env, portalId, 'engagement_metadata_enrichment', 'success', 0);
+    await recordOptionalMetric(env, portalId, 'engagement_metadata_enrichment', 'latency_ms', Date.now() - startedAt);
+    return null;
+  }
+}
+
 function combineDecisionActions(
   momentum: DealMomentumIntelligence | null,
   relationship: BuyerCommitteeIntelligence | null,
+  engagement: EngagementMetadataIntelligence | null,
 ): DecisionAction[] {
   const order = { high: 0, medium: 1, low: 2 } as const;
   const combined: DecisionAction[] = [
     ...(relationship?.relationshipActions ?? []),
+    ...(engagement?.engagementActions ?? []),
     ...(momentum?.decisionActions ?? []),
   ];
   const seen = new Set<string>();
@@ -132,7 +163,7 @@ function combineDecisionActions(
       return true;
     })
     .sort((left, right) => order[left.priority] - order[right.priority])
-    .slice(0, 8);
+    .slice(0, 10);
 }
 
 function completeIntelligence(
@@ -140,20 +171,17 @@ function completeIntelligence(
   readiness: DealIntelligence,
   momentum: DealMomentumIntelligence | null,
   relationship: BuyerCommitteeIntelligence | null,
+  engagement: EngagementMetadataIntelligence | null,
 ): CompleteIntelligence {
-  const decisionActions = combineDecisionActions(momentum, relationship);
+  const decisionActions = combineDecisionActions(momentum, relationship, engagement);
+  const baseBrief = buildDealBrief({ assessment, readiness, momentum, relationship, decisionActions });
   return {
     ...readiness,
     ...(momentum ?? {}),
     ...(relationship ?? {}),
+    ...(engagement ?? {}),
     decisionActions,
-    ...buildDealBrief({
-      assessment,
-      readiness,
-      momentum,
-      relationship,
-      decisionActions,
-    }),
+    ...augmentDealBriefWithEngagement(baseBrief, engagement, decisionActions),
   };
 }
 
@@ -196,11 +224,12 @@ async function buildStoredAssessmentEnrichment(
   const deal = await client.getDeal(dealId, undefined, dimensionProperties);
   const policy = await resolveSegmentedRulesForDeal(env, portalId, client.settings.rules, deal);
   const readiness = await readinessIntelligence(env, portalId, dealId, deal, policy.rules, stored);
-  const [momentum, relationship] = await Promise.all([
+  const [momentum, relationship, engagement] = await Promise.all([
     optionalMomentumIntelligence(env, portalId, dealId, client, deal, policy.rules, stored),
     optionalBuyerCommitteeIntelligence(env, portalId, dealId, client),
+    optionalEngagementIntelligence(env, portalId, dealId, client, deal),
   ]);
-  const intelligence = completeIntelligence(stored, readiness, momentum, relationship);
+  const intelligence = completeIntelligence(stored, readiness, momentum, relationship, engagement);
   const value = {
     ...(stored as unknown as Record<string, unknown>),
     intelligence,
@@ -257,13 +286,15 @@ export async function assessDealForPortal(
   const readiness = await readinessIntelligence(env, portalId, dealId, deal, policy.rules, assessment);
   let momentum: DealMomentumIntelligence | null = null;
   let relationship: BuyerCommitteeIntelligence | null = null;
+  let engagement: EngagementMetadataIntelligence | null = null;
   if (trigger === 'record') {
-    [momentum, relationship] = await Promise.all([
+    [momentum, relationship, engagement] = await Promise.all([
       optionalMomentumIntelligence(env, portalId, dealId, client, deal, policy.rules, assessment),
       optionalBuyerCommitteeIntelligence(env, portalId, dealId, client),
+      optionalEngagementIntelligence(env, portalId, dealId, client, deal),
     ]);
   }
-  const intelligence = completeIntelligence(assessment, readiness, momentum, relationship);
+  const intelligence = completeIntelligence(assessment, readiness, momentum, relationship, engagement);
 
   try {
     await notifyAssessmentTransition(env, portalId, previous, assessment, client.settings, client.plan, trigger, forceSlack);

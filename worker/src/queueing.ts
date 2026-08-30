@@ -7,6 +7,7 @@ import { sendDueDigests } from './email.js';
 import { expirePolicyExceptions } from './enterprise-policy.js';
 import { runMaintenance } from './maintenance.js';
 import { dispatchOutbox } from './outbox.js';
+import { dispatchQueuedRecommendationFollowups } from './recommendation-followup-queue.js';
 import { runDueSyntheticChecks } from './reliability.js';
 import { escalateOverdueRemediations } from './remediation.js';
 import { scanPortal } from './scanner.js';
@@ -33,7 +34,10 @@ async function processMessage(env: Env, message: DealGuardQueueMessage): Promise
   }
   if (message.kind === 'delivery') {
     if (message.task === 'enterprise_alerts') await dispatchEnterpriseAlerts(env);
-    else if (message.task === 'outbox') await dispatchOutbox(env);
+    else if (message.task === 'outbox') {
+      await dispatchOutbox(env);
+      await dispatchQueuedRecommendationFollowups(env, 1);
+    }
     else if (message.task === 'siem') await dispatchSiemEvents(env);
     else if (message.task === 'billing_usage') await retryAtomicUsageReports(env);
     else if (message.task === 'digests') await sendDueDigests(env);

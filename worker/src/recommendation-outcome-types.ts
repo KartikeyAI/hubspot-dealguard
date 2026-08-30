@@ -1,6 +1,6 @@
 export type RecommendationStatus = 'presented' | 'accepted' | 'completed' | 'dismissed' | 'expired' | 'superseded';
 export type RecommendationTransition = 'accept' | 'complete' | 'dismiss';
-export type RecommendationEventType = 'presented' | 'accepted' | 'completed' | 'dismissed' | 'expired' | 'superseded' | 'outcome_observed';
+export type RecommendationEventType = 'presented' | 'accepted' | 'completed' | 'dismissed' | 'expired' | 'superseded' | 'outcome_observed' | 'followup_requested';
 export type ObservedProgress = 'improved' | 'mixed' | 'unchanged' | 'worsened' | 'insufficient_evidence';
 export type EvaluationStatus = 'pending' | 'observed' | 'insufficient_evidence';
 

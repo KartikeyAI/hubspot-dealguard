@@ -1,7 +1,13 @@
-import { requireEnterprisePermission } from './enterprise-access.js';
+import { requireEnterprisePermission, type EnterpriseAccessContext } from './enterprise-access.js';
 import { AppError } from './errors.js';
 import { loadFollowupRoutingState } from './recommendation-followup-delivery.js';
-import { previewRecommendationRoutingPolicy, saveRecommendationRoutingPolicy } from './recommendation-routing-policies.js';
+import {
+  deleteRecommendationRoutingPolicy,
+  listRecommendationRoutingPolicies,
+  previewRecommendationRoutingPolicy,
+  saveRecommendationRoutingPolicy,
+} from './recommendation-routing-policies.js';
+import type { RecommendationRoutingScope } from './recommendation-routing-policy-types.js';
 import type { Env, RequestIdentity } from './types.js';
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -17,12 +23,44 @@ function asStrings(value: unknown): string[] {
     .map((item) => item.trim().slice(0, 128)))];
 }
 
+function parseStrings(value: unknown): string[] {
+  if (Array.isArray(value)) return asStrings(value);
+  if (typeof value !== 'string') return [];
+  try {
+    return asStrings(JSON.parse(value));
+  } catch {
+    return [];
+  }
+}
+
+function scopeAllowed(scope: RecommendationRoutingScope, access: EnterpriseAccessContext): boolean {
+  const checks: Array<[string[], string[]]> = [
+    [scope.pipelineIds, access.scope.pipelineIds],
+    [scope.teamIds, access.scope.teamIds],
+    [scope.ownerIds, access.scope.ownerIds],
+    [scope.regionCodes, access.scope.regionCodes],
+  ];
+  return checks.every(([policyValues, allowed]) => {
+    if (allowed.length === 0) return true;
+    return policyValues.length > 0 && policyValues.every((value) => allowed.includes(value));
+  });
+}
+
+function portalWideAccess(access: EnterpriseAccessContext): boolean {
+  return access.permissions.includes('*') || (
+    access.scope.pipelineIds.length === 0
+    && access.scope.teamIds.length === 0
+    && access.scope.ownerIds.length === 0
+    && access.scope.regionCodes.length === 0
+  );
+}
+
 async function constrainPolicyScope(
   env: Env,
   identity: RequestIdentity,
   value: unknown,
   permissionName: 'alert.view' | 'alert.manage',
-): Promise<Record<string, unknown>> {
+): Promise<{ input: Record<string, unknown>; access: EnterpriseAccessContext }> {
   const access = await requireEnterprisePermission(env, identity, permissionName);
   const input = { ...asObject(value) };
   const supplied = asObject(input.scope);
@@ -38,7 +76,29 @@ async function constrainPolicyScope(
     scope[key] = allowed.length > 0 && requested.length === 0 ? [...allowed] : requested;
   }
   input.scope = scope;
-  return input;
+  return { input, access };
+}
+
+async function requirePolicyScope(
+  env: Env,
+  identity: RequestIdentity,
+  access: EnterpriseAccessContext,
+  policyId: string,
+): Promise<void> {
+  const row = await env.DB.prepare(
+    `SELECT pipeline_ids_json, team_ids_json, owner_ids_json, region_codes_json
+     FROM recommendation_routing_policies WHERE portal_id = ? AND id = ?`,
+  ).bind(identity.portalId, policyId).first<Record<string, unknown>>();
+  if (!row) throw new AppError(404, 'recommendation_policy_not_found', 'The recommendation routing policy does not exist.');
+  const scope: RecommendationRoutingScope = {
+    pipelineIds: parseStrings(row.pipeline_ids_json),
+    teamIds: parseStrings(row.team_ids_json),
+    ownerIds: parseStrings(row.owner_ids_json),
+    regionCodes: parseStrings(row.region_codes_json),
+  };
+  if (!scopeAllowed(scope, access)) {
+    throw new AppError(403, 'recommendation_policy_scope_denied', 'The recommendation routing policy is outside your assigned data scope.');
+  }
 }
 
 async function requireConfiguredPolicyChannels(
@@ -59,15 +119,42 @@ async function requireConfiguredPolicyChannels(
   }
 }
 
+export async function listScopedRecommendationRoutingPolicies(
+  env: Env,
+  identity: RequestIdentity,
+) {
+  const access = await requireEnterprisePermission(env, identity, 'alert.view');
+  const result = await listRecommendationRoutingPolicies(env, identity);
+  return {
+    ...result,
+    policies: result.policies.filter((policy) => scopeAllowed(policy.scope, access)),
+    permissions: {
+      ...result.permissions,
+      canRun: result.permissions.canRun && portalWideAccess(access),
+    },
+  };
+}
+
 export async function saveScopedRecommendationRoutingPolicy(
   env: Env,
   identity: RequestIdentity,
   value: unknown,
   policyId: string | null = null,
 ) {
-  const scoped = await constrainPolicyScope(env, identity, value, 'alert.manage');
-  await requireConfiguredPolicyChannels(env, identity, scoped);
-  return saveRecommendationRoutingPolicy(env, identity, scoped, policyId);
+  const { input, access } = await constrainPolicyScope(env, identity, value, 'alert.manage');
+  if (policyId) await requirePolicyScope(env, identity, access, policyId);
+  await requireConfiguredPolicyChannels(env, identity, input);
+  return saveRecommendationRoutingPolicy(env, identity, input, policyId);
+}
+
+export async function deleteScopedRecommendationRoutingPolicy(
+  env: Env,
+  identity: RequestIdentity,
+  policyId: string,
+): Promise<void> {
+  const access = await requireEnterprisePermission(env, identity, 'alert.manage');
+  await requirePolicyScope(env, identity, access, policyId);
+  await deleteRecommendationRoutingPolicy(env, identity, policyId);
 }
 
 export async function previewScopedRecommendationRoutingPolicy(
@@ -75,6 +162,16 @@ export async function previewScopedRecommendationRoutingPolicy(
   identity: RequestIdentity,
   value: unknown,
 ) {
-  const scoped = await constrainPolicyScope(env, identity, value, 'alert.view');
-  return previewRecommendationRoutingPolicy(env, identity, scoped);
+  const { input } = await constrainPolicyScope(env, identity, value, 'alert.view');
+  return previewRecommendationRoutingPolicy(env, identity, input);
+}
+
+export async function authorizePortalWideRecommendationPolicyEvaluation(
+  env: Env,
+  identity: RequestIdentity,
+): Promise<void> {
+  const access = await requireEnterprisePermission(env, identity, 'alert.manage');
+  if (!portalWideAccess(access)) {
+    throw new AppError(403, 'recommendation_policy_run_scope_denied', 'Portal-wide policy evaluation requires an administrator or an unscoped alert manager. Scheduled maintenance continues to evaluate authorized policies independently.');
+  }
 }

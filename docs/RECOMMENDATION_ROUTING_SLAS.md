@@ -1,8 +1,8 @@
 # DealGuard Recommendation Routing Policies and SLAs
 
-Recommendation Routing Policies turn active DealGuard recommendations into a governed notification workflow. They reuse DealGuard's existing notification routes, encrypted channels, business calendars, data-scope filters, and delivery queue.
+Recommendation Routing Policies turn active DealGuard recommendations into a governed notification workflow. They reuse DealGuard's notification routes, encrypted channels, business calendars, data-scope filters, and delivery queue.
 
-The feature is deterministic. It does not use AI to decide who should be notified or to draft message content.
+The feature is deterministic. It does not use AI to choose recipients or draft message content.
 
 ## Product boundary
 
@@ -17,9 +17,44 @@ A policy does not:
 - claim that a notification caused later deal movement;
 - bypass route scope, quiet hours, channel configuration, or customer permissions.
 
+## Customer-configurable routing foundation
+
+The deployed App Home surface lets an authorized customer configure the routing foundation used by manual and policy-driven recommendation follow-ups.
+
+### Reusable channels
+
+Supported channel types are:
+
+- Slack incoming webhook;
+- Microsoft Teams workflow;
+- email;
+- signed HTTPS webhook.
+
+The customer can create, update, enable, disable, and—when not referenced by a route—delete a channel. HTTPS endpoints and webhook signing secrets are encrypted through the existing notification-channel model. Generated signing secrets are shown only when the channel is created.
+
+Email recipients remain in the reusable email channel. They are not copied into every recommendation policy or follow-up batch.
+
+### Business calendars
+
+Customers can configure an IANA timezone, weekday operating hours, and holiday dates. Routes may reference one calendar as their quiet-hours control.
+
+### Explicit routes
+
+A route combines:
+
+- one or more explicit recommendation event types;
+- one or more enabled channels;
+- a minimum severity;
+- optional pipeline, team, owner, and region filters;
+- an optional business calendar;
+- a suppression window;
+- enabled or disabled state.
+
+An empty event list never authorizes recommendation notifications.
+
 ## Durable customer authorization
 
-Manual follow-ups retain the existing two-step model:
+Manual follow-ups retain the two-step model:
 
 ```text
 preview → human confirmation → queued delivery
@@ -47,25 +82,15 @@ Disabling or deleting the policy stops future evaluations. It does not remove hi
 A route must explicitly include the event it is intended to deliver:
 
 ```text
+recommendation.followup.requested
 recommendation.policy.due_soon
 recommendation.policy.overdue
 recommendation.policy.escalated
 ```
 
-An empty route event list is not treated as policy opt-in.
+The first event is used by human-confirmed manual follow-up. The remaining events are used by configured policies.
 
-The initial route must include the policy's trigger event. An escalation route must include `recommendation.policy.escalated`.
-
-## Supported channels
-
-Policies reuse configured DealGuard notification channels:
-
-- Slack incoming webhook;
-- Microsoft Teams workflow;
-- email;
-- signed HTTPS webhook.
-
-Endpoints and signing secrets remain encrypted through the existing notification-channel model. Email recipients remain in the configured email channel rather than being copied into each policy.
+The policy's initial route must include its trigger event. An escalation route must include `recommendation.policy.escalated`.
 
 ## Recommendation eligibility
 
@@ -137,7 +162,11 @@ Escalation is one-time. It does not alter recommendation ownership or CRM data.
 
 ## Evaluation schedule
 
-Enabled policies are evaluated by the existing maintenance queue. An authorized operator can also request an immediate portal-scoped evaluation from App Home.
+Enabled policies are evaluated by the existing maintenance queue.
+
+An administrator or unscoped alert manager may request an immediate portal-wide evaluation from App Home. The endpoint acknowledges the request within the UI-extension request window and executes the bounded evaluation through the Worker execution context.
+
+Scoped alert managers can create and operate policies inside their assigned scope, but cannot trigger a portal-wide manual evaluation. Scheduled maintenance continues to evaluate each saved policy independently.
 
 Per evaluation, DealGuard bounds work to:
 
@@ -167,7 +196,8 @@ A changed or unavailable route is excluded rather than silently substituted.
 
 DealGuard records:
 
-- policy creation, update, enablement, disablement, deletion, and immediate evaluation;
+- channel, calendar, and route configuration through existing Enterprise audit events;
+- policy creation, update, enablement, disablement, deletion, and immediate-evaluation requests;
 - policy evaluation timestamps and counts;
 - per-policy/per-recommendation dispatch state;
 - first and latest queue timestamps;
@@ -195,13 +225,13 @@ authorization_mode = human_confirmation
 alert.view
 ```
 
-Required to list and preview routing policies.
+Required to list and preview routing policies and notification configuration.
 
 ```text
 alert.manage
 ```
 
-Required to create, update, enable, disable, delete, or immediately evaluate policies.
+Required to create, update, enable, disable, or delete channels, calendars, routes, and recommendation policies. Portal-wide immediate evaluation additionally requires administrator or unscoped access.
 
 ```text
 remediation.view
@@ -209,7 +239,7 @@ remediation.view
 
 Required when previewing the recommendation matches behind a policy.
 
-Assigned pipeline, team, owner, and region scope remains authoritative. When a scoped operator leaves a policy dimension blank, DealGuard binds that dimension to the operator's assigned scope rather than creating an unrestricted policy.
+Assigned pipeline, team, owner, and region scope remains authoritative. When a scoped operator leaves a policy dimension blank, DealGuard binds that dimension to the operator's assigned scope rather than creating an unrestricted policy. Scoped operators cannot list, update, or delete policies outside their assignments.
 
 ## Data minimisation
 
@@ -226,17 +256,20 @@ They do not persist contact records, communication content, quote documents, con
 
 ## App Home workflow
 
-The App Home surface supports:
+The App Home surfaces support:
 
-1. Listing current policies and health.
-2. Creating a disabled draft.
-3. Selecting an explicitly opted-in initial route.
-4. Selecting an optional manager escalation route.
-5. Setting lifecycle, priority, threshold, cooldown, and notification limits.
-6. Previewing current matches without sending anything.
-7. Enabling the policy as durable notification authorization.
-8. Running an immediate evaluation.
-9. Reviewing match, queue, failure, and escalation counts.
+1. Creating encrypted Slack, Teams, email, or signed-webhook channels.
+2. Creating business-hours calendars and holiday schedules.
+3. Creating explicit routes with event, scope, severity, quiet-hour, and suppression controls.
+4. Listing current recommendation policies and health.
+5. Creating a disabled policy draft.
+6. Selecting an explicitly opted-in initial route.
+7. Selecting an optional manager escalation route.
+8. Setting lifecycle, priority, threshold, cooldown, and notification limits.
+9. Previewing current matches without sending anything.
+10. Enabling the policy as durable notification authorization.
+11. Requesting an immediate evaluation when the operator has portal-wide authority.
+12. Reviewing match, queue, failure, and escalation counts.
 
 ## Deployment dependency
 
@@ -249,6 +282,6 @@ Production rollout requires:
 5. HubSpot project upload containing the updated App Home surfaces.
 6. At least one configured notification channel.
 7. Notification routes that explicitly opt into the selected policy events.
-8. Validation of quiet hours, cooldown, repeat, and escalation behavior in a developer portal.
+8. Validation of Slack or Teams delivery, quiet hours, cooldown, repeat, and escalation behavior in a developer portal.
 
 No new HubSpot OAuth scope is required.

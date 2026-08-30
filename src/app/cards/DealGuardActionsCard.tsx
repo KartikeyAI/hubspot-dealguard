@@ -1,11 +1,19 @@
 import React from 'react';
 import { Alert, Button, Divider, Flex, Heading, StatusTag, Text, hubspot } from '@hubspot/ui-extensions';
 import { CardLoading, CardUnavailable, formatDate, useDealAssessment } from './deal-intelligence-shared';
+import { RecommendationLifecyclePanel } from './deal-recommendation-lifecycle';
 
 hubspot.extend<'crm.record.tab'>(({ context }) => <DealGuardActionsCard dealId={String(context.crm.objectId)} />);
 
 const DealGuardActionsCard = ({ dealId }: { dealId: string }) => {
   const { assessment, loading, working, error, notice, load } = useDealAssessment(dealId);
+  const [recommendationReload, setRecommendationReload] = React.useState(0);
+
+  const refreshActions = async () => {
+    await load(true);
+    setRecommendationReload((value) => value + 1);
+  };
+
   if (loading) return <CardLoading label="Loading DealGuard actions" />;
   if (!assessment) return <CardUnavailable error={error} />;
   const intelligence = assessment.intelligence;
@@ -31,6 +39,8 @@ const DealGuardActionsCard = ({ dealId }: { dealId: string }) => {
           </Flex>)}
         </Flex>}
 
+    <RecommendationLifecyclePanel dealId={dealId} reloadToken={recommendationReload} />
+
     <Divider />
     <Heading>Readiness fixes</Heading>
     {readinessActions.length === 0
@@ -41,7 +51,7 @@ const DealGuardActionsCard = ({ dealId }: { dealId: string }) => {
             <Text variant="microcopy">Potential readiness impact: +{item.impact} · {item.label}</Text>
           </Flex>)}
         </Flex>}
-    <Button variant="secondary" onClick={() => void load(true)} disabled={working}>Refresh actions</Button>
+    <Button variant="secondary" onClick={() => void refreshActions()} disabled={working}>Refresh actions</Button>
     <Text variant="microcopy">Based on assessment from {new Date(assessment.assessedAt).toLocaleString()}.</Text>
   </Flex>;
 };

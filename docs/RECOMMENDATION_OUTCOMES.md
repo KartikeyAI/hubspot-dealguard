@@ -72,13 +72,15 @@ This stores the latest bounded observation for a completed recommendation:
 
 A new recommendation instance is created when a final enriched Deal Brief exposes a top next action that is not already active for the same deal.
 
-Repeated record-card loads update `last_presented_at`; they do not create duplicate instances for the same active recommendation.
+Repeated record-card loads update `last_presented_at`; they do not create duplicate instances for the same active recommendation. The originally presented deadline is retained rather than being moved forward by later refreshes.
 
 ### Accepted
 
 A user with the existing `remediation.manage` permission can accept a presented recommendation.
 
 Accepted recommendations do not expire merely because they are overdue. They remain accepted and are returned with `overdue: true` until completed or dismissed.
+
+Accepted recommendation definitions are frozen in application logic and PostgreSQL so later Deal Brief refreshes cannot silently change committed work.
 
 ### Completed
 
@@ -88,7 +90,7 @@ Completion creates a pending outcome record. Completion itself is not treated as
 
 ### Dismissed
 
-A presented or accepted recommendation can be dismissed. A dismissal reason is required and retained for product-quality analysis.
+A presented or accepted recommendation can be dismissed. A dismissal reason is required and retained for auditability and product-quality analysis.
 
 ### Expired
 
@@ -122,7 +124,7 @@ The deterministic evaluator compares available baseline and later evidence:
 - engagement-evidence delta;
 - commercial-integrity delta;
 - Deal Brief status movement;
-- whether the same recommendation remains current;
+- whether the same recommendation remains current as disclosed context;
 - whether baseline evidence codes remain present in the bounded later evidence;
 - stage-identifier change and recorded close-date movement as disclosed context.
 
@@ -139,6 +141,8 @@ At least two comparable signals are required for a directional classification.
 A changed stage identifier is recorded but is not assumed to be an advance because stage ordering may be customer-specific.
 
 Close-date movement is recorded as context. A later close date is not automatically interpreted as worse, and an earlier close date is not automatically interpreted as better.
+
+Recommendation disappearance by itself does not move an outcome toward `improved`. Evidence disappearance is comparable only when the later Deal Brief has sufficient evidence coverage.
 
 ## API endpoints
 
@@ -204,6 +208,38 @@ The endpoint requires `analytics.view` and returns:
 - per-recommendation lifecycle counts;
 - recent recommendation instances and outcome evidence.
 
+## Product surfaces
+
+### Deal record lifecycle controls
+
+The existing DealGuard Actions app card now loads recommendation access and history after the final deal assessment is available.
+
+Users with `remediation.view` can review active and recent recommendation history. Users with `remediation.manage` can:
+
+- accept a presented recommendation;
+- mark a presented or accepted recommendation complete;
+- dismiss a presented or accepted recommendation with a mandatory free-text reason.
+
+The card shows current status, priority, owner, deadline, overdue state, rationale, recent terminal history, pending observation state, and any later observed outcome explanation.
+
+The lifecycle controls call only the DealGuard external API. They do not edit deal properties, stages, owners, close dates, amounts, stakeholder roles, activities, quotes, or line items.
+
+### App Home adoption and outcome analytics
+
+The Enterprise App Home now includes a recommendation adoption and outcome panel with 30-, 90-, and 180-day windows.
+
+The panel reports:
+
+- acceptance and completion rates;
+- median time to acceptance and completion;
+- overdue accepted work;
+- completed, dismissed, expired, and superseded counts;
+- improved, mixed, unchanged, worsened, and insufficient-evidence observations;
+- adoption by recommendation type;
+- recent recommendation lifecycle and later evidence.
+
+The surface repeatedly labels the evidence as observed and non-causal. It does not convert recommendation history into buyer intent, forecast category, win probability, expected revenue, or expected loss.
+
 ## Permissions and least privilege
 
 No new enterprise permission is introduced.
@@ -212,9 +248,11 @@ No new enterprise permission is introduced.
 - `remediation.manage` controls acceptance, completion, and dismissal.
 - `analytics.view` controls portfolio outcome analytics.
 
-No new HubSpot OAuth scope is introduced.
+There is **no new HubSpot OAuth scope**.
 
 The lifecycle and analytics APIs make no HubSpot CRM request. Recommendation capture and later observation reuse the final record-level Deal Brief that DealGuard already generates.
+
+The deal card also checks the existing `/enterprise/access` response before rendering mutation controls. This improves the product experience but does not replace server-side authorization.
 
 ## Runtime boundary
 
@@ -225,6 +263,8 @@ The lifecycle and analytics APIs make no HubSpot CRM request. Recommendation cap
 - Automatic expiry is evaluated during record observation, deal-history reads, and portfolio analytics reads.
 - At most 500 due presented recommendations are expired in one evaluation pass.
 - Outcome observation is limited to completed recommendations from the previous 90 days.
+- UI-extension API calls use the platform's 15-second request ceiling.
+- Lifecycle controls are human-triggered and never mutate CRM fields automatically.
 
 ## Interpretation boundaries
 
@@ -255,9 +295,13 @@ Production deployment requires, in order:
 4. PR #25;
 5. PR #26 and migration `0017`;
 6. PR #27;
-7. migration `0018_recommendation_outcomes.sql`;
+7. PR #28 and migration `0018_recommendation_outcomes.sql`;
 8. Recommendation Outcome Measurement Worker changes;
-9. Worker deployment and HubSpot project upload;
-10. fresh Deal Brief records to begin recommendation capture.
+9. Recommendation lifecycle and App Home UI changes;
+10. Worker deployment;
+11. HubSpot project upload;
+12. fresh Deal Brief records to begin recommendation capture;
+13. permission-specific acceptance testing for viewer and manager roles;
+14. a later Deal Brief after completion to verify outcome observation.
 
-The next product-surface slice should add recommendation lifecycle controls to the deal record and observed-outcome analytics to App Home. This foundation slice deliberately adds no new UI.
+The next product-surface slice should add manager-level bulk follow-up, governed notification routing, and exportable recommendation evidence without introducing automatic CRM changes or causal claims.

@@ -68,6 +68,7 @@ on:
       - 'src/app/pages/ManagerDecisionQueuePanel.tsx'
       - 'src/app/pages/ManagerDecisionQueueCore.tsx'
       - 'src/app/pages/ExecutiveRevenuePanel.tsx'
+      - 'src/app/pages/RecommendationOutcomePanel.tsx'
       - 'src/app/pages/tsconfig.json'
       - 'test/p2-intelligence-contract.test.mjs'
       - 'test/trustworthy-intelligence.test.mjs'
@@ -92,6 +93,7 @@ on:
       - 'test/executive-revenue-ui-contract.test.mjs'
       - 'test/recommendation-outcome.test.mjs'
       - 'test/recommendation-outcome-contract.test.mjs'
+      - 'test/recommendation-outcome-ui-contract.test.mjs'
       - 'scripts/postgres-migrate.mjs'
       - 'scripts/postgres-validate.mjs'
       - 'docs/ENTERPRISE_ANALYTICS.md'
@@ -180,7 +182,7 @@ jobs:
       - name: Run executive-revenue tests
         run: node --test test/executive-revenue.test.mjs test/executive-revenue-contract.test.mjs test/executive-revenue-ui-contract.test.mjs
       - name: Run recommendation-outcome tests
-        run: node --test test/recommendation-outcome.test.mjs test/recommendation-outcome-contract.test.mjs
+        run: node --test test/recommendation-outcome.test.mjs test/recommendation-outcome-contract.test.mjs test/recommendation-outcome-ui-contract.test.mjs
       - name: Run P2 contract tests
         run: node --test test/p2-intelligence-contract.test.mjs
       - name: Run full automated test suite

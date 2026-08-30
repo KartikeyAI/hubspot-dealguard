@@ -1,4 +1,4 @@
-name: Recommendation Operations
+name: Recommendation Operations and Routing
 
 on:
   pull_request:
@@ -6,27 +6,45 @@ on:
       - 'worker/src/recommendation-operations-types.ts'
       - 'worker/src/recommendation-operations-model.ts'
       - 'worker/src/recommendation-operations.ts'
+      - 'worker/src/recommendation-followup-candidates.ts'
       - 'worker/src/recommendation-followup-confirmation.ts'
       - 'worker/src/recommendation-followup-queue.ts'
       - 'worker/src/recommendation-followup-delivery.ts'
+      - 'worker/src/recommendation-routing-policy-types.ts'
+      - 'worker/src/recommendation-routing-policy-model.ts'
+      - 'worker/src/recommendation-routing-policy-api.ts'
+      - 'worker/src/recommendation-routing-policies.ts'
+      - 'worker/src/recommendation-routing-policy-runner.ts'
       - 'worker/src/recommendation-evidence-export.ts'
       - 'worker/src/recommendation-outcome-types.ts'
       - 'worker/src/secure-downloads.ts'
+      - 'worker/src/maintenance.ts'
       - 'worker/src/queueing.ts'
       - 'worker/src/queue-publisher.ts'
       - 'worker/src/routes-v14.ts'
+      - 'worker/src/routes-v15.ts'
       - 'worker/src/index.ts'
       - 'worker/src/postgres.ts'
       - 'database/migrations/0018_recommendation_outcomes.sql'
       - 'database/migrations/0019_recommendation_operations.sql'
+      - 'database/migrations/0020_recommendation_routing_policies.sql'
       - 'scripts/postgres-migrate.mjs'
       - 'scripts/postgres-validate.mjs'
+      - 'scripts/postgres-validate-recommendation-operations.mjs'
+      - 'src/app/pages/RecommendationOperationsPanel.tsx'
+      - 'src/app/pages/RecommendationRoutingPoliciesPanel.tsx'
+      - 'src/app/pages/ManagerDecisionQueuePanel.tsx'
       - 'test/recommendation-outcome.test.mjs'
       - 'test/recommendation-outcome-contract.test.mjs'
+      - 'test/recommendation-outcome-ui-contract.test.mjs'
       - 'test/recommendation-operations.test.mjs'
       - 'test/recommendation-operations-contract.test.mjs'
+      - 'test/recommendation-routing-policy.test.mjs'
+      - 'test/recommendation-routing-policy-contract.test.mjs'
       - 'docs/RECOMMENDATION_OUTCOMES.md'
       - 'docs/RECOMMENDATION_OPERATIONS.md'
+      - 'docs/RECOMMENDATION_ROUTING_SLAS.md'
+      - 'package.json'
       - '.github/workflows/recommendation-operations.yml'
   workflow_dispatch:
 
@@ -36,7 +54,7 @@ permissions:
 jobs:
   recommendation-operations:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:18-alpine
@@ -61,9 +79,15 @@ jobs:
       - name: Create non-secret CI environment file
         run: touch .env
       - name: Install dependencies
-        run: npm install --ignore-scripts --silent
-      - name: Typecheck Worker
-        run: npm run typecheck
+        run: |
+          npm install --ignore-scripts --silent
+          npm install --ignore-scripts --silent --prefix src/app/cards
+          npm install --ignore-scripts --silent --prefix src/app/pages
+      - name: Typecheck Worker and HubSpot surfaces
+        run: |
+          npm run typecheck
+          npm run typecheck --prefix src/app/cards
+          npm run typecheck --prefix src/app/pages
       - name: Build Worker contracts
         run: npm run build
       - name: Apply PostgreSQL migrations
@@ -85,8 +109,10 @@ jobs:
           npm run db:migrate:check
           npm run db:validate
       - name: Run recommendation outcome foundation tests
-        run: node --test test/recommendation-outcome.test.mjs test/recommendation-outcome-contract.test.mjs
-      - name: Run recommendation operations tests
+        run: node --test test/recommendation-outcome.test.mjs test/recommendation-outcome-contract.test.mjs test/recommendation-outcome-ui-contract.test.mjs
+      - name: Run manual recommendation operations tests
         run: node --test test/recommendation-operations.test.mjs test/recommendation-operations-contract.test.mjs
+      - name: Run recommendation routing policy tests
+        run: node --test test/recommendation-routing-policy.test.mjs test/recommendation-routing-policy-contract.test.mjs
       - name: Run full automated test suite
         run: npm test

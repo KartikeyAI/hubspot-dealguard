@@ -117,7 +117,9 @@ export function nextPolicyDispatchStage(
   now = Date.now(),
 ): RecommendationPolicyDispatchStage | null {
   if (!state || state.notificationCount === 0) return 'initial';
-  if (state.resolvedAt) return null;
+  // The evaluator calls this function only for a recommendation that currently
+  // matches the policy. A previously resolved dispatch can therefore be
+  // reactivated without losing its conservative cooldown and send counters.
   if (
     policy.escalationRouteId
     && policy.escalationAfterMinutes !== null

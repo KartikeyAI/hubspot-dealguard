@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS recommendation_followup_batches (
   severity TEXT NOT NULL CHECK (severity IN ('warning', 'critical')),
   manager_note TEXT NOT NULL,
   status TEXT NOT NULL CHECK (
-    status IN ('previewed', 'queued', 'delivering', 'completed', 'partially_failed', 'failed', 'expired')
+    status IN ('previewed', 'confirming', 'queued', 'delivering', 'completed', 'partially_failed', 'failed', 'expired')
   ),
   requested_count INTEGER NOT NULL DEFAULT 0 CHECK (requested_count >= 0),
   eligible_count INTEGER NOT NULL DEFAULT 0 CHECK (eligible_count >= 0),

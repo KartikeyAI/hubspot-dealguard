@@ -14,6 +14,7 @@ import {
   type RecommendationFollowupDeliveryResult,
   type RecommendationFollowupItemStatus,
   type RecommendationFollowupKind,
+  type RecommendationFollowupRoutingMatch,
   type RecommendationFollowupScope,
   type RecommendationFollowupSeverity,
   type RecommendationRouteConfig,
@@ -35,6 +36,7 @@ interface RouteRow extends Record<string, unknown> {
   channel_ids_json: string;
   quiet_hours_calendar_id: string | null;
   enabled: number;
+  updated_at: string;
 }
 
 export interface FollowupChannelRow extends Record<string, unknown> {
@@ -47,6 +49,7 @@ export interface FollowupChannelRow extends Record<string, unknown> {
   signing_secret_iv: string | null;
   config_json: string;
   enabled: number;
+  updated_at: string;
 }
 
 interface CalendarRow extends Record<string, unknown> {
@@ -141,14 +144,15 @@ export async function loadFollowupRoutingState(
   const [routeResult, channelResult, calendarResult] = await Promise.all([
     env.DB.prepare(
       `SELECT id, name, event_types_json, minimum_severity, pipeline_ids_json, team_ids_json,
-              owner_ids_json, region_codes_json, channel_ids_json, quiet_hours_calendar_id, enabled
+              owner_ids_json, region_codes_json, channel_ids_json, quiet_hours_calendar_id,
+              enabled, updated_at
        FROM notification_routes
        WHERE portal_id = ? AND enabled = 1
        ORDER BY created_at ASC`,
     ).bind(portalId).all<RouteRow>(),
     env.DB.prepare(
       `SELECT id, type, name, endpoint_cipher, endpoint_iv, signing_secret_cipher,
-              signing_secret_iv, config_json, enabled
+              signing_secret_iv, config_json, enabled, updated_at
        FROM notification_channels
        WHERE portal_id = ? AND enabled = 1
        ORDER BY created_at ASC`,
@@ -186,8 +190,14 @@ export async function loadFollowupRoutingState(
       channelIds: jsonStrings(route.channel_ids_json),
       quietHoursCalendarId: route.quiet_hours_calendar_id,
       enabled: Boolean(route.enabled),
+      updatedAt: route.updated_at,
     })),
-    channelSummaries: channels.map((channel) => ({ id: channel.id, name: channel.name, type: channel.type })),
+    channelSummaries: channels.map((channel) => ({
+      id: channel.id,
+      name: channel.name,
+      type: channel.type,
+      updatedAt: channel.updated_at,
+    })),
   };
 }
 
@@ -302,17 +312,26 @@ async function deliverChannel(
 
 async function markBatchFailed(env: Env, portalId: string, batchId: string, error: unknown): Promise<void> {
   const now = new Date().toISOString();
-  await env.DB.prepare(
-    `UPDATE recommendation_followup_batches
-     SET status = 'failed', failed_count = GREATEST(failed_count, confirmed_count), completed_at = ?, updated_at = ?
-     WHERE portal_id = ? AND id = ? AND status IN ('queued', 'delivering')`,
-  ).bind(now, now, portalId, batchId).run();
+  const message = (error instanceof Error ? error.message : String(error)).slice(0, 1000);
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE recommendation_followup_batches
+       SET status = 'failed', failed_count = GREATEST(failed_count, confirmed_count),
+           completed_at = ?, updated_at = ?
+       WHERE portal_id = ? AND id = ? AND status IN ('queued', 'delivering')`,
+    ).bind(now, now, portalId, batchId),
+    env.DB.prepare(
+      `UPDATE recommendation_followup_items
+       SET status = 'failed', last_error = ?, updated_at = ?
+       WHERE portal_id = ? AND batch_id = ? AND status IN ('queued', 'delivering')`,
+    ).bind(message, now, portalId, batchId),
+  ]);
   console.error(JSON.stringify({
     level: 'error',
     task: 'recommendation_followup_delivery',
     portalId,
     batchId,
-    error: error instanceof Error ? error.message : String(error),
+    error: message,
   }));
 }
 
@@ -341,6 +360,9 @@ export async function deliverRecommendationFollowupBatch(
     const state = await loadFollowupRoutingState(env, portalId);
     const channelById = new Map(state.channels.map((channel) => [channel.id, channel]));
     const routeById = new Map(state.routes.map((route) => [route.id, route]));
+    const expectedByRecommendation = parseJson<{
+      items?: Record<string, RecommendationFollowupRoutingMatch>;
+    }>(batch.routing_summary_json, {}).items ?? {};
     let delivered = 0;
     let partiallyFailed = 0;
     let failed = 0;
@@ -353,15 +375,24 @@ export async function deliverRecommendationFollowupBatch(
       ).bind(new Date().toISOString(), portalId, batchId, item.id).run();
       if (Number(itemClaim.meta?.changes ?? 0) <= 0) continue;
 
+      const expected = expectedByRecommendation[item.recommendation_id];
+      const expectedRouteById = new Map((expected?.routes ?? []).map((route) => [route.id, route]));
       const storedRouteIds = jsonStrings(item.matched_route_ids_json);
       const storedChannelIds = new Set(jsonStrings(item.matched_channel_ids_json));
       const activeChannelIds = new Set<string>();
       for (const routeId of storedRouteIds) {
         const route = routeById.get(routeId);
-        if (!route || state.quietRouteIds.has(routeId)) continue;
+        const expectedRoute = expectedRouteById.get(routeId);
+        if (!route || !expectedRoute || route.updatedAt !== expectedRoute.updatedAt) continue;
+        if (state.quietRouteIds.has(routeId)) continue;
         if (!routeExplicitlyMatches(route, itemScope(item), batch.severity)) continue;
+        const expectedChannelById = new Map(expectedRoute.channels.map((channel) => [channel.id, channel]));
         for (const channelId of route.channelIds) {
-          if (storedChannelIds.has(channelId) && channelById.has(channelId)) activeChannelIds.add(channelId);
+          const channel = channelById.get(channelId);
+          const expectedChannel = expectedChannelById.get(channelId);
+          if (!storedChannelIds.has(channelId) || !channel || !expectedChannel) continue;
+          if (channel.type !== expectedChannel.type || channel.updated_at !== expectedChannel.updatedAt) continue;
+          activeChannelIds.add(channelId);
         }
       }
       const selectedChannels = [...activeChannelIds]
@@ -400,7 +431,7 @@ export async function deliverRecommendationFollowupBatch(
       else if (status === 'partially_failed') partiallyFailed += 1;
       else failed += 1;
       const lastError = selectedChannels.length === 0
-        ? 'No enabled explicitly opted-in channels remained available at delivery time.'
+        ? 'No unchanged, enabled, explicitly opted-in channels remained available at delivery time.'
         : results.find((result) => result.status === 'failed')?.error ?? null;
       await env.DB.prepare(
         `UPDATE recommendation_followup_items

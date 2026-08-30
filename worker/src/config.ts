@@ -11,4 +11,5 @@ export const PLAN_LIMITS: Record<PlanId,PlanLimits> = {
  beta_growth:{maxDealsPerScan:10000,minScanIntervalMinutes:30,historyDays:730,maxCustomRules:50,digestFrequencies:['daily','weekly'],slackNotifications:true,workflowActions:true,nativeSync:true,enterpriseGovernance:true,maxPolicySimulationDeals:5000,remediationAutomation:true,multiDestinationDelivery:true,maxNotificationDestinations:25},
 };
 export const REQUIRED_HUBSPOT_SCOPES = ['crm.objects.deals.read','crm.objects.deals.write','crm.objects.contacts.read','crm.objects.companies.read','crm.schemas.deals.read','crm.schemas.deals.write','crm.objects.tasks.write'] as const;
+export const OPTIONAL_COMMERCIAL_HUBSPOT_SCOPES = ['crm.objects.line_items.read','crm.objects.quotes.read'] as const;
 export const APP_VERSION = '2.1.0-rc.1';

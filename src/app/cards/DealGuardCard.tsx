@@ -1,6 +1,17 @@
 import React from 'react';
 import { Alert, Button, Divider, Flex, Heading, StatusTag, Text, hubspot } from '@hubspot/ui-extensions';
-import { CardLoading, CardUnavailable, credibilityVariant, delta, formatDate, momentumVariant, statusVariant, useDealAssessment } from './deal-intelligence-shared';
+import {
+  CardLoading,
+  CardUnavailable,
+  credibilityVariant,
+  delta,
+  formatDate,
+  momentumVariant,
+  relationshipVariant,
+  roleCoverageVariant,
+  statusVariant,
+  useDealAssessment,
+} from './deal-intelligence-shared';
 
 hubspot.extend<'crm.record.tab'>(({ context }) => <DealGuardReadinessCard dealId={String(context.crm.objectId)} />);
 
@@ -13,6 +24,8 @@ const DealGuardReadinessCard = ({ dealId }: { dealId: string }) => {
   const topRisks = intelligence?.risk.contributors.slice(0, 3) ?? [];
   const momentum = intelligence?.momentum;
   const closeDate = intelligence?.closeDateCredibility;
+  const relationship = intelligence?.relationshipCoverage;
+  const coreRoles = relationship?.roleCoverage.filter((item) => item.core) ?? [];
 
   return <Flex direction="column" gap="medium">
     {error && <Alert title="Action failed" variant="danger">{error}</Alert>}
@@ -55,8 +68,27 @@ const DealGuardReadinessCard = ({ dealId }: { dealId: string }) => {
       </Flex>
       <Text>{closeDate.score === null ? 'Score unavailable' : `${closeDate.score}/100`} · confidence {closeDate.confidence} · {closeDate.closeDatePushes90d} pushes and {closeDate.closeDatePullIns90d} pull-ins in 90 days.</Text>
       {closeDate.reasons.slice(0, 3).map((item) => <Text key={item.code}>• {item.label}: {item.evidence}</Text>)}
-      <Alert title="How to read these signals" variant="info">Momentum and close-date credibility use structured HubSpot CRM property history. They prioritise review; they do not measure buyer intent or predict win probability.</Alert>
     </>}
+
+    {relationship && <>
+      <Divider />
+      <Flex direction="row" justify="between" align="center" gap="medium">
+        <Flex direction="column" gap="extra-small">
+          <Heading>Relationship coverage</Heading>
+          <Text>{relationship.summary}</Text>
+        </Flex>
+        <StatusTag variant={relationshipVariant(relationship.status)}>{relationship.status}</StatusTag>
+      </Flex>
+      <Text>{relationship.score}/100 · confidence {relationship.confidence} · {relationship.contactCount} associated stakeholder{relationship.contactCount === 1 ? '' : 's'} · {relationship.explicitRoleCoveragePercent}% with explicit role evidence.</Text>
+      <Text>Primary buying company: {relationship.primaryCompany?.name ?? 'Not identified'}.</Text>
+      {coreRoles.map((item) => <Flex key={item.role} direction="row" justify="between" gap="small">
+        <Text>{item.label}{item.people.length > 0 ? ` · ${item.people.join(', ')}` : ''}</Text>
+        <StatusTag variant={roleCoverageVariant(item.status)}>{item.status === 'inferred_only' ? 'Inferred only' : item.status}</StatusTag>
+      </Flex>)}
+      {relationship.signals.filter((item) => item.direction !== 'positive').slice(0, 3).map((item) => <Text key={item.code}>• {item.label}: {item.detail}</Text>)}
+    </>}
+
+    {(momentum || closeDate || relationship) && <Alert title="How to read these signals" variant="info">DealGuard uses structured HubSpot CRM history, associations, buying-role fields, and explicitly marked job-title hints. These signals prioritise review; they do not measure buyer intent or predict win probability.</Alert>}
 
     {assessment.isWon && <Alert title="Sales-to-delivery handoff" variant={assessment.handoffStatus === 'confirmed' ? 'success' : 'warning'}>{assessment.handoffStatus === 'confirmed' ? 'The handoff has been confirmed.' : 'Resolve critical gaps, then confirm that delivery has enough information to begin.'}</Alert>}
     <Flex direction="row" gap="small" wrap="wrap">

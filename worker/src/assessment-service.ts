@@ -1,8 +1,12 @@
 import { saveAssessmentContext } from './assessment-context.js';
 import { recordUsageAtomic } from './billing-usage.js';
+import { loadBuyerCommitteeData } from './buyer-committee-data.js';
+import { buildBuyerCommittee } from './buyer-committee.js';
+import type { BuyerCommitteeIntelligence } from './buyer-committee-types.js';
 import { loadDealHistory } from './deal-history.js';
 import { buildDealIntelligence, previousDealHistory, type DealIntelligence } from './deal-intelligence.js';
 import { buildDealMomentum, type DealMomentumIntelligence } from './deal-momentum.js';
+import type { DecisionAction } from './deal-momentum-types.js';
 import { recordAssessmentHistory } from './enterprise-analytics-v2.js';
 import { HubSpotClient } from './hubspot.js';
 import { syncAssessmentIfEnabled } from './native-sync.js';
@@ -19,7 +23,9 @@ const ENRICHMENT_CACHE_TTL_MS = 60_000;
 const ENRICHMENT_CACHE_MAX = 500;
 const enrichmentCache = new Map<string, { expiresAt: number; value: Record<string, unknown> }>();
 
-type CompleteIntelligence = DealIntelligence & Partial<DealMomentumIntelligence>;
+type CompleteIntelligence = DealIntelligence
+  & Partial<DealMomentumIntelligence>
+  & Partial<BuyerCommitteeIntelligence>;
 
 function cacheKey(portalId: string, dealId: string): string {
   return `${portalId}:${dealId}`;
@@ -36,12 +42,13 @@ function putCache(key: string, value: Record<string, unknown>): void {
 async function recordOptionalMetric(
   env: Env,
   portalId: string,
+  service: 'deal_history_enrichment' | 'buyer_committee_enrichment',
   metric: string,
   value: number,
 ): Promise<void> {
   await recordOperationalMetric(env, {
     portalId,
-    service: 'deal_history_enrichment',
+    service,
     metric,
     value,
   }).catch(() => undefined);
@@ -60,8 +67,8 @@ async function optionalMomentumIntelligence(
   try {
     const history = await loadDealHistory(client, dealId);
     const intelligence = buildDealMomentum(deal, settings, assessment, history);
-    await recordOptionalMetric(env, portalId, 'success', 1);
-    await recordOptionalMetric(env, portalId, 'latency_ms', Date.now() - startedAt);
+    await recordOptionalMetric(env, portalId, 'deal_history_enrichment', 'success', 1);
+    await recordOptionalMetric(env, portalId, 'deal_history_enrichment', 'latency_ms', Date.now() - startedAt);
     return intelligence;
   } catch (error) {
     console.error(JSON.stringify({
@@ -71,10 +78,70 @@ async function optionalMomentumIntelligence(
       dealId,
       error: error instanceof Error ? error.message : String(error),
     }));
-    await recordOptionalMetric(env, portalId, 'success', 0);
-    await recordOptionalMetric(env, portalId, 'latency_ms', Date.now() - startedAt);
+    await recordOptionalMetric(env, portalId, 'deal_history_enrichment', 'success', 0);
+    await recordOptionalMetric(env, portalId, 'deal_history_enrichment', 'latency_ms', Date.now() - startedAt);
     return null;
   }
+}
+
+async function optionalBuyerCommitteeIntelligence(
+  env: Env,
+  portalId: string,
+  dealId: string,
+  client: HubSpotClient,
+): Promise<BuyerCommitteeIntelligence | null> {
+  const startedAt = Date.now();
+  try {
+    const evidence = await loadBuyerCommitteeData(client, dealId);
+    const intelligence = buildBuyerCommittee(evidence);
+    await recordOptionalMetric(env, portalId, 'buyer_committee_enrichment', 'success', 1);
+    await recordOptionalMetric(env, portalId, 'buyer_committee_enrichment', 'latency_ms', Date.now() - startedAt);
+    return intelligence;
+  } catch (error) {
+    console.error(JSON.stringify({
+      level: 'warn',
+      task: 'buyer_committee_enrichment',
+      portalId,
+      dealId,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    await recordOptionalMetric(env, portalId, 'buyer_committee_enrichment', 'success', 0);
+    await recordOptionalMetric(env, portalId, 'buyer_committee_enrichment', 'latency_ms', Date.now() - startedAt);
+    return null;
+  }
+}
+
+function combineDecisionActions(
+  momentum: DealMomentumIntelligence | null,
+  relationship: BuyerCommitteeIntelligence | null,
+): DecisionAction[] {
+  const order = { high: 0, medium: 1, low: 2 } as const;
+  const combined: DecisionAction[] = [
+    ...(relationship?.relationshipActions ?? []),
+    ...(momentum?.decisionActions ?? []),
+  ];
+  const seen = new Set<string>();
+  return combined
+    .filter((item) => {
+      if (seen.has(item.code)) return false;
+      seen.add(item.code);
+      return true;
+    })
+    .sort((left, right) => order[left.priority] - order[right.priority])
+    .slice(0, 8);
+}
+
+function completeIntelligence(
+  readiness: DealIntelligence,
+  momentum: DealMomentumIntelligence | null,
+  relationship: BuyerCommitteeIntelligence | null,
+): CompleteIntelligence {
+  return {
+    ...readiness,
+    ...(momentum ?? {}),
+    ...(relationship ?? {}),
+    decisionActions: combineDecisionActions(momentum, relationship),
+  };
 }
 
 async function readinessIntelligence(
@@ -120,8 +187,11 @@ export async function enrichStoredAssessmentForPortal(
   const deal = await client.getDeal(dealId, undefined, dimensionProperties);
   const policy = await resolveSegmentedRulesForDeal(env, portalId, client.settings.rules, deal);
   const readiness = await readinessIntelligence(env, portalId, dealId, deal, policy.rules, stored);
-  const momentum = await optionalMomentumIntelligence(env, portalId, dealId, client, deal, policy.rules, stored);
-  const intelligence: CompleteIntelligence = { ...readiness, ...(momentum ?? {}) };
+  const [momentum, relationship] = await Promise.all([
+    optionalMomentumIntelligence(env, portalId, dealId, client, deal, policy.rules, stored),
+    optionalBuyerCommitteeIntelligence(env, portalId, dealId, client),
+  ]);
+  const intelligence = completeIntelligence(readiness, momentum, relationship);
   const value = {
     ...(stored as unknown as Record<string, unknown>),
     intelligence,
@@ -155,10 +225,15 @@ export async function assessDealForPortal(
   });
   const stored = await repository.getAssessment(portalId, dealId);
   const readiness = await readinessIntelligence(env, portalId, dealId, deal, policy.rules, assessment);
-  const momentum = trigger === 'record'
-    ? await optionalMomentumIntelligence(env, portalId, dealId, client, deal, policy.rules, assessment)
-    : null;
-  const intelligence: CompleteIntelligence = { ...readiness, ...(momentum ?? {}) };
+  let momentum: DealMomentumIntelligence | null = null;
+  let relationship: BuyerCommitteeIntelligence | null = null;
+  if (trigger === 'record') {
+    [momentum, relationship] = await Promise.all([
+      optionalMomentumIntelligence(env, portalId, dealId, client, deal, policy.rules, assessment),
+      optionalBuyerCommitteeIntelligence(env, portalId, dealId, client),
+    ]);
+  }
+  const intelligence = completeIntelligence(readiness, momentum, relationship);
 
   try {
     await notifyAssessmentTransition(env, portalId, previous, assessment, client.settings, client.plan, trigger, forceSlack);

@@ -1,0 +1,11 @@
+{
+  "uid": "dealguard_buyer_committee_card",
+  "type": "card",
+  "config": {
+    "name": "DealGuard — Relationship Coverage",
+    "description": "Explainable buyer-role coverage, single-threading risk, primary-company context, and evidence-backed stakeholder actions.",
+    "location": "crm.record.tab",
+    "entrypoint": "/app/cards/DealGuardBuyerCommitteeCard.tsx",
+    "objectTypes": ["DEALS"]
+  }
+}

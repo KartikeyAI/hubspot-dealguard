@@ -152,3 +152,62 @@ test('loader marks results truncated when one association page exceeds the bound
   assert.equal(result.contacts.length, 100);
   assert.equal(result.contactsTruncated, true);
 });
+
+test('a single contact cannot produce strong coverage even when every role is labeled', () => {
+  const result = buildBuyerCommittee({
+    contacts: [{
+      id: '101',
+      properties: { firstname: 'One', lastname: 'Person', hs_buying_role: 'DECISION_MAKER;BUDGET_HOLDER;CHAMPION;EXECUTIVE_SPONSOR;TECHNICAL_EVALUATOR' },
+      associationTypes: [],
+    }],
+    companies: [{ id: '201', properties: { name: 'Acme' }, associationTypes: [] }],
+    contactsTruncated: false,
+    companiesTruncated: false,
+    fetchedAt,
+  }, Date.parse(fetchedAt));
+  assert.equal(result.relationshipCoverage.singleThreaded, true);
+  assert.notEqual(result.relationshipCoverage.status, 'strong');
+});
+
+test('deal-to-primary-company type ID is recognized even when HubSpot omits the label text', () => {
+  const fixture = strongFixture();
+  fixture.companies[0].associationTypes = [{ category: 'HUBSPOT_DEFINED', typeId: 5, label: null }];
+  const result = buildBuyerCommittee(fixture, Date.parse(fetchedAt));
+  assert.equal(result.relationshipCoverage.primaryCompany?.primaryEvidence, 'association_label');
+});
+
+test('loader treats partial object reads as truncated evidence', async () => {
+  const client = {
+    async request(path) {
+      if (path === '/crm/associations/2026-03/deals/contacts/batch/read') {
+        return { results: [{ from: { id: '77' }, to: [{ toObjectId: '101' }, { toObjectId: '102' }] }] };
+      }
+      if (path === '/crm/associations/2026-03/deals/companies/batch/read') return { results: [{ from: { id: '77' }, to: [] }] };
+      if (path === '/crm/objects/2026-03/contacts/batch/read') return { results: [{ id: '101', properties: { firstname: 'Readable' } }] };
+      if (path === '/crm/objects/2026-03/companies/batch/read') return { results: [] };
+      throw new Error(`unexpected ${path}`);
+    },
+  };
+  const result = await loadBuyerCommitteeData(client, '77');
+  assert.equal(result.contacts.length, 1);
+  assert.equal(result.contactsTruncated, true);
+});
+
+test('loader stops safely when HubSpot repeats an association cursor without new records', async () => {
+  let contactCalls = 0;
+  const client = {
+    async request(path) {
+      if (path === '/crm/associations/2026-03/deals/contacts/batch/read') {
+        contactCalls += 1;
+        return { results: [{ from: { id: '77' }, to: contactCalls === 1 ? [{ toObjectId: '101' }] : [], paging: { next: { after: 'same-cursor' } } }] };
+      }
+      if (path === '/crm/associations/2026-03/deals/companies/batch/read') return { results: [{ from: { id: '77' }, to: [] }] };
+      if (path === '/crm/objects/2026-03/contacts/batch/read') return { results: [{ id: '101', properties: { firstname: 'A' } }] };
+      if (path === '/crm/objects/2026-03/companies/batch/read') return { results: [] };
+      throw new Error(`unexpected ${path}`);
+    },
+  };
+  const result = await loadBuyerCommitteeData(client, '77');
+  assert.equal(contactCalls, 2);
+  assert.equal(result.contactsTruncated, true);
+});

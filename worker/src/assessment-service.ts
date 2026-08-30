@@ -22,6 +22,7 @@ import type { DealAssessment, Env, NormalizedDeal, RuleSettings } from './types.
 const ENRICHMENT_CACHE_TTL_MS = 60_000;
 const ENRICHMENT_CACHE_MAX = 500;
 const enrichmentCache = new Map<string, { expiresAt: number; value: Record<string, unknown> }>();
+const enrichmentInFlight = new Map<string, Promise<Record<string, unknown> | null>>();
 
 type CompleteIntelligence = DealIntelligence
   & Partial<DealMomentumIntelligence>
@@ -166,16 +167,12 @@ async function readinessIntelligence(
   return intelligence;
 }
 
-export async function enrichStoredAssessmentForPortal(
+async function buildStoredAssessmentEnrichment(
   env: Env,
   portalId: string,
   dealId: string,
+  key: string,
 ): Promise<Record<string, unknown> | null> {
-  const key = cacheKey(portalId, dealId);
-  const cachedResult = enrichmentCache.get(key);
-  if (cachedResult && cachedResult.expiresAt > Date.now()) return cachedResult.value;
-  if (cachedResult) enrichmentCache.delete(key);
-
   const repository = new Repository(env);
   const stored = await repository.getAssessment(portalId, dealId);
   if (!stored) return null;
@@ -199,6 +196,27 @@ export async function enrichStoredAssessmentForPortal(
   };
   putCache(key, value);
   return value;
+}
+
+export async function enrichStoredAssessmentForPortal(
+  env: Env,
+  portalId: string,
+  dealId: string,
+): Promise<Record<string, unknown> | null> {
+  const key = cacheKey(portalId, dealId);
+  const cachedResult = enrichmentCache.get(key);
+  if (cachedResult && cachedResult.expiresAt > Date.now()) return cachedResult.value;
+  if (cachedResult) enrichmentCache.delete(key);
+  const pending = enrichmentInFlight.get(key);
+  if (pending) return pending;
+
+  const task = buildStoredAssessmentEnrichment(env, portalId, dealId, key);
+  enrichmentInFlight.set(key, task);
+  try {
+    return await task;
+  } finally {
+    if (enrichmentInFlight.get(key) === task) enrichmentInFlight.delete(key);
+  }
 }
 
 export async function assessDealForPortal(
@@ -264,10 +282,12 @@ export async function assessDealForPortal(
   }
   await recordOperationalMetric(env, { portalId, service: `assessment.${trigger}`, metric: 'success', value: 1 });
   await recordOperationalMetric(env, { portalId, service: `assessment.${trigger}`, metric: 'latency_ms', value: Date.now() - startedAt });
-  enrichmentCache.delete(cacheKey(portalId, dealId));
-  return stored ? {
+  if (!stored) return null;
+  const value = {
     ...(stored as unknown as Record<string, unknown>),
     intelligence,
     policy: { id: policy.policyId, segmentIds: policy.segmentIds },
-  } : null;
+  };
+  putCache(cacheKey(portalId, dealId), value);
+  return value;
 }

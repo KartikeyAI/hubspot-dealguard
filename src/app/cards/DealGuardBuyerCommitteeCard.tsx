@@ -76,7 +76,8 @@ const DealGuardBuyerCommitteeCard = ({ dealId }: { dealId: string }) => {
             {person.associationLabels.length > 0 && <Text variant="microcopy">Deal labels: {person.associationLabels.join(', ')}</Text>}
           </Flex>;
         })}
-    {relationship.contactsTruncated && <Text variant="microcopy">Contact evidence is truncated at the bounded on-demand limit.</Text>}
+    {relationship.contacts.length > 10 && <Text variant="microcopy">Showing 10 of {relationship.contacts.length} readable associated contacts.</Text>}
+    {relationship.contactsTruncated && <Text variant="microcopy">Contact evidence is truncated at the bounded on-demand limit or includes unreadable associated records.</Text>}
 
     <Divider />
     <Heading>Account context</Heading>
@@ -84,6 +85,8 @@ const DealGuardBuyerCommitteeCard = ({ dealId }: { dealId: string }) => {
       ? <Text>Primary buying company: {relationship.primaryCompany.name}{relationship.primaryCompany.domain ? ` · ${relationship.primaryCompany.domain}` : ''}. Evidence: {relationship.primaryCompany.primaryEvidence === 'association_label' ? 'HubSpot primary association label' : 'only associated company'}.</Text>
       : <Text>No unambiguous primary buying company is identified.</Text>}
     {relationship.companies.filter((item) => !item.primary).slice(0, 5).map((item) => <Text key={item.id}>• {item.name}{item.domain ? ` · ${item.domain}` : ''}{item.industry ? ` · ${item.industry}` : ''}</Text>)}
+    {relationship.companies.length > 6 && <Text variant="microcopy">Showing primary context plus up to five additional companies.</Text>}
+    {relationship.companiesTruncated && <Text variant="microcopy">Company evidence is truncated at the bounded on-demand limit or includes unreadable associated records.</Text>}
 
     <Divider />
     <Heading>Relationship signals</Heading>
@@ -93,6 +96,8 @@ const DealGuardBuyerCommitteeCard = ({ dealId }: { dealId: string }) => {
     </Flex>)}
 
     <Alert title="Evidence boundary" variant="info">Association labels are deal-specific. HubSpot buying-role values are contact-level context. Job-title hints are visibly marked as inferred and never confirm authority or buyer intent. DealGuard does not inspect communications content in this view.</Alert>
+    <Text variant="microcopy">Evidence fetched {new Date(relationship.fetchedAt).toLocaleString()}.</Text>
+    {relationship.limitations.map((item, index) => <Text key={`limitation-${index}`} variant="microcopy">• {item}</Text>)}
     <Button variant="secondary" onClick={() => void load(true)} disabled={working}>Refresh relationship evidence</Button>
   </Flex>;
 };

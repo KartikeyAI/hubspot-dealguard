@@ -78,6 +78,7 @@ async function associationTargets(
   maximum: number,
 ): Promise<{ targets: Map<string, AssociationTypeEvidence[]>; truncated: boolean }> {
   const targets = new Map<string, AssociationTypeEvidence[]>();
+  const seenCursors = new Set<string>();
   let after: string | undefined;
   let truncated = false;
 
@@ -89,6 +90,7 @@ async function associationTargets(
       { method: 'POST', body: JSON.stringify({ inputs: [input] }) },
     );
     const result = response.results?.find((item) => item.from.id === dealId) ?? response.results?.[0];
+    const sizeBeforePage = targets.size;
     const pageTargets = result?.to ?? [];
     for (let index = 0; index < pageTargets.length; index += 1) {
       if (targets.size >= maximum) {
@@ -105,8 +107,14 @@ async function associationTargets(
       targets.set(id, merged);
       if (targets.size >= maximum && index < pageTargets.length - 1) truncated = true;
     }
-    after = result?.paging?.next?.after;
-    if (targets.size >= maximum && after) truncated = true;
+    const nextAfter = result?.paging?.next?.after;
+    if (targets.size >= maximum && nextAfter) truncated = true;
+    if (nextAfter && (seenCursors.has(nextAfter) || targets.size === sizeBeforePage)) {
+      truncated = true;
+      break;
+    }
+    if (nextAfter) seenCursors.add(nextAfter);
+    after = nextAfter;
   } while (after && targets.size < maximum);
 
   return { targets, truncated };
@@ -157,8 +165,8 @@ export async function loadBuyerCommitteeData(client: HubSpotClient, dealId: stri
       ...record,
       associationTypes: companyAssociations.targets.get(record.id) ?? [],
     })),
-    contactsTruncated: contactAssociations.truncated,
-    companiesTruncated: companyAssociations.truncated,
+    contactsTruncated: contactAssociations.truncated || contacts.length < contactAssociations.targets.size,
+    companiesTruncated: companyAssociations.truncated || companies.length < companyAssociations.targets.size,
     fetchedAt: new Date().toISOString(),
   };
 }

@@ -122,8 +122,9 @@ function contact(record: BuyerCommitteeContactRecord): BuyerCommitteeContact {
 
 function company(record: BuyerCommitteeCompanyRecord, onlyCompany: boolean): BuyerCommitteeCompany {
   const labels = associationLabels(record);
+  const primaryByType = record.associationTypes.some((item) => item.category === 'HUBSPOT_DEFINED' && item.typeId === 5);
   const primaryByLabel = labels.some((label) => /\bprimary\b/i.test(label));
-  const primary = onlyCompany || primaryByLabel;
+  const primary = onlyCompany || primaryByType || primaryByLabel;
   return {
     id: record.id,
     name: record.properties.name?.trim() || `Company ${record.id}`,
@@ -131,7 +132,7 @@ function company(record: BuyerCommitteeCompanyRecord, onlyCompany: boolean): Buy
     industry: record.properties.industry?.trim() || null,
     associationLabels: labels,
     primary,
-    primaryEvidence: primaryByLabel ? 'association_label' : onlyCompany ? 'only_associated_company' : null,
+    primaryEvidence: primaryByType || primaryByLabel ? 'association_label' : onlyCompany ? 'only_associated_company' : null,
     updatedAt: record.updatedAt ?? record.properties.hs_lastmodifieddate ?? null,
   };
 }
@@ -227,7 +228,7 @@ export function buildBuyerCommittee(data: BuyerCommitteeData, now = Date.now()):
   const inferredOnlyRoles = coverage.filter((item) => item.status === 'inferred_only').map((item) => item.role);
   const missingCoreRoles = coverage.filter((item) => item.core && item.status === 'missing').map((item) => item.role);
   const coreRolesNeedingConfirmation = coverage.filter((item) => item.core && item.status !== 'explicit');
-  const status: RelationshipCoverage['status'] = score >= 75 && coreRolesNeedingConfirmation.length === 0
+  const status: RelationshipCoverage['status'] = score >= 75 && contacts.length >= 2 && coreRolesNeedingConfirmation.length === 0
     ? 'strong'
     : score >= 45
       ? 'partial'

@@ -10,6 +10,7 @@ import {
 import {
   RECOMMENDATION_FOLLOWUP_EVENT,
   type RecommendationChannelSummary,
+  type RecommendationFollowupAuthorizationMode,
   type RecommendationFollowupBatchStatus,
   type RecommendationFollowupDeliveryResult,
   type RecommendationFollowupItemStatus,
@@ -35,6 +36,7 @@ interface RouteRow extends Record<string, unknown> {
   region_codes_json: string;
   channel_ids_json: string;
   quiet_hours_calendar_id: string | null;
+  suppression_window_minutes: number;
   enabled: number;
   updated_at: string;
 }
@@ -65,6 +67,8 @@ export interface FollowupBatchRow extends Record<string, unknown> {
   kind: RecommendationFollowupKind;
   severity: RecommendationFollowupSeverity;
   manager_note: string;
+  authorization_mode: RecommendationFollowupAuthorizationMode;
+  automation_policy_id: string | null;
   status: RecommendationFollowupBatchStatus;
   requested_count: number;
   eligible_count: number;
@@ -89,6 +93,7 @@ export interface FollowupItemRow extends Record<string, unknown> {
   portal_id: string;
   batch_id: string;
   recommendation_id: string;
+  policy_dispatch_id: string | null;
   deal_id: string;
   recommendation_code: string;
   recommendation_label: string;
@@ -145,7 +150,7 @@ export async function loadFollowupRoutingState(
     env.DB.prepare(
       `SELECT id, name, event_types_json, minimum_severity, pipeline_ids_json, team_ids_json,
               owner_ids_json, region_codes_json, channel_ids_json, quiet_hours_calendar_id,
-              enabled, updated_at
+              suppression_window_minutes, enabled, updated_at
        FROM notification_routes
        WHERE portal_id = ? AND enabled = 1
        ORDER BY created_at ASC`,
@@ -189,6 +194,7 @@ export async function loadFollowupRoutingState(
       regionCodes: jsonStrings(route.region_codes_json),
       channelIds: jsonStrings(route.channel_ids_json),
       quietHoursCalendarId: route.quiet_hours_calendar_id,
+      suppressionWindowMinutes: Number(route.suppression_window_minutes ?? 0),
       enabled: Boolean(route.enabled),
       updatedAt: route.updated_at,
     })),
@@ -222,7 +228,8 @@ async function hmacBase64(secret: string, body: string): Promise<string> {
 
 function followupSummary(batch: FollowupBatchRow, item: FollowupItemRow): string {
   const kind = batch.kind === 'manager_review' ? 'Manager review requested' : 'Owner follow-up requested';
-  return `${kind} for ${item.recommendation_label}: ${item.recommendation_text} Manager note: ${batch.manager_note}`;
+  const policy = batch.authorization_mode === 'configured_policy' ? ' Configured SLA policy matched.' : '';
+  return `${kind} for ${item.recommendation_label}: ${item.recommendation_text} Manager note: ${batch.manager_note}.${policy}`;
 }
 
 async function deliverChannel(
@@ -230,15 +237,22 @@ async function deliverChannel(
   batch: FollowupBatchRow,
   item: FollowupItemRow,
   channel: FollowupChannelRow,
+  eventType: string,
 ): Promise<void> {
   const summary = followupSummary(batch, item);
   const recordUrl = `https://app.hubspot.com/contacts/${encodeURIComponent(batch.portal_id)}/record/0-3/${encodeURIComponent(item.deal_id)}`;
+  const humanConfirmed = batch.authorization_mode === 'human_confirmation';
   const payload = {
-    eventType: RECOMMENDATION_FOLLOWUP_EVENT,
+    eventType,
     batchId: batch.id,
     followupKind: batch.kind,
     severity: batch.severity,
     managerNote: batch.manager_note,
+    authorization: {
+      mode: batch.authorization_mode,
+      policyId: batch.automation_policy_id,
+      humanConfirmed,
+    },
     recommendation: {
       id: item.recommendation_id,
       code: item.recommendation_code,
@@ -256,7 +270,7 @@ async function deliverChannel(
       ownerId: item.owner_id,
       regionCode: item.region_code,
     },
-    semantics: { humanConfirmed: true, noCrmMutation: true, deterministicContent: true },
+    semantics: { humanConfirmed, configuredPolicyAuthorized: !humanConfirmed, noCrmMutation: true, deterministicContent: true },
   };
   if (channel.type === 'email') {
     const recipients = jsonStrings(parseJson<{ recipients?: string[] }>(channel.config_json, {}).recipients, 100)
@@ -268,7 +282,7 @@ async function deliverChannel(
       env,
       recipients,
       `DealGuard follow-up: ${item.recommendation_label}`,
-      `<h1>${escapeHtml(item.recommendation_label)}</h1><p>${escapeHtml(item.recommendation_text)}</p><p><strong>Manager note:</strong> ${escapeHtml(batch.manager_note)}</p><p><a href="${escapeHtml(recordUrl)}">Open deal record</a></p>`,
+      `<h1>${escapeHtml(item.recommendation_label)}</h1><p>${escapeHtml(item.recommendation_text)}</p><p><strong>Manager note:</strong> ${escapeHtml(batch.manager_note)}</p><p><a href="${escapeHtml(recordUrl)}">Open deal record</a></p><p><small>${humanConfirmed ? 'A manager explicitly confirmed this follow-up.' : 'An enabled recommendation SLA policy authorized this notification.'} DealGuard did not change any CRM record.</small></p>`,
     );
     return;
   }
@@ -278,7 +292,7 @@ async function deliverChannel(
   const endpoint = await decryptSecret(channel.endpoint_cipher, channel.endpoint_iv, env.TOKEN_ENCRYPTION_KEY);
   const envelope = JSON.stringify({
     id: crypto.randomUUID(),
-    type: RECOMMENDATION_FOLLOWUP_EVENT,
+    type: eventType,
     severity: batch.severity,
     occurredAt: new Date().toISOString(),
     portalId: batch.portal_id,
@@ -290,10 +304,10 @@ async function deliverChannel(
     : envelope;
   const headers: Record<string, string> = {
     'content-type': 'application/json',
-    'user-agent': 'DealGuard-Recommendation-Followup/1.0',
+    'user-agent': 'DealGuard-Recommendation-Followup/2.0',
   };
   if (channel.type === 'webhook') {
-    headers['x-dealguard-event'] = RECOMMENDATION_FOLLOWUP_EVENT;
+    headers['x-dealguard-event'] = eventType;
     headers['x-dealguard-delivery'] = `${batch.id}:${item.recommendation_id}`;
     if (channel.signing_secret_cipher && channel.signing_secret_iv) {
       const secret = await decryptSecret(
@@ -310,6 +324,26 @@ async function deliverChannel(
   }
 }
 
+async function updatePolicyDispatch(
+  env: Env,
+  portalId: string,
+  dispatchId: string | null,
+  status: RecommendationFollowupItemStatus,
+  error: string | null,
+): Promise<void> {
+  if (!dispatchId) return;
+  const deliveryStatus = status === 'delivered'
+    ? 'completed'
+    : status === 'partially_failed'
+      ? 'partially_failed'
+      : 'failed';
+  await env.DB.prepare(
+    `UPDATE recommendation_policy_dispatches
+     SET last_delivery_status = ?, last_error = ?, updated_at = ?
+     WHERE portal_id = ? AND id = ?`,
+  ).bind(deliveryStatus, error, new Date().toISOString(), portalId, dispatchId).run();
+}
+
 async function markBatchFailed(env: Env, portalId: string, batchId: string, error: unknown): Promise<void> {
   const now = new Date().toISOString();
   const message = (error instanceof Error ? error.message : String(error)).slice(0, 1000);
@@ -324,6 +358,13 @@ async function markBatchFailed(env: Env, portalId: string, batchId: string, erro
       `UPDATE recommendation_followup_items
        SET status = 'failed', last_error = ?, updated_at = ?
        WHERE portal_id = ? AND batch_id = ? AND status IN ('queued', 'delivering')`,
+    ).bind(message, now, portalId, batchId),
+    env.DB.prepare(
+      `UPDATE recommendation_policy_dispatches AS dispatch
+       SET last_delivery_status = 'failed', last_error = ?, updated_at = ?
+       FROM recommendation_followup_items AS item
+       WHERE item.portal_id = ? AND item.batch_id = ?
+         AND item.policy_dispatch_id = dispatch.id AND dispatch.portal_id = item.portal_id`,
     ).bind(message, now, portalId, batchId),
   ]);
   console.error(JSON.stringify({
@@ -360,9 +401,12 @@ export async function deliverRecommendationFollowupBatch(
     const state = await loadFollowupRoutingState(env, portalId);
     const channelById = new Map(state.channels.map((channel) => [channel.id, channel]));
     const routeById = new Map(state.routes.map((route) => [route.id, route]));
-    const expectedByRecommendation = parseJson<{
+    const storedSummary = parseJson<{
+      eventType?: string;
       items?: Record<string, RecommendationFollowupRoutingMatch>;
-    }>(batch.routing_summary_json, {}).items ?? {};
+    }>(batch.routing_summary_json, {});
+    const eventType = storedSummary.eventType ?? RECOMMENDATION_FOLLOWUP_EVENT;
+    const expectedByRecommendation = storedSummary.items ?? {};
     let delivered = 0;
     let partiallyFailed = 0;
     let failed = 0;
@@ -385,7 +429,7 @@ export async function deliverRecommendationFollowupBatch(
         const expectedRoute = expectedRouteById.get(routeId);
         if (!route || !expectedRoute || route.updatedAt !== expectedRoute.updatedAt) continue;
         if (state.quietRouteIds.has(routeId)) continue;
-        if (!routeExplicitlyMatches(route, itemScope(item), batch.severity)) continue;
+        if (!routeExplicitlyMatches(route, itemScope(item), batch.severity, eventType)) continue;
         const expectedChannelById = new Map(expectedRoute.channels.map((channel) => [channel.id, channel]));
         for (const channelId of route.channelIds) {
           const channel = channelById.get(channelId);
@@ -402,7 +446,7 @@ export async function deliverRecommendationFollowupBatch(
       const results: RecommendationFollowupDeliveryResult[] = [];
       for (const channel of selectedChannels) {
         try {
-          await deliverChannel(env, batch, item, channel);
+          await deliverChannel(env, batch, item, channel, eventType);
           results.push({
             channelId: channel.id,
             channelName: channel.name,
@@ -433,6 +477,7 @@ export async function deliverRecommendationFollowupBatch(
       const lastError = selectedChannels.length === 0
         ? 'No unchanged, enabled, explicitly opted-in channels remained available at delivery time.'
         : results.find((result) => result.status === 'failed')?.error ?? null;
+      const updatedAt = new Date().toISOString();
       await env.DB.prepare(
         `UPDATE recommendation_followup_items
          SET status = ?, delivery_summary_json = ?, last_error = ?, updated_at = ?
@@ -441,11 +486,12 @@ export async function deliverRecommendationFollowupBatch(
         status,
         JSON.stringify(results),
         lastError,
-        new Date().toISOString(),
+        updatedAt,
         portalId,
         batchId,
         item.id,
       ).run();
+      await updatePolicyDispatch(env, portalId, item.policy_dispatch_id, status, lastError);
     }
 
     const completedAt = new Date().toISOString();
@@ -470,6 +516,9 @@ export async function deliverRecommendationFollowupBatch(
       'recommendation.followup_delivery_completed',
       {
         batchId,
+        authorizationMode: batch.authorization_mode,
+        automationPolicyId: batch.automation_policy_id,
+        eventType,
         status: finalStatus,
         delivered,
         partiallyFailed,

@@ -20,7 +20,10 @@
         "crm.schemas.deals.read",
         "crm.schemas.deals.write"
       ],
-      "optionalScopes": [],
+      "optionalScopes": [
+        "crm.objects.line_items.read",
+        "crm.objects.quotes.read"
+      ],
       "conditionallyRequiredScopes": []
     },
     "permittedUrls": {

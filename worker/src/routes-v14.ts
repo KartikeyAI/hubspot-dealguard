@@ -1,7 +1,7 @@
 import { requireCommercialTier } from './billing.js';
+import { confirmQueuedRecommendationFollowup } from './recommendation-followup-confirmation.js';
 import { json, methodNotAllowed, readJson } from './http.js';
 import {
-  confirmRecommendationFollowup,
   getRecommendationFollowupBatch,
   listRecommendationFollowupBatches,
   previewRecommendationFollowup,
@@ -38,11 +38,10 @@ export async function route(
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     const identity = await validateHubSpotRequest(request, env);
     await requireCommercialTier(env, identity.portalId, 'enterprise');
-    return json(await confirmRecommendationFollowup(
+    return json(await confirmQueuedRecommendationFollowup(
       env,
       identity,
       decodeURIComponent(confirm[1]!),
-      ctx,
     ), 202);
   }
 

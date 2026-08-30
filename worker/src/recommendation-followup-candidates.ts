@@ -44,7 +44,13 @@ export async function listRecommendationFollowupCandidates(
   ).bind(identity.portalId, ...scoped.params).all<RecommendationRow>();
   const recommendations = (result.results ?? []).map((row) => mapRecommendation(row));
   const routing = await loadFollowupRoutingState(env, identity.portalId);
-  const manualRoutes = routing.routes.filter((route) => route.eventTypes.includes(RECOMMENDATION_FOLLOWUP_EVENT));
+  const activeChannelIds = new Set(routing.channelSummaries.map((channel) => channel.id));
+  const manualRoutes = routing.routes
+    .filter((route) => route.eventTypes.includes(RECOMMENDATION_FOLLOWUP_EVENT))
+    .map((route) => ({
+      route,
+      activeChannelIds: route.channelIds.filter((channelId) => activeChannelIds.has(channelId)),
+    }));
   const canBulkFollowup = permissionMatches(access.permissions, 'remediation.bulk');
   let batches: unknown[] = [];
   if (canBulkFollowup && (identity.userId || identity.userEmail)) {
@@ -78,15 +84,15 @@ export async function listRecommendationFollowupCandidates(
     batches,
     routing: {
       explicitEventType: RECOMMENDATION_FOLLOWUP_EVENT,
-      eligibleRoutes: manualRoutes.map((route) => ({
+      eligibleRoutes: manualRoutes.map(({ route, activeChannelIds: channels }) => ({
         id: route.id,
         name: route.name,
-        channelCount: route.channelIds.length,
+        channelCount: channels.length,
         quietHoursConfigured: Boolean(route.quietHoursCalendarId),
         suppressionWindowMinutes: route.suppressionWindowMinutes,
         currentlyInQuietHours: routing.quietRouteIds.has(route.id),
       })),
-      ready: manualRoutes.some((route) => route.channelIds.length > 0 && !routing.quietRouteIds.has(route.id)),
+      ready: manualRoutes.some(({ route, activeChannelIds: channels }) => channels.length > 0 && !routing.quietRouteIds.has(route.id)),
     },
     permissions: {
       canView: true,

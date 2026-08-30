@@ -9,36 +9,46 @@ test('follow-up APIs require Enterprise entitlement, remediation.bulk and human 
   const operations = read('worker/src/recommendation-operations.ts');
   const index = read('worker/src/index.ts');
   assert.match(route, /recommendation-followups\/preview/);
-  assert.match(route, /recommendation-followups\/\(\[\^\/\]\+\)\/confirm/);
+  assert.match(route, /recommendation-followups.*confirm/);
   assert.match(route, /requireCommercialTier\(env, identity\.portalId, 'enterprise'\)/);
   assert.match(operations, /requireEnterprisePermission\(env, identity, 'remediation\.bulk'\)/);
   assert.match(operations, /PREVIEW_TTL_MS = 15 \* 60_000/);
   assert.match(operations, /MAX_RECOMMENDATIONS = 100/);
   assert.match(operations, /sameActor/);
+  assert.match(operations, /SET status = 'confirming'/);
+  assert.match(operations, /SET status = 'queued'/);
   assert.match(operations, /ctx\.waitUntil\(deliverRecommendationFollowupBatch/);
   assert.match(index, /from '\.\/routes-v14\.js'/);
 });
 
-test('routing requires explicit event opt-in and revalidation before delivery', () => {
+test('routing requires explicit event opt-in and version revalidation before delivery', () => {
   const model = read('worker/src/recommendation-operations-model.ts');
   const operations = read('worker/src/recommendation-operations.ts');
+  const delivery = read('worker/src/recommendation-followup-delivery.ts');
   assert.match(model, /route\.eventTypes\.includes\(RECOMMENDATION_FOLLOWUP_EVENT\)/);
   assert.doesNotMatch(model, /eventTypes\.length === 0.*true/);
+  assert.match(model, /routeVersions/);
+  assert.match(model, /channelVersions/);
   assert.match(operations, /recommendation_followup_routing_changed/);
   assert.match(operations, /routing\.fingerprint !== item\.routing_fingerprint/);
   assert.match(operations, /quietRouteIds/);
+  assert.match(delivery, /route\.updatedAt !== expectedRoute\.updatedAt/);
+  assert.match(delivery, /channel\.updated_at !== expectedChannel\.updatedAt/);
+  assert.match(delivery, /state\.quietRouteIds\.has\(routeId\)/);
   assert.match(operations, /Every selected recommendation must be active and have an explicitly opted-in notification route/);
 });
 
 test('delivery is deterministic, audited and never mutates HubSpot CRM', () => {
   const operations = read('worker/src/recommendation-operations.ts');
-  assert.match(operations, /followup_requested/);
-  assert.match(operations, /recommendation\.followup_confirmed/);
-  assert.match(operations, /recommendation\.followup_delivery_completed/);
-  assert.match(operations, /noCrmMutation: true/);
+  const delivery = read('worker/src/recommendation-followup-delivery.ts');
+  const source = `${operations}\n${delivery}`;
+  assert.match(source, /followup_requested/);
+  assert.match(source, /recommendation\.followup_confirmed/);
+  assert.match(source, /recommendation\.followup_delivery_completed/);
+  assert.match(source, /noCrmMutation: true/);
   assert.match(operations, /notificationContentIsDeterministic: true/);
-  assert.doesNotMatch(operations, /HubSpotClient|api\.hubapi\.com|\/crm\//);
-  assert.doesNotMatch(operations, /dealstage|closedate\s*=|hubspot_owner_id\s*=|hs_next_step\s*=/);
+  assert.doesNotMatch(source, /HubSpotClient|api\.hubapi\.com|\/crm\//);
+  assert.doesNotMatch(source, /dealstage|closedate\s*=|hubspot_owner_id\s*=|hs_next_step\s*=/);
 });
 
 test('secure recommendation evidence export is scoped, bounded and spreadsheet-safe', () => {
@@ -62,6 +72,7 @@ test('migration and Neon registry cover governed follow-up batches', () => {
   const validator = read('scripts/postgres-validate.mjs');
   assert.match(migration, /CREATE TABLE IF NOT EXISTS recommendation_followup_batches/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS recommendation_followup_items/);
+  assert.match(migration, /'previewed', 'confirming', 'queued'/);
   assert.match(migration, /recommendation_evidence/);
   assert.match(migration, /followup_requested/);
   assert.match(migration, /UNIQUE \(batch_id, recommendation_id\)/);
@@ -78,6 +89,7 @@ test('focused CI and documentation cover recommendation operations', () => {
   assert.match(workflow, /recommendation-operations-types\.ts/);
   assert.match(workflow, /recommendation-operations-model\.ts/);
   assert.match(workflow, /recommendation-operations\.ts/);
+  assert.match(workflow, /recommendation-followup-delivery\.ts/);
   assert.match(workflow, /recommendation-evidence-export\.ts/);
   assert.match(workflow, /0019_recommendation_operations\.sql/);
   assert.match(workflow, /recommendation-operations\.test\.mjs/);

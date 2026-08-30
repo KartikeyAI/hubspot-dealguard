@@ -16,6 +16,7 @@ on:
       - 'worker/src/deal-brief-types.ts'
       - 'worker/src/deal-brief.ts'
       - 'worker/src/deal-brief-engagement.ts'
+      - 'worker/src/deal-brief-commercial.ts'
       - 'worker/src/engagement-metadata-types.ts'
       - 'worker/src/engagement-metadata-data.ts'
       - 'worker/src/engagement-metadata-utils.ts'
@@ -23,13 +24,24 @@ on:
       - 'worker/src/engagement-signals.ts'
       - 'worker/src/engagement-actions.ts'
       - 'worker/src/engagement-intelligence.ts'
+      - 'worker/src/commercial-integrity-types.ts'
+      - 'worker/src/commercial-integrity-data.ts'
+      - 'worker/src/commercial-integrity-analysis.ts'
+      - 'worker/src/commercial-integrity-actions.ts'
+      - 'worker/src/commercial-integrity.ts'
+      - 'worker/src/commercial-assessment.ts'
       - 'worker/src/assessment-service.ts'
       - 'worker/src/routes-v2.ts'
       - 'worker/src/routes-v10.ts'
+      - 'worker/src/routes-v11.ts'
+      - 'worker/src/index.ts'
       - 'worker/src/enterprise-analytics-v2.ts'
       - 'database/migrations/0015_trustworthy_intelligence_currency.sql'
+      - 'src/app/app-hsmeta.json'
       - 'src/app/cards/DealGuardEngagementCard.tsx'
+      - 'src/app/cards/DealGuardCommercialCard.tsx'
       - 'src/app/cards/dealguard-engagement-card-hsmeta.json'
+      - 'src/app/cards/dealguard-commercial-card-hsmeta.json'
       - 'src/app/cards/**'
       - 'src/app/pages/EnterpriseHomeV3.tsx'
       - 'src/app/pages/EnterpriseHomeV4.tsx'
@@ -46,6 +58,10 @@ on:
       - 'test/engagement-intelligence.test.mjs'
       - 'test/engagement-intelligence-contract.test.mjs'
       - 'test/deal-brief-engagement.test.mjs'
+      - 'test/commercial-integrity.test.mjs'
+      - 'test/commercial-integrity-data.test.mjs'
+      - 'test/commercial-integrity-contract.test.mjs'
+      - 'test/deal-brief-commercial.test.mjs'
       - 'scripts/postgres-migrate.mjs'
       - 'scripts/postgres-validate.mjs'
       - 'docs/ENTERPRISE_ANALYTICS.md'
@@ -53,6 +69,7 @@ on:
       - 'docs/BUYER_COMMITTEE_INTELLIGENCE.md'
       - 'docs/DEAL_BRIEF.md'
       - 'docs/ENGAGEMENT_INTELLIGENCE.md'
+      - 'docs/COMMERCIAL_INTEGRITY.md'
       - '.github/workflows/p2-decision-intelligence.yml'
   workflow_dispatch:
 
@@ -123,6 +140,8 @@ jobs:
         run: node --test test/deal-brief.test.mjs test/deal-brief-contract.test.mjs
       - name: Run engagement-intelligence tests
         run: node --test test/engagement-intelligence.test.mjs test/engagement-intelligence-contract.test.mjs test/deal-brief-engagement.test.mjs
+      - name: Run commercial-integrity tests
+        run: node --test test/commercial-integrity.test.mjs test/commercial-integrity-data.test.mjs test/commercial-integrity-contract.test.mjs test/deal-brief-commercial.test.mjs
       - name: Run P2 contract tests
         run: node --test test/p2-intelligence-contract.test.mjs
       - name: Run full automated test suite

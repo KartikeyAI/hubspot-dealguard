@@ -1,4 +1,6 @@
 import { requireEnterprisePermission } from './enterprise-access.js';
+import { AppError } from './errors.js';
+import { loadFollowupRoutingState } from './recommendation-followup-delivery.js';
 import { previewRecommendationRoutingPolicy, saveRecommendationRoutingPolicy } from './recommendation-routing-policies.js';
 import type { Env, RequestIdentity } from './types.js';
 
@@ -39,6 +41,24 @@ async function constrainPolicyScope(
   return input;
 }
 
+async function requireConfiguredPolicyChannels(
+  env: Env,
+  identity: RequestIdentity,
+  input: Record<string, unknown>,
+): Promise<void> {
+  if (input.enabled !== true) return;
+  const state = await loadFollowupRoutingState(env, identity.portalId);
+  const availableChannels = new Set(state.channelSummaries.map((channel) => channel.id));
+  const routeIds = [input.routeId, input.escalationRouteId]
+    .filter((value): value is string => typeof value === 'string' && Boolean(value));
+  for (const routeId of routeIds) {
+    const route = state.routes.find((candidate) => candidate.id === routeId);
+    if (!route || !route.channelIds.some((channelId) => availableChannels.has(channelId))) {
+      throw new AppError(409, 'recommendation_policy_channel_unavailable', 'Every enabled recommendation policy route must contain at least one enabled, configured notification channel.');
+    }
+  }
+}
+
 export async function saveScopedRecommendationRoutingPolicy(
   env: Env,
   identity: RequestIdentity,
@@ -46,6 +66,7 @@ export async function saveScopedRecommendationRoutingPolicy(
   policyId: string | null = null,
 ) {
   const scoped = await constrainPolicyScope(env, identity, value, 'alert.manage');
+  await requireConfiguredPolicyChannels(env, identity, scoped);
   return saveRecommendationRoutingPolicy(env, identity, scoped, policyId);
 }
 

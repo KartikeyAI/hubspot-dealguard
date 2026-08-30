@@ -1,9 +1,13 @@
 import { requireCommercialTier } from './billing.js';
-import { requireEnterprisePermission } from './enterprise-access.js';
 import { json, methodNotAllowed, readJson } from './http.js';
 import { listRecommendationFollowupCandidates } from './recommendation-followup-candidates.js';
-import { previewScopedRecommendationRoutingPolicy, saveScopedRecommendationRoutingPolicy } from './recommendation-routing-policy-api.js';
-import { deleteRecommendationRoutingPolicy, listRecommendationRoutingPolicies } from './recommendation-routing-policies.js';
+import {
+  authorizePortalWideRecommendationPolicyEvaluation,
+  deleteScopedRecommendationRoutingPolicy,
+  listScopedRecommendationRoutingPolicies,
+  previewScopedRecommendationRoutingPolicy,
+  saveScopedRecommendationRoutingPolicy,
+} from './recommendation-routing-policy-api.js';
 import { evaluateRecommendationRoutingPolicies } from './recommendation-routing-policy-runner.js';
 import { Repository } from './repository.js';
 import { route as routeV14 } from './routes-v14.js';
@@ -38,7 +42,7 @@ export async function route(
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     const identity = await validateHubSpotRequest(request, env);
     await requireCommercialTier(env, identity.portalId, 'enterprise');
-    await requireEnterprisePermission(env, identity, 'alert.manage');
+    await authorizePortalWideRecommendationPolicyEvaluation(env, identity);
     await new Repository(env).audit(identity.portalId, identity.userId, identity.userEmail, 'recommendation.policy_evaluation_requested', {
       source: 'app_home',
       noCrmMutation: true,
@@ -57,7 +61,7 @@ export async function route(
   if (url.pathname === POLICY_ROOT) {
     const identity = await validateHubSpotRequest(request, env);
     await requireCommercialTier(env, identity.portalId, 'enterprise');
-    if (request.method === 'GET') return json(await listRecommendationRoutingPolicies(env, identity));
+    if (request.method === 'GET') return json(await listScopedRecommendationRoutingPolicies(env, identity));
     if (request.method === 'POST') return json(await saveScopedRecommendationRoutingPolicy(env, identity, await readJson<unknown>(request)), 201);
     return methodNotAllowed(['GET', 'POST']);
   }
@@ -69,7 +73,7 @@ export async function route(
     const policyId = decodeURIComponent(item[1]!);
     if (request.method === 'PUT') return json(await saveScopedRecommendationRoutingPolicy(env, identity, await readJson<unknown>(request), policyId));
     if (request.method === 'DELETE') {
-      await deleteRecommendationRoutingPolicy(env, identity, policyId);
+      await deleteScopedRecommendationRoutingPolicy(env, identity, policyId);
       return json({ ok: true });
     }
     return methodNotAllowed(['PUT', 'DELETE']);

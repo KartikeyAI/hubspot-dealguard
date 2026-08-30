@@ -49,7 +49,24 @@ ALTER TABLE recommendation_events
     'outcome_observed', 'followup_requested'
   ));
 
-CREATE TABLE IF NOT EXISTS recommendation_followup_batches (
+ALTER TABLE recommendation_instances
+  ADD CONSTRAINT uq_recommendation_instances_portal_id UNIQUE (portal_id, id);
+ALTER TABLE recommendation_events
+  DROP CONSTRAINT IF EXISTS recommendation_events_recommendation_id_fkey;
+ALTER TABLE recommendation_events
+  ADD CONSTRAINT fk_recommendation_events_tenant_instance
+  FOREIGN KEY (portal_id, recommendation_id)
+  REFERENCES recommendation_instances(portal_id, id)
+  ON DELETE CASCADE;
+ALTER TABLE recommendation_outcomes
+  DROP CONSTRAINT IF EXISTS recommendation_outcomes_recommendation_id_fkey;
+ALTER TABLE recommendation_outcomes
+  ADD CONSTRAINT fk_recommendation_outcomes_tenant_instance
+  FOREIGN KEY (portal_id, recommendation_id)
+  REFERENCES recommendation_instances(portal_id, id)
+  ON DELETE CASCADE;
+
+CREATE TABLE recommendation_followup_batches (
   id TEXT PRIMARY KEY,
   portal_id TEXT NOT NULL,
   kind TEXT NOT NULL CHECK (kind IN ('owner_reminder', 'manager_review')),
@@ -74,10 +91,11 @@ CREATE TABLE IF NOT EXISTS recommendation_followup_batches (
   completed_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  UNIQUE (portal_id, id),
   FOREIGN KEY (portal_id) REFERENCES tenants(portal_id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS recommendation_followup_items (
+CREATE TABLE recommendation_followup_items (
   id TEXT PRIMARY KEY,
   portal_id TEXT NOT NULL,
   batch_id TEXT NOT NULL,
@@ -104,15 +122,19 @@ CREATE TABLE IF NOT EXISTS recommendation_followup_items (
   last_error TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  UNIQUE (batch_id, recommendation_id),
+  UNIQUE (portal_id, batch_id, recommendation_id),
   FOREIGN KEY (portal_id) REFERENCES tenants(portal_id) ON DELETE CASCADE,
-  FOREIGN KEY (batch_id) REFERENCES recommendation_followup_batches(id) ON DELETE CASCADE,
-  FOREIGN KEY (recommendation_id) REFERENCES recommendation_instances(id) ON DELETE CASCADE
+  FOREIGN KEY (portal_id, batch_id)
+    REFERENCES recommendation_followup_batches(portal_id, id)
+    ON DELETE CASCADE,
+  FOREIGN KEY (portal_id, recommendation_id)
+    REFERENCES recommendation_instances(portal_id, id)
+    ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_recommendation_followup_batches_status
+CREATE INDEX idx_recommendation_followup_batches_status
   ON recommendation_followup_batches(portal_id, status, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_recommendation_followup_items_delivery
+CREATE INDEX idx_recommendation_followup_items_delivery
   ON recommendation_followup_items(portal_id, batch_id, status);
-CREATE INDEX IF NOT EXISTS idx_recommendation_followup_items_recommendation
+CREATE INDEX idx_recommendation_followup_items_recommendation
   ON recommendation_followup_items(portal_id, recommendation_id, created_at DESC);

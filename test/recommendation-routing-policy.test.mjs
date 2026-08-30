@@ -130,7 +130,7 @@ test('selects initial, repeat and one-time escalation stages transparently', () 
     lastQueuedAt: '2026-08-28T00:00:00.000Z',
     nextEligibleAt: '2026-09-01T00:00:00.000Z',
     escalatedAt: null,
-    resolvedAt: null,
+    resolvedAt: '2026-08-30T00:00:00.000Z',
   }, now), 'escalation');
   assert.equal(nextPolicyDispatchStage({ ...basePolicy, escalationRouteId: null, escalationAfterMinutes: null }, {
     notificationCount: 1,
@@ -139,7 +139,7 @@ test('selects initial, repeat and one-time escalation stages transparently', () 
     lastQueuedAt: '2026-08-30T00:00:00.000Z',
     nextEligibleAt: '2026-08-31T11:00:00.000Z',
     escalatedAt: null,
-    resolvedAt: null,
+    resolvedAt: '2026-08-30T12:00:00.000Z',
   }, now), 'repeat');
   assert.equal(nextPolicyDispatchStage(basePolicy, {
     notificationCount: 3,

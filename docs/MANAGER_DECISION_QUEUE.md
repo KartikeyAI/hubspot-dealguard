@@ -133,6 +133,25 @@ The queue remains useful before every deal has been enriched:
 - deals without snapshots use deterministic readiness, stage-age, issue, amount-cohort, and remediation evidence;
 - missing richer evidence modestly increases review priority but is not treated as proof of loss.
 
+## App Home product surface
+
+`ManagerDecisionQueuePanel.tsx` places the queue directly in the deployed Enterprise App Home after the workspace readiness scorecards.
+
+The panel provides:
+
+- `Act now`, `Review`, `Monitor`, and all-priority filters;
+- fresh, aging, stale, readiness-only, and all-evidence filters;
+- portfolio scorecards for immediate interventions, review items, overdue actions, and full Deal Brief coverage;
+- comparable-currency cohort disclosure without cross-currency aggregation;
+- ranked deal cards with priority score, readiness, evidence mode, confidence, coverage, amount context, and priority components;
+- one owned action with deadline, overdue state, source, rationale, and evidence provenance;
+- up to five explainable priority reasons;
+- direct navigation to the corresponding HubSpot deal record.
+
+The visual surface requests at most 25 queue items at a time and delegates priority and evidence filters to the server. It makes no HubSpot CRM API call and does not issue a write request. Lower-tier workspaces see an Enterprise capability description and do not call the queue endpoint.
+
+Queue failure is isolated from the rest of App Home. Existing readiness, analytics, billing, workspace, and plan surfaces remain available when the queue endpoint cannot be loaded.
+
 ## Deployment dependency
 
 Production deployment requires:
@@ -141,4 +160,5 @@ Production deployment requires:
 2. PRs #18–#23 for the stacked Deal Intelligence modules;
 3. migration `0016_manager_decision_queue.sql`;
 4. the Manager Decision Queue Worker changes;
-5. a full portal scan followed by record-level enrichment of priority deals.
+5. the App Home Manager Decision Queue panel;
+6. a full portal scan followed by record-level enrichment of priority deals.

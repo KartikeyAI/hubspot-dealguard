@@ -12,6 +12,7 @@ import {
   Text,
   hubspot,
 } from '@hubspot/ui-extensions';
+import { ManagerDecisionQueuePanel } from './ManagerDecisionQueuePanel';
 import { PLAN_COMPARISON, productPlanLabel, safeProductError, subscriptionLabel } from './product-ui';
 
 const API_BASE = 'https://dealguard-api.rokad.co/api/v1';
@@ -399,6 +400,8 @@ const DealGuardHome = () => {
         <StatusTag variant={(dashboard.criticalDeals ?? 0) > 0 ? 'danger' : 'success'}>{(dashboard.criticalDeals ?? 0) > 0 ? 'Action required' : 'Clear'}</StatusTag>
       </Card>
     </Flex>
+
+    <ManagerDecisionQueuePanel enabled={access.entitled} />
 
     <Flex direction="column" gap="small">
       <Heading>Pipeline intelligence</Heading>

@@ -6,6 +6,7 @@ export type RecommendationFollowupKind = 'owner_reminder' | 'manager_review';
 export type RecommendationFollowupSeverity = Extract<IssueSeverity, 'warning' | 'critical'>;
 export type RecommendationFollowupBatchStatus =
   | 'previewed'
+  | 'confirming'
   | 'queued'
   | 'delivering'
   | 'completed'

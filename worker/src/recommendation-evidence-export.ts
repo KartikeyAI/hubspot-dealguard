@@ -1,6 +1,6 @@
 import { requireEnterprisePermission } from './enterprise-access.js';
 import { AppError } from './errors.js';
-import { analyticsScopeFilter, mapRecommendation, RECOMMENDATION_SELECT, safeRecommendationStatus, type RecommendationRow } from './recommendation-outcome-storage.js';
+import { analyticsScopeFilter, mapRecommendation, RECOMMENDATION_SELECT, type RecommendationRow } from './recommendation-outcome-storage.js';
 import { safeCsvCell } from './recommendation-operations-model.js';
 import { Repository } from './repository.js';
 import type { Env, RequestIdentity } from './types.js';
@@ -128,12 +128,11 @@ export async function exportRecommendationEvidence(
   const params: unknown[] = [identity.portalId, window.start.toISOString(), window.end.toISOString(), ...scoped.params];
   const status = text(url.searchParams.get('status'), 40);
   if (status) {
-    const normalized = safeRecommendationStatus(status);
-    if (!STATUSES.includes(normalized as typeof STATUSES[number])) {
+    if (!STATUSES.includes(status as typeof STATUSES[number])) {
       throw new AppError(400, 'recommendation_export_status_invalid', 'Choose a supported recommendation status.');
     }
     clauses.push('recommendation.status = ?');
-    params.push(normalized);
+    params.push(status);
   }
   const priority = text(url.searchParams.get('priority'), 20);
   if (priority) {

@@ -13,6 +13,8 @@ on:
       - 'worker/src/buyer-committee-data.ts'
       - 'worker/src/buyer-committee-types.ts'
       - 'worker/src/buyer-committee.ts'
+      - 'worker/src/deal-brief-types.ts'
+      - 'worker/src/deal-brief.ts'
       - 'worker/src/assessment-service.ts'
       - 'worker/src/routes-v2.ts'
       - 'worker/src/routes-v10.ts'
@@ -29,11 +31,14 @@ on:
       - 'test/deal-history-client.test.mjs'
       - 'test/buyer-committee.test.mjs'
       - 'test/buyer-committee-contract.test.mjs'
+      - 'test/deal-brief.test.mjs'
+      - 'test/deal-brief-contract.test.mjs'
       - 'scripts/postgres-migrate.mjs'
       - 'scripts/postgres-validate.mjs'
       - 'docs/ENTERPRISE_ANALYTICS.md'
       - 'docs/DEAL_MOMENTUM_AND_CLOSE_DATE.md'
       - 'docs/BUYER_COMMITTEE_INTELLIGENCE.md'
+      - 'docs/DEAL_BRIEF.md'
       - '.github/workflows/p2-decision-intelligence.yml'
   workflow_dispatch:
 
@@ -100,6 +105,8 @@ jobs:
         run: node --test test/deal-momentum.test.mjs test/deal-momentum-contract.test.mjs test/deal-history-client.test.mjs
       - name: Run buyer-committee tests
         run: node --test test/buyer-committee.test.mjs test/buyer-committee-contract.test.mjs
+      - name: Run Deal Brief tests
+        run: node --test test/deal-brief.test.mjs test/deal-brief-contract.test.mjs
       - name: Run P2 contract tests
         run: node --test test/p2-intelligence-contract.test.mjs
       - name: Run full automated test suite

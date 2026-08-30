@@ -19,27 +19,29 @@ export type CloseDateCredibility = {
   reasons: Array<{ code: string; label: string; impact: number; evidence: string }>; notWinProbability: true;
 };
 export type BuyerRole = 'decision_maker' | 'budget_holder' | 'champion' | 'executive_sponsor' | 'technical_evaluator' | 'procurement' | 'legal_compliance' | 'end_user' | 'influencer' | 'implementer' | 'blocker';
-export type RoleEvidenceSource = 'deal_association_label' | 'contact_buying_role' | 'job_title_hint';
-export type RelationshipContact = {
-  id: string; displayName: string; jobTitle: string | null; associationLabels: string[];
-  roleEvidence: Array<{ role: BuyerRole; source: RoleEvidenceSource; sourceLabel: string; confidence: 'confirmed' | 'contextual' | 'inferred' }>;
-  explicitRoles: BuyerRole[]; inferredRoles: BuyerRole[]; updatedAt: string | null;
-};
-export type RelationshipCompany = {
-  id: string; name: string; domain: string | null; industry: string | null; associationLabels: string[]; primary: boolean; primaryEvidence: 'association_label' | 'only_associated_company' | null; updatedAt: string | null;
-};
-export type BuyerRoleCoverage = {
-  role: BuyerRole; label: string; core: boolean; status: 'explicit' | 'inferred_only' | 'missing'; people: string[]; sources: RoleEvidenceSource[];
-};
-export type RelationshipSignal = {
-  code: string; label: string; direction: 'positive' | 'negative' | 'neutral'; severity: Severity; detail: string; evidenceCodes: string[];
-};
+export type BuyerRoleCoverage = { role: BuyerRole; label: string; core: boolean; status: 'explicit' | 'inferred_only' | 'missing'; people: string[]; sources: string[] };
+export type BuyerCommitteeContact = { id: string; displayName: string; jobTitle: string | null; associationLabels: string[]; explicitRoles: BuyerRole[]; inferredRoles: BuyerRole[]; updatedAt: string | null };
+export type BuyerCommitteeCompany = { id: string; name: string; domain: string | null; industry: string | null; associationLabels: string[]; primary: boolean; primaryEvidence: string | null; updatedAt: string | null };
 export type RelationshipCoverage = {
   methodology: 'hubspot_association_and_contact_role_evidence'; score: number; status: 'strong' | 'partial' | 'weak'; confidence: 'high' | 'medium' | 'low'; summary: string;
   contactCount: number; companyCount: number; singleThreaded: boolean; explicitRoleCoveragePercent: number; labeledAssociationCoveragePercent: number;
-  contacts: RelationshipContact[]; companies: RelationshipCompany[]; primaryCompany: RelationshipCompany | null; roleCoverage: BuyerRoleCoverage[];
-  missingCoreRoles: BuyerRole[]; explicitRoles: BuyerRole[]; inferredOnlyRoles: BuyerRole[]; signals: RelationshipSignal[]; relationshipActions: DecisionAction[];
-  fetchedAt: string; contactsTruncated: boolean; companiesTruncated: boolean; limitations: string[]; notBuyerIntent: true; notWinProbability: true;
+  contacts: BuyerCommitteeContact[]; companies: BuyerCommitteeCompany[]; primaryCompany: BuyerCommitteeCompany | null; roleCoverage: BuyerRoleCoverage[];
+  missingCoreRoles: BuyerRole[]; explicitRoles: BuyerRole[]; inferredOnlyRoles: BuyerRole[];
+  signals: Array<{ code: string; label: string; direction: 'positive' | 'negative' | 'neutral'; severity: Severity; detail: string; evidenceCodes: string[] }>;
+  relationshipActions: DecisionAction[]; fetchedAt: string; contactsTruncated: boolean; companiesTruncated: boolean; limitations: string[]; notBuyerIntent: true; notWinProbability: true;
+};
+export type DealBriefItem = {
+  code: string; label: string; dimension: 'readiness' | 'momentum' | 'close_date' | 'relationship' | 'change'; direction: 'positive' | 'negative';
+  severity: Severity; detail: string; observedAt: string | null; evidenceCodes: string[];
+};
+export type DealBriefChange = { code: string; label: string; detail: string; observedAt: string | null };
+export type DealBrief = {
+  methodology: 'deterministic_evidence_synthesis'; generatedAt: string; status: 'on_track' | 'watch' | 'intervention_required' | 'insufficient_evidence';
+  attentionScore: number; confidence: 'high' | 'medium' | 'low'; summary: string; risks: DealBriefItem[]; positiveSignals: DealBriefItem[]; changes: DealBriefChange[];
+  nextAction: DecisionAction | null;
+  coverage: { readiness: true; momentum: boolean; closeDate: boolean; relationship: boolean; percent: number; missingDimensions: Array<'momentum' | 'close_date' | 'relationship'>; truncated: boolean };
+  freshness: { assessedAt: string; ageHours: number | null; status: 'fresh' | 'aging' | 'stale' | 'unavailable' };
+  limitations: string[]; notWinProbability: true; notBuyerIntent: true; notForecastCategory: true;
 };
 export type Intelligence = {
   risk: { lostPoints: number; potentialScore: number; afterCriticalFixes: number; contributors: Array<Issue & { impact: number }> };
@@ -51,16 +53,11 @@ export type Intelligence = {
   closeDateCredibility?: CloseDateCredibility;
   relationshipCoverage?: RelationshipCoverage;
   relationshipActions?: DecisionAction[];
+  dealBrief?: DealBrief;
 };
 export type Assessment = {
   dealId: string; score: number; grade: string; status: 'ready' | 'at_risk' | 'critical'; issues: Issue[]; readinessSummary: string;
   isWon: boolean; assessedAt: string; reviewedAt: string | null; handoffStatus: string | null; intelligence?: Intelligence;
-};
-
-const BUYER_ROLE_LABELS: Record<BuyerRole, string> = {
-  decision_maker: 'Decision maker', budget_holder: 'Budget holder', champion: 'Champion', executive_sponsor: 'Executive sponsor',
-  technical_evaluator: 'Technical evaluator', procurement: 'Procurement', legal_compliance: 'Legal or compliance', end_user: 'End user',
-  influencer: 'Influencer', implementer: 'Implementer', blocker: 'Blocker',
 };
 
 export function statusVariant(status: Assessment['status']): 'success' | 'warning' | 'danger' {
@@ -85,17 +82,35 @@ export function relationshipVariant(status: NonNullable<Intelligence['relationsh
   if (status === 'partial') return 'warning';
   return 'danger';
 }
-export function roleCoverageVariant(status: BuyerRoleCoverage['status']): 'success' | 'warning' | 'danger' {
-  if (status === 'explicit') return 'success';
-  if (status === 'inferred_only') return 'warning';
-  return 'danger';
+export function briefVariant(status: NonNullable<Intelligence['dealBrief']>['status']): 'success' | 'warning' | 'danger' | 'default' {
+  if (status === 'on_track') return 'success';
+  if (status === 'watch') return 'warning';
+  if (status === 'intervention_required') return 'danger';
+  return 'default';
 }
-export function buyerRoleLabel(role: BuyerRole): string { return BUYER_ROLE_LABELS[role]; }
+export function attentionVariant(score: number): 'success' | 'warning' | 'danger' {
+  if (score >= 70) return 'danger';
+  if (score >= 35) return 'warning';
+  return 'success';
+}
+export function freshnessVariant(status: NonNullable<Intelligence['dealBrief']>['freshness']['status']): 'success' | 'warning' | 'danger' | 'default' {
+  if (status === 'fresh') return 'success';
+  if (status === 'aging') return 'warning';
+  if (status === 'stale') return 'danger';
+  return 'default';
+}
 export function issueName(assessment: Assessment, code: string): string {
   return assessment.issues.find((item) => item.code === code)?.label ?? code.replace(/^custom_/, '').replace(/_/g, ' ');
 }
 export function delta(value: number): string { return `${value > 0 ? '+' : ''}${value}`; }
 export function formatDate(value: string | null | undefined): string { return value ? new Date(value).toLocaleString() : 'Not available'; }
+export function formatAgeHours(value: number | null): string {
+  if (value === null) return 'Unknown age';
+  if (value < 1) return 'Less than one hour old';
+  if (value < 24) return `${Math.floor(value)} hour${Math.floor(value) === 1 ? '' : 's'} old`;
+  const days = Math.floor(value / 24);
+  return `${days} day${days === 1 ? '' : 's'} old`;
+}
 
 export function useDealAssessment(dealId: string) {
   const [assessment, setAssessment] = useState<Assessment | null>(null);

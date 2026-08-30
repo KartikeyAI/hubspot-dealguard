@@ -3,6 +3,8 @@ import { recordUsageAtomic } from './billing-usage.js';
 import { loadBuyerCommitteeData } from './buyer-committee-data.js';
 import { buildBuyerCommittee } from './buyer-committee.js';
 import type { BuyerCommitteeIntelligence } from './buyer-committee-types.js';
+import { buildDealBrief } from './deal-brief.js';
+import type { DealBriefIntelligence } from './deal-brief-types.js';
 import { loadDealHistory } from './deal-history.js';
 import { buildDealIntelligence, previousDealHistory, type DealIntelligence } from './deal-intelligence.js';
 import { buildDealMomentum, type DealMomentumIntelligence } from './deal-momentum.js';
@@ -26,7 +28,8 @@ const enrichmentInFlight = new Map<string, Promise<Record<string, unknown> | nul
 
 type CompleteIntelligence = DealIntelligence
   & Partial<DealMomentumIntelligence>
-  & Partial<BuyerCommitteeIntelligence>;
+  & Partial<BuyerCommitteeIntelligence>
+  & DealBriefIntelligence;
 
 function cacheKey(portalId: string, dealId: string): string {
   return `${portalId}:${dealId}`;
@@ -133,15 +136,24 @@ function combineDecisionActions(
 }
 
 function completeIntelligence(
+  assessment: DealAssessment,
   readiness: DealIntelligence,
   momentum: DealMomentumIntelligence | null,
   relationship: BuyerCommitteeIntelligence | null,
 ): CompleteIntelligence {
+  const decisionActions = combineDecisionActions(momentum, relationship);
   return {
     ...readiness,
     ...(momentum ?? {}),
     ...(relationship ?? {}),
-    decisionActions: combineDecisionActions(momentum, relationship),
+    decisionActions,
+    ...buildDealBrief({
+      assessment,
+      readiness,
+      momentum,
+      relationship,
+      decisionActions,
+    }),
   };
 }
 
@@ -188,7 +200,7 @@ async function buildStoredAssessmentEnrichment(
     optionalMomentumIntelligence(env, portalId, dealId, client, deal, policy.rules, stored),
     optionalBuyerCommitteeIntelligence(env, portalId, dealId, client),
   ]);
-  const intelligence = completeIntelligence(readiness, momentum, relationship);
+  const intelligence = completeIntelligence(stored, readiness, momentum, relationship);
   const value = {
     ...(stored as unknown as Record<string, unknown>),
     intelligence,
@@ -251,7 +263,7 @@ export async function assessDealForPortal(
       optionalBuyerCommitteeIntelligence(env, portalId, dealId, client),
     ]);
   }
-  const intelligence = completeIntelligence(readiness, momentum, relationship);
+  const intelligence = completeIntelligence(assessment, readiness, momentum, relationship);
 
   try {
     await notifyAssessmentTransition(env, portalId, previous, assessment, client.settings, client.plan, trigger, forceSlack);

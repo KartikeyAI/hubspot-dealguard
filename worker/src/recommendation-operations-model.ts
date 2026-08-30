@@ -66,7 +66,7 @@ export function localBusinessTime(
     weekday: 'short',
     hour: '2-digit',
     minute: '2-digit',
-    hour12: false,
+    hourCycle: 'h23',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -124,18 +124,29 @@ export async function routingMatch(
     .filter((route) => routeExplicitlyMatches(route, input.scope, input.severity))
     .filter((route) => !input.quietRouteIds.has(route.id))
     .map((route) => {
-      const channelIds = [...new Set(route.channelIds.filter((id) => channelById.has(id)))].sort();
+      const channels = [...new Set(route.channelIds)]
+        .map((id) => channelById.get(id))
+        .filter((channel): channel is RecommendationChannelSummary => Boolean(channel))
+        .sort((left, right) => left.id.localeCompare(right.id));
       return {
         id: route.id,
         name: route.name,
-        channelIds,
-        channelNames: channelIds.map((id) => channelById.get(id)!.name),
+        updatedAt: route.updatedAt,
+        channelIds: channels.map((channel) => channel.id),
+        channelNames: channels.map((channel) => channel.name),
+        channels,
       };
     })
     .filter((route) => route.channelIds.length > 0)
     .sort((left, right) => left.id.localeCompare(right.id));
   const routeIds = matched.map((route) => route.id);
   const channelIds = [...new Set(matched.flatMap((route) => route.channelIds))].sort();
+  const routeVersions = matched.map((route) => ({ id: route.id, updatedAt: route.updatedAt }));
+  const channelVersions = [...new Map(
+    matched.flatMap((route) => route.channels).map((channel) => [channel.id, channel]),
+  ).values()]
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((channel) => ({ id: channel.id, type: channel.type, updatedAt: channel.updatedAt }));
   const fingerprint = await sha256Hex(JSON.stringify({
     recommendationId: input.recommendationId,
     recommendationStatus: input.recommendationStatus,
@@ -145,8 +156,8 @@ export async function routingMatch(
     severity: input.severity,
     managerNote: input.managerNote,
     scope: input.scope,
-    routeIds,
-    channelIds,
+    routeVersions,
+    channelVersions,
   }));
   return { routeIds, channelIds, routes: matched, fingerprint, ready: channelIds.length > 0 };
 }

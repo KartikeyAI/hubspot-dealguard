@@ -23,7 +23,7 @@ test('follow-up APIs require Enterprise entitlement, remediation.bulk and human 
   assert.match(operations, /SET status = 'confirming'/);
   assert.match(operations, /SET status = 'queued'/);
   assert.match(confirmation, /wakeDeliveryQueue\(env, 'outbox'\)/);
-  assert.match(queueing, /dispatchQueuedRecommendationFollowups\(env, 1\)/);
+  assert.match(queueing, /dispatchQueuedRecommendationFollowups\(env, 10\)/);
   assert.match(index, /from '\.\/routes-v15\.js'/);
 });
 

@@ -89,7 +89,13 @@ async function associationTargets(
       { method: 'POST', body: JSON.stringify({ inputs: [input] }) },
     );
     const result = response.results?.find((item) => item.from.id === dealId) ?? response.results?.[0];
-    for (const target of result?.to ?? []) {
+    const pageTargets = result?.to ?? [];
+    for (let index = 0; index < pageTargets.length; index += 1) {
+      if (targets.size >= maximum) {
+        truncated = true;
+        break;
+      }
+      const target = pageTargets[index]!;
       const id = String(target.toObjectId);
       const existing = targets.get(id) ?? [];
       const merged = [...existing];
@@ -97,7 +103,7 @@ async function associationTargets(
         if (!merged.some((item) => item.typeId === type.typeId && item.category === type.category)) merged.push(type);
       }
       targets.set(id, merged);
-      if (targets.size >= maximum) break;
+      if (targets.size >= maximum && index < pageTargets.length - 1) truncated = true;
     }
     after = result?.paging?.next?.after;
     if (targets.size >= maximum && after) truncated = true;

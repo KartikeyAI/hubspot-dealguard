@@ -126,3 +126,29 @@ test('loader uses bounded date-versioned association and object batch reads', as
   assert.deepEqual(contactRead.body.properties, [...BUYER_COMMITTEE_CONTACT_PROPERTIES]);
   assert.deepEqual(companyRead.body.properties, [...BUYER_COMMITTEE_COMPANY_PROPERTIES]);
 });
+
+test('loader marks results truncated when one association page exceeds the bounded read limit', async () => {
+  const client = {
+    async request(path) {
+      if (path === '/crm/associations/2026-03/deals/contacts/batch/read') {
+        return {
+          results: [{
+            from: { id: '77' },
+            to: Array.from({ length: 101 }, (_, index) => ({ toObjectId: String(index + 1), associationTypes: [] })),
+          }],
+        };
+      }
+      if (path === '/crm/associations/2026-03/deals/companies/batch/read') {
+        return { results: [{ from: { id: '77' }, to: [] }] };
+      }
+      if (path === '/crm/objects/2026-03/contacts/batch/read') {
+        return { results: Array.from({ length: 100 }, (_, index) => ({ id: String(index + 1), properties: { firstname: `Contact ${index + 1}` } })) };
+      }
+      if (path === '/crm/objects/2026-03/companies/batch/read') return { results: [] };
+      throw new Error(`unexpected ${path}`);
+    },
+  };
+  const result = await loadBuyerCommitteeData(client, '77');
+  assert.equal(result.contacts.length, 100);
+  assert.equal(result.contactsTruncated, true);
+});

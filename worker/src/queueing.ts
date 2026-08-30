@@ -35,8 +35,10 @@ async function processMessage(env: Env, message: DealGuardQueueMessage): Promise
   if (message.kind === 'delivery') {
     if (message.task === 'enterprise_alerts') await dispatchEnterpriseAlerts(env);
     else if (message.task === 'outbox') {
-      await dispatchOutbox(env);
-      await dispatchQueuedRecommendationFollowups(env, 1);
+      await Promise.all([
+        dispatchOutbox(env),
+        dispatchQueuedRecommendationFollowups(env, 1),
+      ]);
     }
     else if (message.task === 'siem') await dispatchSiemEvents(env);
     else if (message.task === 'billing_usage') await retryAtomicUsageReports(env);

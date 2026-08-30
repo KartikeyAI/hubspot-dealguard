@@ -93,8 +93,8 @@ export interface RecommendationFollowupBatchView {
   kind: RecommendationFollowupKind;
   severity: RecommendationFollowupSeverity;
   managerNote: string;
-  authorizationMode: RecommendationFollowupAuthorizationMode;
-  automationPolicyId: string | null;
+  authorizationMode?: RecommendationFollowupAuthorizationMode;
+  automationPolicyId?: string | null;
   status: RecommendationFollowupBatchStatus;
   requestedCount: number;
   eligibleCount: number;
@@ -113,7 +113,7 @@ export interface RecommendationFollowupBatchView {
   semantics: {
     explicitRouteOptInRequired: true;
     humanConfirmationRequired: boolean;
-    configurationAuthorizesAutomation: boolean;
+    configurationAuthorizesAutomation?: boolean;
     noCrmMutation: true;
     noAutonomousOutreach: boolean;
     notificationContentIsDeterministic: true;

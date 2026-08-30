@@ -98,6 +98,46 @@ try {
         'idx_recommendation_outcomes_deal'
       )
   `);
+  const recommendationOperationsColumns = await client.query(`
+    SELECT table_name, column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'dealguard'
+      AND (
+        (table_name = 'recommendation_followup_batches' AND column_name IN (
+          'portal_id', 'kind', 'severity', 'manager_note', 'status', 'requested_count',
+          'eligible_count', 'delivery_ready_count', 'routing_summary_json',
+          'preview_expires_at', 'created_by_user_id', 'confirmed_at'
+        ))
+        OR (table_name = 'recommendation_followup_items' AND column_name IN (
+          'portal_id', 'batch_id', 'recommendation_id', 'deal_id', 'recommendation_code',
+          'status', 'pipeline_id', 'team_id', 'owner_id', 'region_code',
+          'matched_route_ids_json', 'matched_channel_ids_json', 'routing_fingerprint',
+          'delivery_summary_json', 'last_error'
+        ))
+      )
+    ORDER BY table_name, column_name
+  `);
+  const recommendationOperationsIndexes = await client.query(`
+    SELECT COUNT(*)::int AS count
+    FROM pg_indexes
+    WHERE schemaname = 'dealguard'
+      AND indexname IN (
+        'idx_recommendation_followup_batches_status',
+        'idx_recommendation_followup_items_delivery',
+        'idx_recommendation_followup_items_recommendation'
+      )
+  `);
+  const recommendationOperationsChecks = await client.query(`
+    SELECT COUNT(*)::int AS count
+    FROM pg_constraint constraint_info
+    JOIN pg_class relation ON relation.oid = constraint_info.conrelid
+    JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+    WHERE namespace.nspname = 'dealguard'
+      AND constraint_info.conname IN (
+        'secure_download_tokens_kind_check',
+        'recommendation_events_event_type_check'
+      )
+  `);
   const result = {
     migrationVersion: Number(migrations.rows[0]?.version ?? 0),
     migrationCount: Number(migrations.rows[0]?.count ?? 0),
@@ -111,11 +151,14 @@ try {
     executiveSnapshotIndexCount: Number(executiveIndexes.rows[0]?.count ?? 0),
     recommendationOutcomeColumnCount: recommendationColumns.rowCount ?? 0,
     recommendationOutcomeIndexCount: Number(recommendationIndexes.rows[0]?.count ?? 0),
+    recommendationOperationsColumnCount: recommendationOperationsColumns.rowCount ?? 0,
+    recommendationOperationsIndexCount: Number(recommendationOperationsIndexes.rows[0]?.count ?? 0),
+    recommendationOperationsCheckCount: Number(recommendationOperationsChecks.rows[0]?.count ?? 0),
   };
-  if (result.migrationVersion < 18 || result.migrationCount < 18) throw new Error(`Expected migrations through 0018, got ${JSON.stringify(result)}.`);
-  if (result.tableCount < 75) throw new Error(`Expected at least 75 DealGuard tables, got ${result.tableCount}.`);
-  if (result.foreignKeyCount < 62) throw new Error(`Expected tenant and relationship foreign keys, got ${result.foreignKeyCount}.`);
-  if (result.tenantLeadingIndexCount < 40) throw new Error(`Expected tenant-leading indexes, got ${result.tenantLeadingIndexCount}.`);
+  if (result.migrationVersion < 19 || result.migrationCount < 19) throw new Error(`Expected migrations through 0019, got ${JSON.stringify(result)}.`);
+  if (result.tableCount < 77) throw new Error(`Expected at least 77 DealGuard tables, got ${result.tableCount}.`);
+  if (result.foreignKeyCount < 66) throw new Error(`Expected tenant and relationship foreign keys, got ${result.foreignKeyCount}.`);
+  if (result.tenantLeadingIndexCount < 43) throw new Error(`Expected tenant-leading indexes, got ${result.tenantLeadingIndexCount}.`);
   if (result.trustworthyCurrencyColumnCount !== 2) throw new Error(`Expected trustworthy currency columns on assessment_history, got ${result.trustworthyCurrencyColumnCount}.`);
   if (result.decisionSnapshotColumnCount !== 10) throw new Error(`Expected manager decision snapshot columns, got ${result.decisionSnapshotColumnCount}.`);
   if (result.decisionSnapshotIndexCount !== 2) throw new Error(`Expected manager decision queue indexes, got ${result.decisionSnapshotIndexCount}.`);
@@ -123,6 +166,9 @@ try {
   if (result.executiveSnapshotIndexCount !== 3) throw new Error(`Expected executive revenue indexes, got ${result.executiveSnapshotIndexCount}.`);
   if (result.recommendationOutcomeColumnCount !== 32) throw new Error(`Expected recommendation outcome columns, got ${result.recommendationOutcomeColumnCount}.`);
   if (result.recommendationOutcomeIndexCount !== 7) throw new Error(`Expected recommendation outcome indexes, got ${result.recommendationOutcomeIndexCount}.`);
+  if (result.recommendationOperationsColumnCount !== 27) throw new Error(`Expected recommendation operations columns, got ${result.recommendationOperationsColumnCount}.`);
+  if (result.recommendationOperationsIndexCount !== 3) throw new Error(`Expected recommendation operations indexes, got ${result.recommendationOperationsIndexCount}.`);
+  if (result.recommendationOperationsCheckCount !== 2) throw new Error(`Expected recommendation operations constraints, got ${result.recommendationOperationsCheckCount}.`);
   console.log(JSON.stringify(result, null, 2));
 } finally {
   await client.end();

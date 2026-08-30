@@ -2,6 +2,7 @@ import {
   permissionMatches,
   requireEnterprisePermission,
 } from './enterprise-access.js';
+import { AppError } from './errors.js';
 import { loadFollowupRoutingState } from './recommendation-followup-delivery.js';
 import { listRecommendationFollowupBatches } from './recommendation-operations.js';
 import { RECOMMENDATION_FOLLOWUP_EVENT } from './recommendation-operations-types.js';
@@ -21,17 +22,7 @@ export async function listRecommendationFollowupCandidates(
   const access = await requireEnterprisePermission(env, identity, 'remediation.view');
   const scoped = analyticsScopeFilter(url, access);
   if (scoped.deniedKey) {
-    return {
-      candidates: [],
-      batches: [],
-      permissions: {
-        canView: true,
-        canBulkFollowup: false,
-        canManageRouting: permissionMatches(access.permissions, 'alert.manage'),
-        canExport: permissionMatches(access.permissions, 'analytics.export'),
-      },
-      deniedFilter: scoped.deniedKey,
-    };
+    throw new AppError(403, 'recommendation_followup_scope_denied', `The selected ${scoped.deniedKey} is outside your assigned data scope.`);
   }
   const clauses = scoped.clauses.length > 0 ? `AND ${scoped.clauses.join(' AND ')}` : '';
   const result = await env.DB.prepare(

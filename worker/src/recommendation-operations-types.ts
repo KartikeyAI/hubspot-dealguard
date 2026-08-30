@@ -42,12 +42,14 @@ export interface RecommendationRouteConfig {
   channelIds: string[];
   quietHoursCalendarId: string | null;
   enabled: boolean;
+  updatedAt: string;
 }
 
 export interface RecommendationChannelSummary {
   id: string;
   name: string;
   type: 'slack_webhook' | 'teams_workflow' | 'email' | 'webhook';
+  updatedAt: string;
 }
 
 export interface RecommendationFollowupRoutingMatch {
@@ -56,8 +58,10 @@ export interface RecommendationFollowupRoutingMatch {
   routes: Array<{
     id: string;
     name: string;
+    updatedAt: string;
     channelIds: string[];
     channelNames: string[];
+    channels: RecommendationChannelSummary[];
   }>;
   fingerprint: string;
   ready: boolean;

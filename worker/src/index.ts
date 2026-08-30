@@ -2,7 +2,7 @@ import { errorResponse, json, requestId } from './http.js';
 import { enqueueScan, wakeDeliveryQueue, wakeMaintenanceQueue } from './queue-publisher.js';
 import { processQueueBatch } from './queueing.js';
 import { Repository } from './repository.js';
-import { route } from './routes-v12.js';
+import { route } from './routes-v13.js';
 import { createRuntimeEnv } from './runtime.js';
 import type { DealGuardQueueMessage, ExecutionContext, QueueBatch, ScheduledEvent, WorkerBindings } from './types.js';
 import { DEALGUARD_VERSION } from './version.js';

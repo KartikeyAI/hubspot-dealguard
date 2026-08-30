@@ -1,3 +1,7 @@
+import {
+  closeRecommendationsForDeal,
+  observeRecommendationSnapshot,
+} from './recommendation-outcomes.js';
 import type { Env } from './types.js';
 
 const BRIEF_STATUSES = new Set(['on_track', 'watch', 'intervention_required', 'insufficient_evidence']);
@@ -187,6 +191,16 @@ export function extractDecisionSnapshot(
   };
 }
 
+function logRecommendationObservation(task: string, portalId: string, dealId: string, error: unknown): void {
+  console.error(JSON.stringify({
+    level: 'warn',
+    task,
+    portalId,
+    dealId,
+    error: error instanceof Error ? error.message : String(error),
+  }));
+}
+
 export async function persistDecisionSnapshot(
   env: Env,
   portalId: string,
@@ -198,6 +212,9 @@ export async function persistDecisionSnapshot(
     await env.DB.prepare(`DELETE FROM deal_decision_snapshots WHERE portal_id = ? AND deal_id = ?`)
       .bind(portalId, dealId)
       .run();
+    await closeRecommendationsForDeal(env, portalId, dealId).catch((error) => {
+      logRecommendationObservation('recommendation_close_observation', portalId, dealId, error);
+    });
     return false;
   }
 
@@ -258,5 +275,8 @@ export async function persistDecisionSnapshot(
     now,
     now,
   ).run();
+  await observeRecommendationSnapshot(env, snapshot, payload).catch((error) => {
+    logRecommendationObservation('recommendation_snapshot_observation', portalId, dealId, error);
+  });
   return true;
 }

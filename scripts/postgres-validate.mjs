@@ -62,6 +62,42 @@ try {
         'idx_executive_revenue_snapshots_concentration'
       )
   `);
+  const recommendationColumns = await client.query(`
+    SELECT table_name, column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'dealguard'
+      AND (
+        (table_name = 'recommendation_instances' AND column_name IN (
+          'portal_id', 'deal_id', 'recommendation_fingerprint', 'recommendation_code',
+          'status', 'due_at', 'accepted_at', 'completed_at', 'dismissed_at',
+          'baseline_assessment_at', 'baseline_readiness_score', 'baseline_stage_id',
+          'baseline_attention_score', 'baseline_dimensions_json'
+        ))
+        OR (table_name = 'recommendation_events' AND column_name IN (
+          'portal_id', 'recommendation_id', 'deal_id', 'event_type', 'metadata_json', 'occurred_at'
+        ))
+        OR (table_name = 'recommendation_outcomes' AND column_name IN (
+          'recommendation_id', 'portal_id', 'deal_id', 'evaluation_status', 'observed_progress',
+          'observation_generated_at', 'readiness_delta', 'attention_delta', 'dimension_deltas_json',
+          'recommendation_still_current', 'explanation', 'causal_attribution'
+        ))
+      )
+    ORDER BY table_name, column_name
+  `);
+  const recommendationIndexes = await client.query(`
+    SELECT COUNT(*)::int AS count
+    FROM pg_indexes
+    WHERE schemaname = 'dealguard'
+      AND indexname IN (
+        'idx_recommendation_instances_queue',
+        'idx_recommendation_instances_analytics',
+        'idx_recommendation_instances_completed',
+        'idx_recommendation_events_portal_time',
+        'idx_recommendation_events_instance',
+        'idx_recommendation_outcomes_portal_progress',
+        'idx_recommendation_outcomes_deal'
+      )
+  `);
   const result = {
     migrationVersion: Number(migrations.rows[0]?.version ?? 0),
     migrationCount: Number(migrations.rows[0]?.count ?? 0),
@@ -73,16 +109,20 @@ try {
     decisionSnapshotIndexCount: Number(decisionIndexes.rows[0]?.count ?? 0),
     executiveSnapshotColumnCount: executiveColumns.rowCount ?? 0,
     executiveSnapshotIndexCount: Number(executiveIndexes.rows[0]?.count ?? 0),
+    recommendationOutcomeColumnCount: recommendationColumns.rowCount ?? 0,
+    recommendationOutcomeIndexCount: Number(recommendationIndexes.rows[0]?.count ?? 0),
   };
-  if (result.migrationVersion < 17 || result.migrationCount < 17) throw new Error(`Expected migrations through 0017, got ${JSON.stringify(result)}.`);
-  if (result.tableCount < 72) throw new Error(`Expected at least 72 DealGuard tables, got ${result.tableCount}.`);
-  if (result.foreignKeyCount < 57) throw new Error(`Expected tenant and relationship foreign keys, got ${result.foreignKeyCount}.`);
-  if (result.tenantLeadingIndexCount < 34) throw new Error(`Expected tenant-leading indexes, got ${result.tenantLeadingIndexCount}.`);
+  if (result.migrationVersion < 18 || result.migrationCount < 18) throw new Error(`Expected migrations through 0018, got ${JSON.stringify(result)}.`);
+  if (result.tableCount < 75) throw new Error(`Expected at least 75 DealGuard tables, got ${result.tableCount}.`);
+  if (result.foreignKeyCount < 62) throw new Error(`Expected tenant and relationship foreign keys, got ${result.foreignKeyCount}.`);
+  if (result.tenantLeadingIndexCount < 40) throw new Error(`Expected tenant-leading indexes, got ${result.tenantLeadingIndexCount}.`);
   if (result.trustworthyCurrencyColumnCount !== 2) throw new Error(`Expected trustworthy currency columns on assessment_history, got ${result.trustworthyCurrencyColumnCount}.`);
   if (result.decisionSnapshotColumnCount !== 10) throw new Error(`Expected manager decision snapshot columns, got ${result.decisionSnapshotColumnCount}.`);
   if (result.decisionSnapshotIndexCount !== 2) throw new Error(`Expected manager decision queue indexes, got ${result.decisionSnapshotIndexCount}.`);
   if (result.executiveSnapshotColumnCount !== 12) throw new Error(`Expected executive revenue snapshot columns, got ${result.executiveSnapshotColumnCount}.`);
   if (result.executiveSnapshotIndexCount !== 3) throw new Error(`Expected executive revenue indexes, got ${result.executiveSnapshotIndexCount}.`);
+  if (result.recommendationOutcomeColumnCount !== 32) throw new Error(`Expected recommendation outcome columns, got ${result.recommendationOutcomeColumnCount}.`);
+  if (result.recommendationOutcomeIndexCount !== 7) throw new Error(`Expected recommendation outcome indexes, got ${result.recommendationOutcomeIndexCount}.`);
   console.log(JSON.stringify(result, null, 2));
 } finally {
   await client.end();

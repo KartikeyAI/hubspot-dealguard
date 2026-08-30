@@ -38,17 +38,25 @@ on:
       - 'worker/src/executive-revenue-candidates.ts'
       - 'worker/src/executive-revenue-analysis.ts'
       - 'worker/src/executive-revenue.ts'
+      - 'worker/src/recommendation-outcome-types.ts'
+      - 'worker/src/recommendation-outcome-model.ts'
+      - 'worker/src/recommendation-outcome-storage.ts'
+      - 'worker/src/recommendation-observation.ts'
+      - 'worker/src/recommendation-lifecycle.ts'
+      - 'worker/src/recommendation-outcomes.ts'
       - 'worker/src/postgres.ts'
       - 'worker/src/assessment-service.ts'
       - 'worker/src/routes-v2.ts'
       - 'worker/src/routes-v10.ts'
       - 'worker/src/routes-v11.ts'
       - 'worker/src/routes-v12.ts'
+      - 'worker/src/routes-v13.ts'
       - 'worker/src/index.ts'
       - 'worker/src/enterprise-analytics-v2.ts'
       - 'database/migrations/0015_trustworthy_intelligence_currency.sql'
       - 'database/migrations/0016_manager_decision_queue.sql'
       - 'database/migrations/0017_executive_revenue_view.sql'
+      - 'database/migrations/0018_recommendation_outcomes.sql'
       - 'src/app/app-hsmeta.json'
       - 'src/app/cards/DealGuardEngagementCard.tsx'
       - 'src/app/cards/dealguard-engagement-card-hsmeta.json'
@@ -82,6 +90,8 @@ on:
       - 'test/executive-revenue.test.mjs'
       - 'test/executive-revenue-contract.test.mjs'
       - 'test/executive-revenue-ui-contract.test.mjs'
+      - 'test/recommendation-outcome.test.mjs'
+      - 'test/recommendation-outcome-contract.test.mjs'
       - 'scripts/postgres-migrate.mjs'
       - 'scripts/postgres-validate.mjs'
       - 'docs/ENTERPRISE_ANALYTICS.md'
@@ -92,6 +102,7 @@ on:
       - 'docs/COMMERCIAL_INTEGRITY.md'
       - 'docs/MANAGER_DECISION_QUEUE.md'
       - 'docs/EXECUTIVE_REVENUE_VIEW.md'
+      - 'docs/RECOMMENDATION_OUTCOMES.md'
       - '.github/workflows/p2-decision-intelligence.yml'
   workflow_dispatch:
 
@@ -168,6 +179,8 @@ jobs:
         run: node --test test/manager-decision-queue.test.mjs test/manager-decision-queue-contract.test.mjs test/manager-decision-queue-ui-contract.test.mjs
       - name: Run executive-revenue tests
         run: node --test test/executive-revenue.test.mjs test/executive-revenue-contract.test.mjs test/executive-revenue-ui-contract.test.mjs
+      - name: Run recommendation-outcome tests
+        run: node --test test/recommendation-outcome.test.mjs test/recommendation-outcome-contract.test.mjs
       - name: Run P2 contract tests
         run: node --test test/p2-intelligence-contract.test.mjs
       - name: Run full automated test suite

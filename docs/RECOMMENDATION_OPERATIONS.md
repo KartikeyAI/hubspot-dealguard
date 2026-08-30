@@ -9,7 +9,7 @@ The foundation provides:
 - human confirmation by the initiating manager;
 - notification delivery through explicitly opted-in DealGuard routes and encrypted channels;
 - per-recommendation and per-channel delivery evidence;
-- scoped CSV or JSON recommendation-evidence exports through one-time secure downloads.
+- scoped CSV or JSON evidence through a one-time secure download.
 
 ## Product boundary
 
@@ -25,7 +25,7 @@ The feature does not:
 
 All notification content is deterministic and based on the selected recommendation, its bounded scope context, and the manager's explicit note.
 
-## Permissions
+## Permissions and entitlement
 
 Recommendation follow-up operations require:
 
@@ -39,25 +39,19 @@ Recommendation evidence exports require:
 analytics.export
 ```
 
-The existing Enterprise entitlement gate still applies.
+The Enterprise entitlement gate still applies. Pipeline, team, owner, and region assignments are enforced during preview and checked again at confirmation. No new HubSpot OAuth scope is introduced.
 
-Pipeline, team, owner, and region assignments are enforced when a batch is previewed. They are checked again at confirmation. A manager cannot confirm a batch after losing access to one of its recommendations.
+## Explicit route opt-in
 
-No new HubSpot OAuth scope is introduced.
-
-## Follow-up event
-
-The only notification event emitted by this feature is:
+The only event emitted by this feature is:
 
 ```text
 recommendation.followup.requested
 ```
 
-A notification route must explicitly include this exact event type.
+A notification route must explicitly include this event type. A route with an empty event-type list is not eligible for recommendation follow-ups, even where older general-alert behavior treats an empty list broadly.
 
-A route with an empty event-type list is **not** eligible for recommendation follow-ups. This differs intentionally from older general-alert behavior where an empty list may represent a broad route.
-
-Explicit route opt-in prevents a newly introduced manager action from being delivered to a broad or legacy channel unintentionally.
+Explicit opt-in prevents a newly introduced manager action from being delivered through a legacy or catch-all channel unintentionally.
 
 ## Preview workflow
 
@@ -67,7 +61,7 @@ Explicit route opt-in prevents a newly introduced manager action from being deli
 POST /api/v1/enterprise/recommendation-followups/preview
 ```
 
-Example request:
+Example:
 
 ```json
 {
@@ -78,48 +72,48 @@ Example request:
 }
 ```
 
-Supported follow-up kinds are:
+Supported kinds:
 
 ```text
 owner_reminder
 manager_review
 ```
 
-Supported severities are:
+Supported severities:
 
 ```text
 warning
 critical
 ```
 
-A manager note of at least ten characters is required. A preview can contain at most 100 unique recommendations.
+A manager note of at least ten characters is required. One preview can include at most 100 unique recommendations.
 
 ### Eligibility
 
-A selected recommendation must:
+A recommendation must:
 
 - exist in the current portal;
-- be in `presented` or `accepted` status;
-- be inside the initiating manager's assigned data scope;
-- match at least one enabled notification route that explicitly opts into `recommendation.followup.requested`;
-- satisfy the route's minimum severity and pipeline, team, owner, and region conditions;
+- be `presented` or `accepted`;
+- be inside the initiating manager's assigned scope;
+- match an enabled route that explicitly opts into `recommendation.followup.requested`;
+- satisfy route severity and pipeline, team, owner, and region conditions;
 - have at least one enabled configured channel;
-- be outside the route's current quiet hours.
+- be outside configured quiet hours.
 
-A terminal recommendation remains visible in the preview as ineligible. It cannot be confirmed.
+Terminal recommendations remain visible as ineligible preview items. A batch can be confirmed only when every selected item is active and delivery-ready.
 
-### Preview result
+### Preview evidence
 
 The preview returns:
 
 - recommendation and deal identifiers;
-- recommendation status, priority, due date, and overdue state;
+- recommendation state, priority, due date, and overdue state;
 - bounded pipeline, team, owner, and region context;
-- matching route IDs and names;
-- matching channel IDs, names, and types;
-- eligibility and delivery-readiness status;
-- any ineligibility explanation;
-- a batch-level readiness summary.
+- matching routes and channels;
+- route and channel configuration versions;
+- eligibility and delivery-readiness state;
+- an explanation for each ineligible item;
+- batch readiness and expiry.
 
 No notification is sent during preview.
 
@@ -131,42 +125,74 @@ No notification is sent during preview.
 POST /api/v1/enterprise/recommendation-followups/{batchId}/confirm
 ```
 
-The preview expires after 15 minutes.
+A preview expires after 15 minutes. Confirmation is available only to the initiating manager or an administrator.
 
-Confirmation is allowed only when:
+DealGuard revalidates:
 
-1. the batch is still in `previewed` state;
-2. the preview has not expired;
-3. every selected recommendation remains active and delivery-ready;
-4. the confirming user is the initiating manager or an administrator;
-5. the confirming user still has data-scope access;
-6. the recommendation status, priority, due date, scope, manager note, severity, routes, and channels still produce the same routing fingerprint.
+1. recommendation status, priority, due date, and scope;
+2. the confirming user's current data access;
+3. route event opt-in, severity and scope;
+4. quiet-hours state;
+5. route configuration version;
+6. channel type and configuration version.
 
-If recommendation state, route configuration, channel availability, quiet hours, or scope changes after preview, confirmation returns a conflict and the manager must create a new preview.
+The preview fingerprint binds the manager note, follow-up kind, severity, recommendation state, scope, routes, and channels. A change requires a new preview instead of silently redirecting delivery.
 
-This makes confirmation meaningful: the manager approves the same bounded delivery plan that DealGuard previewed.
+Confirmation uses an atomic lifecycle:
 
-## Delivery
+```text
+previewed → confirming → queued
+```
 
-After confirmation, DealGuard records `followup_requested` in the recommendation lifecycle event stream and starts the dedicated delivery operation through the request execution context.
+Only one request can claim confirmation. The recommendation event stream records `followup_requested` only after the queued transition is committed.
 
-Supported channel types are:
+## Delivery Queue
+
+Confirmed batches publish a wake-up to DealGuard's existing Cloudflare Delivery Queue. The queue consumer processes the dedicated recommendation-follow-up dispatcher alongside the general outbox dispatcher.
+
+This provides:
+
+- durable work after the HTTP response;
+- scheduled recovery because regular outbox wakes also inspect queued follow-ups;
+- an atomic `queued → delivering` claim that prevents two consumers from delivering the same batch concurrently;
+- a bounded one-batch-per-wake processing model.
+
+A confirmation claim that remains incomplete for five minutes is marked failed. A delivery claim that remains incomplete for twenty minutes is marked failed rather than automatically repeated, reducing the risk of duplicate outreach when a channel result is uncertain.
+
+## Routing stability at delivery
+
+Delivery is limited to route and channel IDs shown in the preview. DealGuard rechecks that:
+
+- the route is still enabled and explicitly opted in;
+- the route still matches severity and data scope;
+- quiet hours still permit delivery;
+- the route version is unchanged;
+- the channel remains enabled;
+- the channel type and version are unchanged.
+
+A changed or unavailable destination is not substituted. The item records failure and requires a new manager preview.
+
+## Supported channels
+
+The dedicated dispatcher supports:
 
 - Slack webhook;
 - Microsoft Teams workflow;
-- email;
+- configured email channel;
 - signed generic webhook.
 
-The feature reuses encrypted notification-channel credentials and configured email recipients. It does not discover or store new recipient data.
+DealGuard reuses encrypted channel credentials and configured recipients. It does not discover or retain new recipient data.
 
-Each recommendation item records one delivery result per selected channel:
+## Delivery evidence
+
+Each item records one result per selected channel:
 
 ```text
 delivered
 failed
 ```
 
-The item status becomes:
+Item status becomes:
 
 ```text
 delivered
@@ -174,7 +200,7 @@ partially_failed
 failed
 ```
 
-The batch becomes:
+Batch status becomes:
 
 ```text
 completed
@@ -182,17 +208,15 @@ partially_failed
 failed
 ```
 
-A confirmed follow-up is not represented as delivered until at least one configured channel succeeds. Channel errors remain visible in bounded delivery evidence.
+A confirmed action is not represented as delivered merely because confirmation succeeded. Channel failures remain visible in the batch evidence.
 
 ## Batch APIs
 
-List the initiating manager's recent batches:
+List recent batches:
 
 ```text
 GET /api/v1/enterprise/recommendation-followups?limit=10
 ```
-
-Administrators can list portal batches. Other users see only batches they initiated and that remain inside their current data scope.
 
 Read one batch:
 
@@ -200,9 +224,9 @@ Read one batch:
 GET /api/v1/enterprise/recommendation-followups/{batchId}
 ```
 
-The response includes preview, confirmation, delivery, item, and channel-level evidence.
+Administrators can inspect portal batches. Other managers see only batches they initiated and that remain within their current assigned scope.
 
-## Auditing
+## Audit model
 
 DealGuard writes audit entries for:
 
@@ -212,15 +236,13 @@ recommendation.followup_confirmed
 recommendation.followup_delivery_completed
 ```
 
-The audit record includes batch identity, kind, severity, counts, human-confirmation status, and the no-CRM-mutation boundary.
-
-The recommendation event stream separately records:
+The recommendation lifecycle event stream separately records:
 
 ```text
 followup_requested
 ```
 
-This preserves the distinction between a manager asking for follow-up and a notification channel successfully delivering it.
+This preserves the distinction between a manager requesting follow-up and a channel delivering it.
 
 ## Database model
 
@@ -231,44 +253,26 @@ recommendation_followup_batches
 recommendation_followup_items
 ```
 
-### Batch evidence
+A batch retains bounded operational evidence: kind, severity, manager note, lifecycle status, counts, routing summary, preview expiry, actors, and confirmation/completion timestamps.
 
-A batch stores:
+An item retains recommendation and deal IDs, action metadata, bounded pipeline/team/owner/region scope, matched route/channel IDs, routing fingerprint, delivery state, channel results, and a bounded error.
 
-- follow-up kind and severity;
-- manager note;
-- lifecycle status;
-- requested, eligible, routable, confirmed, delivered, and failed counts;
-- bounded routing summary;
-- preview expiry;
-- initiating and confirming actors;
-- confirmation and completion timestamps.
+The model does not store contact records, communication bodies, call recordings, meeting content, quote documents, line-item rows, proposal text, or payment information.
 
-### Item evidence
+Migration `0019` also extends:
 
-An item stores:
-
-- recommendation and deal identifiers;
-- recommendation code, label, instruction, status, priority, and deadline;
-- bounded pipeline, team, owner, and region scope;
-- matched route and channel IDs;
-- routing fingerprint;
-- delivery status;
-- bounded channel delivery results and last error.
-
-The operation model does not store contact records, communication bodies, call recordings, meeting content, quote documents, line-item rows, proposal text, or payment information.
+- `recommendation_events` with `followup_requested`;
+- secure-download kinds with `recommendation_evidence`.
 
 ## Recommendation evidence exports
 
-Recommendation evidence is available through the existing one-time secure-download API.
-
-### Create a secure export
+Create an export through the existing secure-download endpoint:
 
 ```text
 POST /api/v1/enterprise/downloads
 ```
 
-Example CSV request:
+CSV example:
 
 ```json
 {
@@ -282,7 +286,7 @@ Example CSV request:
 }
 ```
 
-Example JSON request:
+JSON example:
 
 ```json
 {
@@ -296,16 +300,9 @@ Example JSON request:
 }
 ```
 
-The returned URL:
+The returned URL expires after ten minutes, is single-use, is bound to the requesting identity and portal, and rechecks `analytics.export` plus assigned data scope when consumed.
 
-- expires after ten minutes;
-- can be used only once;
-- is bound to the requesting user identity and portal;
-- rechecks `analytics.export` and assigned scope when consumed.
-
-### Export filters
-
-Supported filters include:
+Supported filters:
 
 ```text
 days
@@ -321,53 +318,31 @@ ownerId
 regionCode
 ```
 
-A custom date range can span at most 366 days.
+A custom date range can span at most 366 days. DealGuard evaluates at most 10,001 rows and returns at most 10,000 recommendation instances. CSV exposes truncation in a response header; JSON includes a `truncated` field.
 
-### Export bounds
+CSV values beginning with `=`, `+`, `-`, or `@` are prefixed before escaping to reduce spreadsheet-formula injection risk.
 
-An export evaluates at most 10,001 rows and returns at most 10,000 recommendation instances. The CSV response includes an explicit truncation header, and JSON includes a `truncated` field.
+Exports contain bounded lifecycle, baseline, scope and later observational outcome evidence. They do not contain contact details or communication content, and they always retain `causalAttribution: false` semantics.
 
-CSV cells beginning with:
+## Failure behavior
 
-```text
-=
-+
--
-@
-```
-
-are prefixed before escaping to reduce spreadsheet-formula injection risk.
-
-### Export semantics
-
-Exports include:
-
-- recommendation lifecycle state and timestamps;
-- bounded baseline readiness, stage, owner, team, region, close date, and Deal Brief evidence;
-- later observed recommendation-outcome evidence;
-- `causal_attribution = false`.
-
-They do not contain contact details or communication content.
-
-## Failure and degradation behavior
-
-- A preview with missing explicit routing cannot be confirmed.
-- A routing change forces a new preview rather than silently changing recipients.
-- A delivery failure does not trigger a HubSpot CRM fallback.
-- One failed channel can produce an item-level partial result while successful channels remain recorded.
-- Export failure does not modify recommendation lifecycle state.
+- A preview with no explicit route cannot be confirmed.
+- A route, channel, scope, recommendation, or quiet-hours change requires a new preview.
+- A queue or delivery failure does not trigger a HubSpot CRM fallback.
+- One failed channel can produce a partial result while successful channels remain recorded.
+- An export failure does not modify recommendation lifecycle state.
 - Existing deterministic actions and lifecycle controls continue to work when no follow-up route is configured.
 
 ## Deployment dependency
 
-Production deployment requires, in order:
+Production deployment requires:
 
-1. the Deal Intelligence and trustworthy-analytics stack through PR #27;
+1. the Deal Intelligence stack through PR #27;
 2. PR #28 and migration `0018_recommendation_outcomes.sql`;
-3. PR #29 for recommendation lifecycle product surfaces;
+3. PR #29 for recommendation lifecycle surfaces;
 4. migration `0019_recommendation_operations.sql`;
 5. the Recommendation Operations Worker changes;
-6. configuration of at least one notification route with explicit `recommendation.followup.requested` opt-in;
-7. developer-account validation of preview, confirmation, quiet-hours changes, partial delivery, and secure export behavior.
+6. at least one notification route with explicit `recommendation.followup.requested` opt-in;
+7. developer-account validation of preview, confirmation, queue recovery, quiet-hours changes, partial delivery, and secure exports.
 
-This foundation slice deliberately adds no new bulk-operation UI. The next product-surface slice should add selected-recommendation preview and confirmation controls to App Home, plus a secure evidence-export control.
+This foundation deliberately adds no new bulk-operation UI. The next product-surface slice should add selected-recommendation preview and confirmation controls to App Home, plus a secure evidence-export control.

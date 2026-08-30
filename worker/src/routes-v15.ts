@@ -5,6 +5,7 @@ import { listRecommendationFollowupCandidates } from './recommendation-followup-
 import { previewScopedRecommendationRoutingPolicy, saveScopedRecommendationRoutingPolicy } from './recommendation-routing-policy-api.js';
 import { deleteRecommendationRoutingPolicy, listRecommendationRoutingPolicies } from './recommendation-routing-policies.js';
 import { evaluateRecommendationRoutingPolicies } from './recommendation-routing-policy-runner.js';
+import { Repository } from './repository.js';
 import { route as routeV14 } from './routes-v14.js';
 import { validateHubSpotRequest } from './signature.js';
 import type { Env } from './types.js';
@@ -38,7 +39,19 @@ export async function route(
     const identity = await validateHubSpotRequest(request, env);
     await requireCommercialTier(env, identity.portalId, 'enterprise');
     await requireEnterprisePermission(env, identity, 'alert.manage');
-    return json(await evaluateRecommendationRoutingPolicies(env, identity.portalId), 202);
+    await new Repository(env).audit(identity.portalId, identity.userId, identity.userEmail, 'recommendation.policy_evaluation_requested', {
+      source: 'app_home',
+      noCrmMutation: true,
+    });
+    ctx.waitUntil(evaluateRecommendationRoutingPolicies(env, identity.portalId).catch((error) => {
+      console.error(JSON.stringify({
+        level: 'error',
+        task: 'recommendation_policy_manual_evaluation',
+        portalId: identity.portalId,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }));
+    return json({ accepted: true, evaluationQueued: true }, 202);
   }
 
   if (url.pathname === POLICY_ROOT) {

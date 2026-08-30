@@ -42,6 +42,17 @@ function route(overrides = {}) {
     channelIds: ['channel-1'],
     quietHoursCalendarId: null,
     enabled: true,
+    updatedAt: '2026-08-31T10:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function channel(overrides = {}) {
+  return {
+    id: 'channel-1',
+    name: 'RevOps email',
+    type: 'email',
+    updatedAt: '2026-08-31T10:00:00.000Z',
     ...overrides,
   };
 }
@@ -63,7 +74,7 @@ test('enforces route severity and data scope', () => {
 test('excludes configured quiet hours from a confirmable routing match', async () => {
   const match = await routingMatch({
     routes: [route()],
-    channels: [{ id: 'channel-1', name: 'RevOps email', type: 'email' }],
+    channels: [channel()],
     quietRouteIds: new Set(['route-1']),
     scope,
     severity: 'warning',
@@ -86,8 +97,8 @@ test('deduplicates channels and produces a stable routing fingerprint', async ()
       route({ id: 'route-b', channelIds: ['channel-2'] }),
     ],
     channels: [
-      { id: 'channel-1', name: 'Email', type: 'email' },
-      { id: 'channel-2', name: 'Slack', type: 'slack_webhook' },
+      channel({ id: 'channel-1', name: 'Email', type: 'email' }),
+      channel({ id: 'channel-2', name: 'Slack', type: 'slack_webhook' }),
     ],
     quietRouteIds: new Set(),
     scope,
@@ -105,6 +116,33 @@ test('deduplicates channels and produces a stable routing fingerprint', async ()
   assert.deepEqual(first.channelIds, ['channel-1', 'channel-2']);
   assert.deepEqual(first.routeIds, ['route-a', 'route-b']);
   assert.equal(first.fingerprint, second.fingerprint);
+});
+
+test('changes the fingerprint when a route or channel configuration version changes', async () => {
+  const base = {
+    routes: [route()],
+    channels: [channel()],
+    quietRouteIds: new Set(),
+    scope,
+    severity: 'warning',
+    recommendationId: 'recommendation-1',
+    recommendationStatus: 'accepted',
+    priority: 'high',
+    dueAt: '2026-09-01T00:00:00.000Z',
+    kind: 'manager_review',
+    managerNote: 'Review this action before the forecast call.',
+  };
+  const initial = await routingMatch(base);
+  const routeChanged = await routingMatch({
+    ...base,
+    routes: [route({ updatedAt: '2026-08-31T11:00:00.000Z' })],
+  });
+  const channelChanged = await routingMatch({
+    ...base,
+    channels: [channel({ updatedAt: '2026-08-31T11:00:00.000Z' })],
+  });
+  assert.notEqual(initial.fingerprint, routeChanged.fingerprint);
+  assert.notEqual(initial.fingerprint, channelChanged.fingerprint);
 });
 
 test('detects quiet hours using a configured business calendar', () => {

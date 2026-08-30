@@ -27,6 +27,7 @@ const APP_RELATIONS = new Set([
   'restore_tests','scan_checkpoints','secure_download_tokens','service_health','service_slos','slack_connections',
   'subscriptions','subscriptions_v2','deal_decision_snapshots','executive_revenue_snapshots',
   'recommendation_instances','recommendation_events','recommendation_outcomes',
+  'recommendation_followup_batches','recommendation_followup_items',
 ]);
 
 function placeholders(sql: string): string {

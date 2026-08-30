@@ -42,7 +42,7 @@ export async function listRecommendationFollowupCandidates(
        recommendation.presented_at DESC
      LIMIT 100`,
   ).bind(identity.portalId, ...scoped.params).all<RecommendationRow>();
-  const recommendations = (result.results ?? []).map(mapRecommendation);
+  const recommendations = (result.results ?? []).map((row) => mapRecommendation(row));
   const routing = await loadFollowupRoutingState(env, identity.portalId);
   const manualRoutes = routing.routes.filter((route) => route.eventTypes.includes(RECOMMENDATION_FOLLOWUP_EVENT));
   const canBulkFollowup = permissionMatches(access.permissions, 'remediation.bulk');

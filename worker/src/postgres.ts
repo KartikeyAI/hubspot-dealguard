@@ -25,7 +25,7 @@ const APP_RELATIONS = new Set([
   'policy_diffs','policy_exception_comments','policy_exception_evidence','policy_import_exports',
   'policy_segments','policy_templates','remediation_bulk_jobs','remediation_comments','remediation_evidence',
   'restore_tests','scan_checkpoints','secure_download_tokens','service_health','service_slos','slack_connections',
-  'subscriptions','subscriptions_v2',
+  'subscriptions','subscriptions_v2','deal_decision_snapshots',
 ]);
 
 function placeholders(sql: string): string {

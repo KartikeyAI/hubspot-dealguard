@@ -29,18 +29,21 @@ on:
       - 'worker/src/commercial-integrity-analysis.ts'
       - 'worker/src/commercial-integrity-actions.ts'
       - 'worker/src/commercial-integrity.ts'
-      - 'worker/src/commercial-assessment.ts'
+      - 'worker/src/decision-snapshot.ts'
+      - 'worker/src/manager-decision-queue-types.ts'
+      - 'worker/src/manager-decision-queue.ts'
+      - 'worker/src/postgres.ts'
       - 'worker/src/assessment-service.ts'
       - 'worker/src/routes-v2.ts'
       - 'worker/src/routes-v10.ts'
       - 'worker/src/routes-v11.ts'
-      - 'worker/src/index.ts'
       - 'worker/src/enterprise-analytics-v2.ts'
       - 'database/migrations/0015_trustworthy_intelligence_currency.sql'
+      - 'database/migrations/0016_manager_decision_queue.sql'
       - 'src/app/app-hsmeta.json'
       - 'src/app/cards/DealGuardEngagementCard.tsx'
-      - 'src/app/cards/DealGuardCommercialCard.tsx'
       - 'src/app/cards/dealguard-engagement-card-hsmeta.json'
+      - 'src/app/cards/DealGuardCommercialCard.tsx'
       - 'src/app/cards/dealguard-commercial-card-hsmeta.json'
       - 'src/app/cards/**'
       - 'src/app/pages/EnterpriseHomeV3.tsx'
@@ -59,9 +62,10 @@ on:
       - 'test/engagement-intelligence-contract.test.mjs'
       - 'test/deal-brief-engagement.test.mjs'
       - 'test/commercial-integrity.test.mjs'
-      - 'test/commercial-integrity-data.test.mjs'
       - 'test/commercial-integrity-contract.test.mjs'
       - 'test/deal-brief-commercial.test.mjs'
+      - 'test/manager-decision-queue.test.mjs'
+      - 'test/manager-decision-queue-contract.test.mjs'
       - 'scripts/postgres-migrate.mjs'
       - 'scripts/postgres-validate.mjs'
       - 'docs/ENTERPRISE_ANALYTICS.md'
@@ -70,6 +74,7 @@ on:
       - 'docs/DEAL_BRIEF.md'
       - 'docs/ENGAGEMENT_INTELLIGENCE.md'
       - 'docs/COMMERCIAL_INTEGRITY.md'
+      - 'docs/MANAGER_DECISION_QUEUE.md'
       - '.github/workflows/p2-decision-intelligence.yml'
   workflow_dispatch:
 
@@ -141,7 +146,9 @@ jobs:
       - name: Run engagement-intelligence tests
         run: node --test test/engagement-intelligence.test.mjs test/engagement-intelligence-contract.test.mjs test/deal-brief-engagement.test.mjs
       - name: Run commercial-integrity tests
-        run: node --test test/commercial-integrity.test.mjs test/commercial-integrity-data.test.mjs test/commercial-integrity-contract.test.mjs test/deal-brief-commercial.test.mjs
+        run: node --test test/commercial-integrity.test.mjs test/commercial-integrity-contract.test.mjs test/deal-brief-commercial.test.mjs
+      - name: Run manager-decision-queue tests
+        run: node --test test/manager-decision-queue.test.mjs test/manager-decision-queue-contract.test.mjs
       - name: Run P2 contract tests
         run: node --test test/p2-intelligence-contract.test.mjs
       - name: Run full automated test suite

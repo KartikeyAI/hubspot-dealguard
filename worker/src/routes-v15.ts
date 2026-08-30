@@ -1,5 +1,6 @@
 import { upsertBusinessCalendar, upsertNotificationRoute } from './alerting-enterprise.js';
 import { requireCommercialTier } from './billing.js';
+import { observeRecommendationDeliveryControls } from './recommendation-delivery-observer.js';
 import { requireEnterprisePermission } from './enterprise-access.js';
 import { AppError } from './errors.js';
 import { json, methodNotAllowed, readJson } from './http.js';
@@ -87,7 +88,10 @@ export async function route(
       source: 'app_home',
       noCrmMutation: true,
     });
-    ctx.waitUntil(evaluateRecommendationRoutingPolicies(env, identity.portalId).catch((error) => {
+    ctx.waitUntil((async () => {
+      await evaluateRecommendationRoutingPolicies(env, identity.portalId);
+      await observeRecommendationDeliveryControls(env, identity.portalId);
+    })().catch((error) => {
       console.error(JSON.stringify({
         level: 'error',
         task: 'recommendation_policy_manual_evaluation',
@@ -95,7 +99,7 @@ export async function route(
         error: error instanceof Error ? error.message : String(error),
       }));
     }));
-    return json({ accepted: true, evaluationQueued: true }, 202);
+    return json({ accepted: true, evaluationQueued: true, deliveryObservationQueued: true }, 202);
   }
 
   if (url.pathname === POLICY_ROOT) {

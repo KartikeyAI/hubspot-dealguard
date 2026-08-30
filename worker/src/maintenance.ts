@@ -1,3 +1,4 @@
+import { observeRecommendationDeliveryControls } from './recommendation-delivery-observer.js';
 import { evaluateRecommendationRoutingPolicies } from './recommendation-routing-policy-runner.js';
 import type { Env } from './types.js';
 
@@ -12,4 +13,5 @@ export async function runMaintenance(env: Env): Promise<void> {
     env.DB.prepare(`DELETE FROM notification_events WHERE created_at < ?`).bind(notificationCutoff),
   ]);
   await evaluateRecommendationRoutingPolicies(env);
+  await observeRecommendationDeliveryControls(env);
 }

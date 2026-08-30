@@ -7,6 +7,7 @@ export type DealBriefDimension =
   | 'close_date'
   | 'relationship'
   | 'engagement'
+  | 'commercial'
   | 'change';
 
 export interface DealBriefItem {
@@ -33,8 +34,9 @@ export interface DealBriefCoverage {
   closeDate: boolean;
   relationship: boolean;
   engagement?: boolean;
+  commercial?: boolean;
   percent: number;
-  missingDimensions: Array<'momentum' | 'close_date' | 'relationship' | 'engagement'>;
+  missingDimensions: Array<'momentum' | 'close_date' | 'relationship' | 'engagement' | 'commercial'>;
   truncated: boolean;
 }
 

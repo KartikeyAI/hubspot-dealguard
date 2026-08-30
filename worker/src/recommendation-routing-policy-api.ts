@@ -10,6 +10,16 @@ import {
 import type { RecommendationRoutingScope } from './recommendation-routing-policy-types.js';
 import type { Env, RequestIdentity } from './types.js';
 
+interface PolicyAuthorizationRow extends Record<string, unknown> {
+  pipeline_ids_json: string;
+  team_ids_json: string;
+  owner_ids_json: string;
+  region_codes_json: string;
+  route_id: string;
+  escalation_route_id: string | null;
+  enabled: number;
+}
+
 function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -60,9 +70,12 @@ async function constrainPolicyScope(
   identity: RequestIdentity,
   value: unknown,
   permissionName: 'alert.view' | 'alert.manage',
+  preserveMissingScope = false,
 ): Promise<{ input: Record<string, unknown>; access: EnterpriseAccessContext }> {
   const access = await requireEnterprisePermission(env, identity, permissionName);
   const input = { ...asObject(value) };
+  const hasScope = Object.prototype.hasOwnProperty.call(input, 'scope');
+  if (!hasScope && preserveMissingScope) return { input, access };
   const supplied = asObject(input.scope);
   const dimensions = [
     ['pipelineIds', access.scope.pipelineIds],
@@ -79,17 +92,27 @@ async function constrainPolicyScope(
   return { input, access };
 }
 
+async function policyAuthorizationRow(
+  env: Env,
+  identity: RequestIdentity,
+  policyId: string,
+): Promise<PolicyAuthorizationRow> {
+  const row = await env.DB.prepare(
+    `SELECT pipeline_ids_json, team_ids_json, owner_ids_json, region_codes_json,
+            route_id, escalation_route_id, enabled
+     FROM recommendation_routing_policies WHERE portal_id = ? AND id = ?`,
+  ).bind(identity.portalId, policyId).first<PolicyAuthorizationRow>();
+  if (!row) throw new AppError(404, 'recommendation_policy_not_found', 'The recommendation routing policy does not exist.');
+  return row;
+}
+
 async function requirePolicyScope(
   env: Env,
   identity: RequestIdentity,
   access: EnterpriseAccessContext,
   policyId: string,
-): Promise<void> {
-  const row = await env.DB.prepare(
-    `SELECT pipeline_ids_json, team_ids_json, owner_ids_json, region_codes_json
-     FROM recommendation_routing_policies WHERE portal_id = ? AND id = ?`,
-  ).bind(identity.portalId, policyId).first<Record<string, unknown>>();
-  if (!row) throw new AppError(404, 'recommendation_policy_not_found', 'The recommendation routing policy does not exist.');
+): Promise<PolicyAuthorizationRow> {
+  const row = await policyAuthorizationRow(env, identity, policyId);
   const scope: RecommendationRoutingScope = {
     pipelineIds: parseStrings(row.pipeline_ids_json),
     teamIds: parseStrings(row.team_ids_json),
@@ -99,20 +122,31 @@ async function requirePolicyScope(
   if (!scopeAllowed(scope, access)) {
     throw new AppError(403, 'recommendation_policy_scope_denied', 'The recommendation routing policy is outside your assigned data scope.');
   }
+  return row;
 }
 
 async function requireConfiguredPolicyChannels(
   env: Env,
   identity: RequestIdentity,
   input: Record<string, unknown>,
+  current: PolicyAuthorizationRow | null,
 ): Promise<void> {
-  if (input.enabled !== true) return;
+  const enabled = input.enabled === undefined ? Boolean(current?.enabled) : input.enabled === true;
+  if (!enabled) return;
+  const routeId = typeof input.routeId === 'string' && input.routeId
+    ? input.routeId
+    : current?.route_id ?? null;
+  const escalationRouteId = input.escalationRouteId === null
+    ? null
+    : typeof input.escalationRouteId === 'string' && input.escalationRouteId
+      ? input.escalationRouteId
+      : current?.escalation_route_id ?? null;
+  const routeIds = [routeId, escalationRouteId].filter((value): value is string => Boolean(value));
+  if (!routeId) throw new AppError(400, 'recommendation_policy_route_required', 'Select an initial notification route.');
   const state = await loadFollowupRoutingState(env, identity.portalId);
   const availableChannels = new Set(state.channelSummaries.map((channel) => channel.id));
-  const routeIds = [input.routeId, input.escalationRouteId]
-    .filter((value): value is string => typeof value === 'string' && Boolean(value));
-  for (const routeId of routeIds) {
-    const route = state.routes.find((candidate) => candidate.id === routeId);
+  for (const selectedRouteId of routeIds) {
+    const route = state.routes.find((candidate) => candidate.id === selectedRouteId);
     if (!route || !route.channelIds.some((channelId) => availableChannels.has(channelId))) {
       throw new AppError(409, 'recommendation_policy_channel_unavailable', 'Every enabled recommendation policy route must contain at least one enabled, configured notification channel.');
     }
@@ -141,9 +175,9 @@ export async function saveScopedRecommendationRoutingPolicy(
   value: unknown,
   policyId: string | null = null,
 ) {
-  const { input, access } = await constrainPolicyScope(env, identity, value, 'alert.manage');
-  if (policyId) await requirePolicyScope(env, identity, access, policyId);
-  await requireConfiguredPolicyChannels(env, identity, input);
+  const { input, access } = await constrainPolicyScope(env, identity, value, 'alert.manage', Boolean(policyId));
+  const current = policyId ? await requirePolicyScope(env, identity, access, policyId) : null;
+  await requireConfiguredPolicyChannels(env, identity, input, current);
   return saveRecommendationRoutingPolicy(env, identity, input, policyId);
 }
 
@@ -162,7 +196,9 @@ export async function previewScopedRecommendationRoutingPolicy(
   identity: RequestIdentity,
   value: unknown,
 ) {
-  const { input } = await constrainPolicyScope(env, identity, value, 'alert.view');
+  const raw = asObject(value);
+  const preserve = typeof raw.id === 'string' && Boolean(raw.id.trim());
+  const { input } = await constrainPolicyScope(env, identity, value, 'alert.view', preserve);
   return previewRecommendationRoutingPolicy(env, identity, input);
 }
 

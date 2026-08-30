@@ -1,0 +1,92 @@
+name: Recommendation Operations
+
+on:
+  pull_request:
+    paths:
+      - 'worker/src/recommendation-operations-types.ts'
+      - 'worker/src/recommendation-operations-model.ts'
+      - 'worker/src/recommendation-operations.ts'
+      - 'worker/src/recommendation-followup-confirmation.ts'
+      - 'worker/src/recommendation-followup-queue.ts'
+      - 'worker/src/recommendation-followup-delivery.ts'
+      - 'worker/src/recommendation-evidence-export.ts'
+      - 'worker/src/recommendation-outcome-types.ts'
+      - 'worker/src/secure-downloads.ts'
+      - 'worker/src/queueing.ts'
+      - 'worker/src/queue-publisher.ts'
+      - 'worker/src/routes-v14.ts'
+      - 'worker/src/index.ts'
+      - 'worker/src/postgres.ts'
+      - 'database/migrations/0018_recommendation_outcomes.sql'
+      - 'database/migrations/0019_recommendation_operations.sql'
+      - 'scripts/postgres-migrate.mjs'
+      - 'scripts/postgres-validate.mjs'
+      - 'test/recommendation-outcome.test.mjs'
+      - 'test/recommendation-outcome-contract.test.mjs'
+      - 'test/recommendation-operations.test.mjs'
+      - 'test/recommendation-operations-contract.test.mjs'
+      - 'docs/RECOMMENDATION_OUTCOMES.md'
+      - 'docs/RECOMMENDATION_OPERATIONS.md'
+      - '.github/workflows/recommendation-operations.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recommendation-operations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: dealguard
+          POSTGRES_PASSWORD: dealguard-test-password
+          POSTGRES_DB: dealguard_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U dealguard -d dealguard_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
+      DEALGUARD_CUTOVER_TEST_DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Create non-secret CI environment file
+        run: touch .env
+      - name: Install dependencies
+        run: npm install --ignore-scripts --silent
+      - name: Typecheck Worker
+        run: npm run typecheck
+      - name: Build Worker contracts
+        run: npm run build
+      - name: Apply PostgreSQL migrations
+        id: migrations
+        continue-on-error: true
+        run: npm run db:migrate > recommendation-operations-migrations.log 2>&1
+      - name: Upload migration diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-operations-migrations-${{ github.sha }}
+          path: recommendation-operations-migrations.log
+          retention-days: 7
+      - name: Enforce migrations
+        if: steps.migrations.outcome == 'failure'
+        run: cat recommendation-operations-migrations.log && exit 1
+      - name: Validate PostgreSQL schema
+        run: |
+          npm run db:migrate:check
+          npm run db:validate
+      - name: Run recommendation outcome foundation tests
+        run: node --test test/recommendation-outcome.test.mjs test/recommendation-outcome-contract.test.mjs
+      - name: Run recommendation operations tests
+        run: node --test test/recommendation-operations.test.mjs test/recommendation-operations-contract.test.mjs
+      - name: Run full automated test suite
+        run: npm test

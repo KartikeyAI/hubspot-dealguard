@@ -91,8 +91,8 @@ test('migration and Neon registry cover governed follow-up batches', () => {
   assert.match(validator, /recommendationOperationsIndexCount/);
 });
 
-test('focused CI and documentation cover recommendation operations', () => {
-  const workflow = read('.github/workflows/p2-decision-intelligence.yml');
+test('dedicated CI and documentation cover recommendation operations', () => {
+  const workflow = read('.github/workflows/recommendation-operations.yml');
   const docs = read('docs/RECOMMENDATION_OPERATIONS.md');
   assert.match(workflow, /recommendation-operations-types\.ts/);
   assert.match(workflow, /recommendation-operations-model\.ts/);

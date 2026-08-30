@@ -74,17 +74,20 @@ test('secure recommendation evidence export is scoped, bounded and spreadsheet-s
   assert.doesNotMatch(exporter, /email_body|meeting_body|call_recording|quote_document|contact_email/i);
 });
 
-test('migration and Neon registry cover governed follow-up batches', () => {
+test('migration and Neon registry cover tenant-bound governed follow-up batches', () => {
   const migration = read('database/migrations/0019_recommendation_operations.sql');
   const postgres = read('worker/src/postgres.ts');
   const validator = read('scripts/postgres-validate.mjs');
-  assert.match(migration, /CREATE TABLE IF NOT EXISTS recommendation_followup_batches/);
-  assert.match(migration, /CREATE TABLE IF NOT EXISTS recommendation_followup_items/);
+  assert.match(migration, /CREATE TABLE recommendation_followup_batches/);
+  assert.match(migration, /CREATE TABLE recommendation_followup_items/);
   assert.match(migration, /'previewed', 'confirming', 'queued'/);
   assert.match(migration, /recommendation_evidence/);
   assert.match(migration, /followup_requested/);
-  assert.match(migration, /UNIQUE \(batch_id, recommendation_id\)/);
-  assert.match(migration, /FOREIGN KEY \(recommendation_id\) REFERENCES recommendation_instances/);
+  assert.match(migration, /UNIQUE \(portal_id, batch_id, recommendation_id\)/);
+  assert.match(migration, /FOREIGN KEY \(portal_id, batch_id\)/);
+  assert.match(migration, /FOREIGN KEY \(portal_id, recommendation_id\)/);
+  assert.match(migration, /fk_recommendation_events_tenant_instance/);
+  assert.match(migration, /fk_recommendation_outcomes_tenant_instance/);
   assert.match(postgres, /'recommendation_followup_batches','recommendation_followup_items'/);
   assert.match(validator, /Expected migrations through 0019/);
   assert.match(validator, /recommendationOperationsColumnCount/);

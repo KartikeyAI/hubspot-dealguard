@@ -1,6 +1,6 @@
 # DealGuard Deal Brief
 
-The Deal Brief is the primary deal-record decision surface for DealGuard. It synthesises deterministic readiness, CRM process momentum, close-date credibility, buyer-committee coverage, and metadata-only engagement evidence into one concise management view.
+The Deal Brief is the primary deal-record decision surface for DealGuard. It synthesises deterministic readiness, CRM process momentum, close-date credibility, buyer-committee coverage, metadata-only engagement evidence, and optional commercial integrity into one concise management view.
 
 ## Purpose
 
@@ -21,7 +21,7 @@ The brief should answer six questions without requiring a seller or manager to i
 - `attentionScore`: a deterministic review-priority score from 0 to 100;
 - `confidence`: `high`, `medium`, or `low`;
 - `summary`: a concise evidence-backed decision statement;
-- `risks`: ranked negative evidence across readiness, momentum, close date, relationships, and engagement metadata;
+- `risks`: ranked negative evidence across readiness, momentum, close date, relationships, engagement metadata, and commercial integrity;
 - `positiveSignals`: ranked supporting evidence;
 - `changes`: material CRM or readiness movement;
 - `nextAction`: one prioritized action with owner, due date, rationale, and evidence codes;
@@ -33,11 +33,11 @@ The brief should answer six questions without requiring a seller or manager to i
 
 ### `intervention_required`
 
-Used when current evidence includes a critical readiness state, stalled process momentum, weak close-date credibility, materially disengaged activity metadata, or a sufficiently material high-priority intervention.
+Used when current evidence includes a critical readiness state, stalled process momentum, weak close-date credibility, materially disengaged activity metadata, weak commercial integrity with a material intervention, or another sufficiently supported high-priority action.
 
 ### `watch`
 
-Used when the deal is at risk, process momentum is weakening, close-date evidence requires review, relationship coverage is not strong, engagement metadata is mixed or unavailable, or deterministic attention exceeds the review threshold.
+Used when the deal is at risk, process momentum is weakening, close-date evidence requires review, relationship coverage is not strong, engagement metadata is mixed, commercial evidence needs review, or deterministic attention exceeds the review threshold.
 
 ### `insufficient_evidence`
 
@@ -56,6 +56,7 @@ Attention priority combines:
 - close-date credibility;
 - relationship coverage;
 - metadata-only engagement evidence;
+- optional quote and line-item integrity;
 - assessment status;
 - evidence freshness.
 
@@ -66,23 +67,25 @@ It is a prioritisation mechanism only. It is not:
 - a win probability;
 - expected financial loss;
 - sentiment analysis;
+- contract or proposal-content analysis;
 - an AI or machine-learning prediction.
 
 ## Evidence coverage
 
-The expanded evidence model uses these maximum contributions:
+The commercial-expanded evidence model uses these maximum contributions:
 
 | Dimension | Maximum contribution |
 |---|---:|
-| Readiness | 32% |
-| CRM process momentum | 20% |
-| Close-date credibility | 12% |
-| Relationship coverage | 16% |
-| Engagement metadata | 20% |
+| Readiness | 25.6% |
+| CRM process momentum | 16% |
+| Close-date credibility | 9.6% |
+| Relationship coverage | 12.8% |
+| Engagement metadata | 16% |
+| Commercial integrity | 20% |
 
-The first four values preserve the relative weighting of the pre-engagement Deal Brief while reserving 20% for activity metadata. Within each optional dimension, incomplete source coverage reduces the contribution. Bounded or truncated relationship or engagement reads lower confidence.
+The first five values preserve the relative weighting of the pre-commercial Deal Brief while reserving 20% for optional quote and line-item evidence. Within each optional dimension, incomplete source coverage reduces the contribution. Bounded or truncated reads lower confidence.
 
-The brief remains available when optional HubSpot enrichment fails and explicitly reports unavailable dimensions. No activity evidence is interpreted as a logging/evidence gap rather than proof of disengagement.
+The brief remains available when optional HubSpot enrichment fails and explicitly reports unavailable dimensions. No activity evidence is interpreted as a logging/evidence gap rather than proof of disengagement. Missing commercial authorization is treated as an optional coverage gap, not as proof of commercial risk.
 
 ## Engagement evidence boundary
 
@@ -97,20 +100,31 @@ The engagement dimension uses associated email, call, and meeting metadata only:
 
 It excludes email subjects, bodies, HTML, headers and addresses; meeting titles, descriptions and internal notes; call bodies, phone numbers, transcriptions and recordings; and all sentiment or communication-content analysis.
 
+## Commercial evidence boundary
+
+The commercial dimension uses associated quote and line-item metadata only:
+
+- product or service name and SKU;
+- quantity, price, amount, discount, and recurring frequency;
+- quote status, amount, currency, creation/update time, and expiration;
+- deal amount, currency, close date, and stage context.
+
+It excludes proposal documents, quote body content, terms text, attachments, signatures, payment details, approval content, and contract text. Cross-currency amounts are never directly compared.
+
+Commercial access is progressive. `crm.objects.line_items.read` and `crm.objects.quotes.read` are optional scopes. Existing installations retain core DealGuard functionality without them.
+
 ## Data and runtime boundary
 
-This slice:
+The intelligence stack:
 
-- adds no OAuth scope;
-- adds no database migration;
-- stores no new customer-contact or activity dataset;
-- reuses the existing on-demand record-enrichment cache;
+- adds no customer-contact, activity, quote, or line-item persistence for record enrichment;
+- reuses bounded on-demand caches and in-flight request deduplication;
 - does not run optional enrichment during full scans, webhooks, scheduled scans, or workflow actions;
-- does not autonomously edit deal fields, activities, or relationships.
+- does not autonomously edit deal fields, activities, quotes, line items, or relationships.
 
 ## HubSpot surface
 
-The existing primary card UID remains stable, while its customer-facing role is **DealGuard — Deal Brief**. Specialized cards remain available for deeper readiness, change, action, relationship, and engagement evidence.
+The existing primary card UID remains stable, while its customer-facing role is **DealGuard — Deal Brief**. Specialized cards remain available for deeper readiness, change, action, relationship, engagement, and commercial evidence.
 
 ## Deployment dependency
 
@@ -120,4 +134,5 @@ This is a stacked slice. Production deployment still requires, in order:
 2. PR #18 for momentum and close-date credibility;
 3. PR #19 for buyer-committee coverage;
 4. PR #20 for the unified Deal Brief;
-5. the metadata-only engagement-intelligence slice.
+5. PR #21 for metadata-only engagement intelligence;
+6. the optional commercial-integrity slice.

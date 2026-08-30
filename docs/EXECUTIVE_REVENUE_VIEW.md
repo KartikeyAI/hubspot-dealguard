@@ -1,10 +1,10 @@
 # DealGuard Executive Revenue View
 
-The Executive Revenue View is a deterministic, currency-safe portfolio surface for current open deals. It uses recorded HubSpot deal state, current DealGuard readiness evidence, current bounded Deal Brief snapshots, and daily executive snapshots.
+The Executive Revenue View is a deterministic, currency-safe Enterprise surface for current open deals. It combines recorded HubSpot deal state, current DealGuard readiness evidence, bounded Deal Brief snapshots, and daily executive snapshots.
 
 It does not produce a calibrated forecast, buyer-intent score, win probability, expected revenue, or expected loss.
 
-## Endpoint
+## API endpoint
 
 ```text
 GET /api/v1/enterprise/executive-revenue
@@ -30,6 +30,35 @@ regionCode=<configured region code>
 ```
 
 `periodStart` and `periodEnd` must be supplied together. A custom period can span at most 366 days. Without explicit dates, DealGuard uses the current UTC calendar quarter.
+
+## App Home product surface
+
+The Executive Revenue View is available inside HubSpot App Home as part of the Enterprise revenue-decision workspace.
+
+The panel is intentionally loaded on demand. Opening App Home does not automatically perform the bounded current-deal HubSpot read. An entitled user selects a reporting period and clicks **Load period**. A later click on **Refresh view** sets `refresh=true` and bypasses the short-lived response cache.
+
+Available period presets are:
+
+- Current quarter
+- Next quarter
+- Next 90 days
+
+The panel shows:
+
+- period-deal count;
+- recorded Commit and Best case counts;
+- overdue close-date count;
+- deterministic slippage-review and pull-in-review counts;
+- evidence-confidence score and explanation;
+- safe currency cohorts and recorded period coverage;
+- recorded close-date, stage, amount, forecast-category, and period movement;
+- slippage and pull-in review cards with direct HubSpot deal navigation;
+- owner, pipeline, and region concentration within each safe amount cohort;
+- evidence-coverage indicators and source-truncation warnings.
+
+The UI makes no direct CRM request. It calls only the DealGuard Enterprise endpoint using `GET`, requests at most ten candidates per review list, and performs no CRM mutation.
+
+Lower-tier workspaces receive an Enterprise capability explanation and issue no executive-view request.
 
 ## Evidence sources
 
@@ -90,7 +119,7 @@ For each safe cohort, the view reports:
 
 `periodPipelineCoveragePercent` means the share of current open amount whose recorded close date falls inside the selected period. It is not quota coverage and it is not expected revenue.
 
-## Movement
+## Recorded movement
 
 Movement compares current state with the latest stored daily executive snapshot before today.
 
@@ -104,7 +133,7 @@ The view reports:
 - deals entering or leaving the selected period;
 - currency-safe movement amounts by cohort.
 
-The first successful run establishes a baseline. Movement is labelled `baseline_only` until an earlier daily snapshot exists.
+The first successful run establishes a baseline. Movement is labelled `baseline_only` until an earlier daily snapshot exists. App Home explains this state rather than displaying empty movement as zero confidence.
 
 ## Slippage review candidates
 
@@ -118,6 +147,8 @@ A deal can enter the slippage review queue when deterministic CRM evidence inclu
 - a recorded forecast-category downgrade.
 
 Readiness and current Deal Brief attention can raise the review priority. The result is a management review prompt, not a prediction that the deal will slip or be lost.
+
+The App Home card displays the current and previous close dates, movement in days, recorded forecast categories, readiness, evidence confidence, safe amount context, reasons, and a direct record link.
 
 ## Pull-in review candidates
 
@@ -138,7 +169,7 @@ Within each safe currency cohort, DealGuard calculates concentration by:
 - pipeline;
 - region.
 
-The response includes the largest share and a Herfindahl-Hirschman Index (HHI) for each dimension. Concentration is evaluated only inside one comparable amount cohort.
+The response and App Home panel include the largest share and a Herfindahl-Hirschman Index (HHI) for each dimension. Concentration is evaluated only inside one comparable amount cohort.
 
 ## Confidence
 
@@ -176,13 +207,29 @@ Snapshots older than 730 days are removed for the portal during a fresh executiv
 
 ## Runtime boundary
 
-- The view is read-only from the customer's perspective.
+- The API and App Home panel are read-only from the customer's perspective.
+- The App Home panel is loaded on demand.
 - A short-lived two-minute response cache limits repeated HubSpot reads.
 - The deal load is bounded by the current plan's maximum deal-scan limit.
 - Source truncation is disclosed when the bound is reached.
 - Snapshot persistence runs through the request execution context and failure does not invalidate the returned view.
 - No webhook, workflow action, scheduled scan, or queue consumer gains a new HubSpot read.
 - No CRM field or commercial object is modified.
+- Existing App Home surfaces remain available if the executive request fails.
+
+## Interpretation boundaries
+
+The UI and API explicitly state:
+
+Period pipeline coverage is not quota coverage.
+
+- recorded forecast category is not a win probability;
+- period pipeline coverage is not quota coverage;
+- slippage review is not a predicted slip;
+- pull-in review is not a predicted early close;
+- amount cohorts are never combined across currencies;
+- missing evidence is not proof of loss;
+- the view is not expected revenue or expected financial loss.
 
 ## Deployment dependency
 
@@ -192,8 +239,7 @@ Production deployment requires, in order:
 2. PRs #18–#23 for Deal Intelligence V2;
 3. PR #24 and migration `0016_manager_decision_queue.sql`;
 4. PR #25 for the Manager Decision Queue App Home surface;
-5. migration `0017_executive_revenue_view.sql`;
-6. the Executive Revenue View Worker changes;
-7. a successful initial executive-view request to establish the daily movement baseline.
-
-The App Home Executive Revenue View panel is deliberately deferred to the next product-surface slice.
+5. PR #26 and migration `0017_executive_revenue_view.sql`;
+6. the App Home Executive Revenue View product-surface slice;
+7. Worker deployment and HubSpot project upload;
+8. a successful initial executive-view request to establish the daily movement baseline.

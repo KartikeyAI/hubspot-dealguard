@@ -1,0 +1,75 @@
+name: P2 Recommendation Operations
+
+on:
+  pull_request:
+    paths:
+      - 'worker/src/recommendation-operations-types.ts'
+      - 'worker/src/recommendation-operations-model.ts'
+      - 'worker/src/recommendation-follow-ups.ts'
+      - 'worker/src/recommendation-evidence-export.ts'
+      - 'worker/src/routes-v14.ts'
+      - 'worker/src/index.ts'
+      - 'database/migrations/0019_recommendation_operations.sql'
+      - 'database/migrations/0020_recommendation_recipient_hash_guard.sql'
+      - 'scripts/postgres-validate-recommendation-operations.mjs'
+      - 'src/app/pages/RecommendationOperationsPanel.tsx'
+      - 'src/app/pages/ManagerDecisionQueuePanel.tsx'
+      - 'test/recommendation-operations.test.mjs'
+      - 'test/recommendation-operations-contract.test.mjs'
+      - 'docs/RECOMMENDATION_OPERATIONS.md'
+      - 'package.json'
+      - '.github/workflows/p2-recommendation-operations.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recommendation-operations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: dealguard
+          POSTGRES_PASSWORD: dealguard-test-password
+          POSTGRES_DB: dealguard_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U dealguard -d dealguard_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
+      DEALGUARD_CUTOVER_TEST_DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Create non-secret CI environment file
+        run: touch .env
+      - name: Install dependencies
+        run: |
+          npm install --ignore-scripts --silent
+          npm install --ignore-scripts --silent --prefix src/app/cards
+          npm install --ignore-scripts --silent --prefix src/app/pages
+      - name: Typecheck Worker and product surfaces
+        run: |
+          npm run typecheck
+          npm run typecheck --prefix src/app/cards
+          npm run typecheck --prefix src/app/pages
+      - name: Apply canonical PostgreSQL migrations
+        run: npm run db:migrate
+      - name: Validate canonical and recommendation operations schema
+        run: |
+          npm run db:migrate:check
+          npm run db:validate
+      - name: Run recommendation operations tests
+        run: node --test test/recommendation-operations.test.mjs test/recommendation-operations-contract.test.mjs
+      - name: Run recommendation lifecycle regression tests
+        run: node --test test/recommendation-outcome.test.mjs test/recommendation-outcome-contract.test.mjs test/recommendation-outcome-ui-contract.test.mjs
+      - name: Run full automated suite
+        run: npm test

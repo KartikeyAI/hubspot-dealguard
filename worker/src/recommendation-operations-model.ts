@@ -44,9 +44,10 @@ export function routeExplicitlyMatches(
   route: RecommendationRouteConfig,
   scope: RecommendationFollowupScope,
   severity: RecommendationFollowupSeverity,
+  eventType = RECOMMENDATION_FOLLOWUP_EVENT,
 ): boolean {
   if (!route.enabled) return false;
-  if (!route.eventTypes.includes(RECOMMENDATION_FOLLOWUP_EVENT)) return false;
+  if (!route.eventTypes.includes(eventType)) return false;
   if (SEVERITY_RANK[severity] < SEVERITY_RANK[route.minimumSeverity]) return false;
   const checks: Array<[string[], string | null]> = [
     [route.pipelineIds, scope.pipelineId],
@@ -117,11 +118,13 @@ export async function routingMatch(
     dueAt: string | null;
     kind: string;
     managerNote: string;
+    eventType?: string;
   },
 ): Promise<RecommendationFollowupRoutingMatch> {
+  const eventType = input.eventType ?? RECOMMENDATION_FOLLOWUP_EVENT;
   const channelById = new Map(input.channels.map((channel) => [channel.id, channel]));
   const matched = input.routes
-    .filter((route) => routeExplicitlyMatches(route, input.scope, input.severity))
+    .filter((route) => routeExplicitlyMatches(route, input.scope, input.severity, eventType))
     .filter((route) => !input.quietRouteIds.has(route.id))
     .map((route) => {
       const channels = [...new Set(route.channelIds)]
@@ -132,6 +135,7 @@ export async function routingMatch(
         id: route.id,
         name: route.name,
         updatedAt: route.updatedAt,
+        suppressionWindowMinutes: route.suppressionWindowMinutes,
         channelIds: channels.map((channel) => channel.id),
         channelNames: channels.map((channel) => channel.name),
         channels,
@@ -141,7 +145,11 @@ export async function routingMatch(
     .sort((left, right) => left.id.localeCompare(right.id));
   const routeIds = matched.map((route) => route.id);
   const channelIds = [...new Set(matched.flatMap((route) => route.channelIds))].sort();
-  const routeVersions = matched.map((route) => ({ id: route.id, updatedAt: route.updatedAt }));
+  const routeVersions = matched.map((route) => ({
+    id: route.id,
+    updatedAt: route.updatedAt,
+    suppressionWindowMinutes: route.suppressionWindowMinutes,
+  }));
   const channelVersions = [...new Map(
     matched.flatMap((route) => route.channels).map((channel) => [channel.id, channel]),
   ).values()]
@@ -154,6 +162,7 @@ export async function routingMatch(
     dueAt: input.dueAt,
     kind: input.kind,
     severity: input.severity,
+    eventType,
     managerNote: input.managerNote,
     scope: input.scope,
     routeVersions,

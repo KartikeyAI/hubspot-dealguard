@@ -4,6 +4,7 @@ export const RECOMMENDATION_FOLLOWUP_EVENT = 'recommendation.followup.requested'
 
 export type RecommendationFollowupKind = 'owner_reminder' | 'manager_review';
 export type RecommendationFollowupSeverity = Extract<IssueSeverity, 'warning' | 'critical'>;
+export type RecommendationFollowupAuthorizationMode = 'human_confirmation' | 'configured_policy';
 export type RecommendationFollowupBatchStatus =
   | 'previewed'
   | 'confirming'
@@ -41,6 +42,7 @@ export interface RecommendationRouteConfig {
   regionCodes: string[];
   channelIds: string[];
   quietHoursCalendarId: string | null;
+  suppressionWindowMinutes: number;
   enabled: boolean;
   updatedAt: string;
 }
@@ -59,6 +61,7 @@ export interface RecommendationFollowupRoutingMatch {
     id: string;
     name: string;
     updatedAt: string;
+    suppressionWindowMinutes: number;
     channelIds: string[];
     channelNames: string[];
     channels: RecommendationChannelSummary[];
@@ -90,6 +93,8 @@ export interface RecommendationFollowupBatchView {
   kind: RecommendationFollowupKind;
   severity: RecommendationFollowupSeverity;
   managerNote: string;
+  authorizationMode: RecommendationFollowupAuthorizationMode;
+  automationPolicyId: string | null;
   status: RecommendationFollowupBatchStatus;
   requestedCount: number;
   eligibleCount: number;
@@ -107,9 +112,10 @@ export interface RecommendationFollowupBatchView {
   items: RecommendationFollowupPreviewItem[];
   semantics: {
     explicitRouteOptInRequired: true;
-    humanConfirmationRequired: true;
+    humanConfirmationRequired: boolean;
+    configurationAuthorizesAutomation: boolean;
     noCrmMutation: true;
-    noAutonomousOutreach: true;
+    noAutonomousOutreach: boolean;
     notificationContentIsDeterministic: true;
   };
 }

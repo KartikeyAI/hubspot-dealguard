@@ -5,11 +5,27 @@ export const API_BASE = 'https://dealguard-api.rokad.co/api/v1';
 export type Severity = 'info' | 'warning' | 'critical';
 export type Issue = { code: string; label: string; description: string; severity: Severity; weight: number; property?: string };
 export type Requirement = { code: string; label: string; satisfied: boolean; severity: Severity; impact: number };
+export type DecisionAction = { code: string; label: string; action: string; priority: 'high' | 'medium' | 'low'; rationale: string; owner: 'deal_owner' | 'manager'; dueAt: string | null; evidenceCodes: string[] };
+export type MomentumSignal = { code: string; label: string; direction: 'positive' | 'negative' | 'neutral'; severity: Severity; observedAt: string | null; detail: string };
+export type Momentum = {
+  methodology: 'crm_property_history_signal'; windowDays: number; score: number | null; band: 'strong' | 'watch' | 'stalled' | 'insufficient_data'; summary: string;
+  evidenceCoveragePercent: number; daysSinceMaterialChange: number | null; lastMaterialChangeAt: string | null; signals: MomentumSignal[];
+  events: { stageAdvances: number; stageRegressions: number; pipelineChanges: number; closeDatePushes: number; closeDatePullIns: number; ownerChanges: number; amountChanges: number; nextStepChanges: number };
+  limitations: string;
+};
+export type CloseDateCredibility = {
+  methodology: 'deterministic_close_date_credibility'; score: number | null; status: 'credible' | 'watch' | 'weak' | 'unavailable'; confidence: 'high' | 'medium' | 'low'; summary: string;
+  currentCloseDate: string | null; daysToClose: number | null; closeDatePushes90d: number; closeDatePullIns90d: number; lastCloseDateChangeAt: string | null; lastPushAt: string | null;
+  reasons: Array<{ code: string; label: string; impact: number; evidence: string }>; notWinProbability: true;
+};
 export type Intelligence = {
   risk: { lostPoints: number; potentialScore: number; afterCriticalFixes: number; contributors: Array<Issue & { impact: number }> };
   nextBestActions: Array<{ code: string; label: string; action: string; impact: number; severity: Severity; property?: string }>;
   stageReadiness: { stageId: string | null; stageLabel: string; satisfied: number; total: number; percent: number; blockers: Array<{ code: string; label: string; severity: Severity; impact: number }>; requirements: Requirement[] };
   change: { previousAssessedAt: string | null; scoreDelta: number | null; gradeChanged: boolean; statusChanged: boolean; newIssueCodes: string[]; resolvedIssueCodes: string[]; amountDelta: number | null; stageAgeDeltaDays: number | null; stageChanged: boolean };
+  decisionActions?: DecisionAction[];
+  momentum?: Momentum;
+  closeDateCredibility?: CloseDateCredibility;
 };
 export type Assessment = {
   dealId: string; score: number; grade: string; status: 'ready' | 'at_risk' | 'critical'; issues: Issue[]; readinessSummary: string;
@@ -21,10 +37,23 @@ export function statusVariant(status: Assessment['status']): 'success' | 'warnin
   if (status === 'at_risk') return 'warning';
   return 'danger';
 }
+export function momentumVariant(band: NonNullable<Intelligence['momentum']>['band']): 'success' | 'warning' | 'danger' | 'default' {
+  if (band === 'strong') return 'success';
+  if (band === 'watch') return 'warning';
+  if (band === 'stalled') return 'danger';
+  return 'default';
+}
+export function credibilityVariant(status: NonNullable<Intelligence['closeDateCredibility']>['status']): 'success' | 'warning' | 'danger' | 'default' {
+  if (status === 'credible') return 'success';
+  if (status === 'watch') return 'warning';
+  if (status === 'weak') return 'danger';
+  return 'default';
+}
 export function issueName(assessment: Assessment, code: string): string {
   return assessment.issues.find((item) => item.code === code)?.label ?? code.replace(/^custom_/, '').replace(/_/g, ' ');
 }
 export function delta(value: number): string { return `${value > 0 ? '+' : ''}${value}`; }
+export function formatDate(value: string | null | undefined): string { return value ? new Date(value).toLocaleString() : 'Not available'; }
 
 export function useDealAssessment(dealId: string) {
   const [assessment, setAssessment] = useState<Assessment | null>(null);

@@ -1,0 +1,47 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import test from 'node:test';
+
+const service = fs.readFileSync(new URL('../worker/src/assessment-service.ts', import.meta.url), 'utf8');
+const momentum = fs.readFileSync(new URL('../worker/src/deal-momentum.ts', import.meta.url), 'utf8');
+const card = fs.readFileSync(new URL('../src/app/cards/DealGuardCard.tsx', import.meta.url), 'utf8');
+const actions = fs.readFileSync(new URL('../src/app/cards/DealGuardActionsCard.tsx', import.meta.url), 'utf8');
+const changes = fs.readFileSync(new URL('../src/app/cards/DealGuardChangesCard.tsx', import.meta.url), 'utf8');
+const app = fs.readFileSync(new URL('../src/app/app-hsmeta.json', import.meta.url), 'utf8');
+
+test('record assessments receive optional momentum while webhook and workflow paths stay current-state only', () => {
+  assert.match(service, /trigger === 'record'/);
+  assert.match(service, /optionalMomentumIntelligence/);
+  assert.match(service, /task: 'deal_history_enrichment'/);
+  assert.match(service, /return null;/);
+  assert.match(momentum, /collectMomentumEvidence/);
+  assert.match(momentum, /evaluateCloseDateCredibility/);
+});
+
+test('optional history failure does not replace deterministic readiness intelligence', () => {
+  assert.match(service, /const readiness = await readinessIntelligence/);
+  assert.match(service, /const intelligence: CompleteIntelligence = \{ \.\.\.readiness, \.\.\.\(momentum \?\? \{\}\) \}/);
+  assert.match(service, /catch \(error\)[\s\S]*task: 'deal_history_enrichment'[\s\S]*return null/);
+});
+
+test('deal cards expose precise CRM-process and close-date terminology', () => {
+  for (const label of ['CRM process momentum', 'Close-date credibility', 'How to read these signals']) assert.ok(card.includes(label));
+  assert.ok(card.includes('do not measure buyer intent or predict win probability'));
+  assert.ok(actions.includes('Recommended actions'));
+  assert.ok(actions.includes('Owner:'));
+  assert.ok(actions.includes('Why:'));
+  assert.ok(changes.includes('90-day CRM movement'));
+  assert.ok(changes.includes('Close-date evidence'));
+});
+
+test('the slice introduces no additional OAuth scope', () => {
+  const metadata = JSON.parse(app);
+  assert.deepEqual(metadata.config.auth.requiredScopes, [
+    'crm.objects.deals.read',
+    'crm.objects.deals.write',
+    'crm.objects.contacts.read',
+    'crm.objects.companies.read',
+    'crm.schemas.deals.read',
+    'crm.schemas.deals.write',
+  ]);
+});

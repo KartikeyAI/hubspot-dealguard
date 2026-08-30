@@ -83,7 +83,7 @@ ALTER TABLE recommendation_followup_batches
   ADD CONSTRAINT fk_recommendation_followup_batch_policy
   FOREIGN KEY (portal_id, automation_policy_id)
   REFERENCES recommendation_routing_policies(portal_id, id)
-  ON DELETE SET NULL;
+  ON DELETE SET NULL (automation_policy_id);
 
 ALTER TABLE recommendation_followup_items
   ADD COLUMN policy_dispatch_id TEXT;
@@ -92,7 +92,7 @@ ALTER TABLE recommendation_followup_items
   ADD CONSTRAINT fk_recommendation_followup_item_dispatch
   FOREIGN KEY (portal_id, policy_dispatch_id)
   REFERENCES recommendation_policy_dispatches(portal_id, id)
-  ON DELETE SET NULL;
+  ON DELETE SET NULL (policy_dispatch_id);
 
 CREATE INDEX idx_recommendation_routing_policies_schedule
   ON recommendation_routing_policies(portal_id, enabled, trigger_kind, updated_at);

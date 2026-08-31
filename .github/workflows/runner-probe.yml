@@ -1,0 +1,21 @@
+name: GitHub-hosted runner probe
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/runner-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Confirm runner allocation
+        run: |
+          echo "runner allocated"
+          node --version || true
+          uname -a

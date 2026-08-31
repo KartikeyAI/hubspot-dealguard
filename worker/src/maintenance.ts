@@ -1,4 +1,5 @@
 import { observeRecommendationDeliveryControls } from './recommendation-delivery-observer.js';
+import { evaluateRecommendationDeliverySlos } from './recommendation-delivery-slo-evaluator.js';
 import { evaluateRecommendationRoutingPolicies } from './recommendation-routing-policy-runner.js';
 import type { Env } from './types.js';
 
@@ -14,4 +15,5 @@ export async function runMaintenance(env: Env): Promise<void> {
   ]);
   await evaluateRecommendationRoutingPolicies(env);
   await observeRecommendationDeliveryControls(env);
+  await evaluateRecommendationDeliverySlos(env);
 }

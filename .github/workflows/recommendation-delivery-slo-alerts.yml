@@ -3,6 +3,7 @@ name: Recommendation Delivery SLO Alerts
 on:
   pull_request:
     paths:
+      - 'worker/src/enterprise-access.ts'
       - 'worker/src/recommendation-delivery-slo-types.ts'
       - 'worker/src/recommendation-delivery-slo-model.ts'
       - 'worker/src/recommendation-delivery-slos.ts'

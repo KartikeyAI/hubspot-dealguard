@@ -47,33 +47,39 @@ const ROLE_PERMISSIONS: Record<EnterpriseRole, string[]> = {
   policy_administrator: [
     'policy.view', 'policy.manage', 'policy.submit', 'policy.simulate', 'policy.import', 'policy.export',
     'exception.request', 'exception.manage', 'analytics.view', 'analytics.export', 'audit.view',
+    'reliability.view',
   ],
   revops_manager: [
     'policy.view', 'policy.simulate', 'exception.request', 'exception.manage',
     'analytics.view', 'analytics.export', 'remediation.view', 'remediation.manage',
     'alert.view', 'alert.manage', 'scan.run', 'audit.view',
+    'reliability.view', 'reliability.manage',
   ],
   sales_manager: [
     'policy.view', 'exception.request', 'analytics.view', 'remediation.view', 'remediation.manage',
-    'alert.view', 'alert.acknowledge', 'scan.run',
+    'alert.view', 'alert.acknowledge', 'scan.run', 'reliability.view',
   ],
   reviewer: [
     'policy.view', 'policy.approve', 'exception.manage', 'analytics.view', 'remediation.view',
-    'remediation.review', 'audit.view',
+    'remediation.review', 'audit.view', 'reliability.view',
   ],
   remediation_manager: [
     'analytics.view', 'remediation.view', 'remediation.manage', 'remediation.bulk',
-    'remediation.evidence', 'alert.view', 'alert.acknowledge',
+    'remediation.evidence', 'alert.view', 'alert.acknowledge', 'reliability.view',
   ],
   compliance_auditor: [
     'policy.view', 'analytics.view', 'audit.view', 'audit.export', 'compliance.view',
     'compliance.manage', 'legal_hold.manage', 'data_export.manage', 'siem.manage',
+    'reliability.view',
   ],
   billing_administrator: [
     'billing.view', 'billing.manage', 'billing.allowance.manage', 'billing.contract.manage',
     'billing.usage.view', 'audit.view',
   ],
-  viewer: ['policy.view', 'analytics.view', 'remediation.view', 'alert.view', 'billing.view'],
+  viewer: [
+    'policy.view', 'analytics.view', 'remediation.view', 'alert.view', 'billing.view',
+    'reliability.view',
+  ],
 };
 
 function array(value: string): string[] {

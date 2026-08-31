@@ -11,8 +11,8 @@ test('delivery SLO APIs are Enterprise, portal-wide and reliability permission s
   const index = read('worker/src/index.ts');
   assert.match(route, /SLO_ROOT = '\/api\/v1\/enterprise\/recommendation-delivery-slos'/);
   assert.match(route, /requireCommercialTier\(env, identity\.portalId, 'enterprise'\)/);
-  assert.match(route, /recommendation-delivery-slos\/incidents\/\(\[\^\/\]\+\)\/acknowledge/);
-  assert.match(route, /recommendation-delivery-slos\/routes\/\(\[\^\/\]\+\)\/enable-events/);
+  assert.match(route, /recommendation-delivery-slos.*incidents.*acknowledge/);
+  assert.match(route, /recommendation-delivery-slos.*routes.*enable-events/);
   assert.match(storage, /requireEnterprisePermission\(env, identity, permission\)/);
   assert.match(storage, /delivery_slo_portal_scope_required/);
   assert.match(storage, /'reliability\.view'/);
@@ -33,6 +33,19 @@ test('SLO lifecycle requires sufficient persistent evidence and never treats tru
   assert.match(evaluator, /recommendation\.delivery_slo_incident_opened/);
   assert.match(evaluator, /recommendation\.delivery_slo_incident_resolved/);
   assert.match(evaluator, /worseDeliverySloValue/);
+});
+
+test('active incidents freeze SLO semantics and historical evidence cannot be deleted', () => {
+  const governance = read('worker/src/recommendation-delivery-slo-governance.ts');
+  const route = read('worker/src/routes-v17.ts');
+  const migration = read('database/migrations/0022_recommendation_delivery_slo_alerts.sql');
+  assert.match(governance, /delivery_slo_active_incident_semantics_locked/);
+  assert.match(governance, /structuralChange/);
+  assert.match(governance, /delivery_slo_incident_history_retained/);
+  assert.match(route, /saveGovernedRecommendationDeliverySlo/);
+  assert.match(route, /deleteGovernedRecommendationDeliverySlo/);
+  assert.match(migration, /protect_recommendation_delivery_slo_incident_semantics/);
+  assert.match(migration, /ON DELETE RESTRICT/);
 });
 
 test('governed notifications require explicit event opt-in and revalidate routing before delivery', () => {
@@ -113,7 +126,9 @@ test('dedicated documentation, schema validation and CI cover delivery SLO enfor
   assert.match(validator, /Expected migrations through 0022/);
   assert.match(validator, /recommendation_delivery_slo_policies/);
   assert.match(validator, /recommendation_delivery_slo_notifications/);
+  assert.match(validator, /activeIncidentSemanticTriggerCount/);
   assert.match(workflow, /recommendation-delivery-slo-model\.ts/);
+  assert.match(workflow, /recommendation-delivery-slo-governance\.ts/);
   assert.match(workflow, /0022_recommendation_delivery_slo_alerts\.sql/);
   assert.match(workflow, /recommendation-delivery-slo\.test\.mjs/);
   assert.match(workflow, /recommendation-delivery-slo-contract\.test\.mjs/);

@@ -57,11 +57,11 @@ const ROLE_PERMISSIONS: Record<EnterpriseRole, string[]> = {
   ],
   sales_manager: [
     'policy.view', 'exception.request', 'analytics.view', 'remediation.view', 'remediation.manage',
-    'alert.view', 'alert.acknowledge', 'scan.run', 'reliability.view',
+    'alert.view', 'alert.acknowledge', 'scan.run',
   ],
   reviewer: [
     'policy.view', 'policy.approve', 'exception.manage', 'analytics.view', 'remediation.view',
-    'remediation.review', 'audit.view', 'reliability.view',
+    'remediation.review', 'audit.view',
   ],
   remediation_manager: [
     'analytics.view', 'remediation.view', 'remediation.manage', 'remediation.bulk',
@@ -76,10 +76,7 @@ const ROLE_PERMISSIONS: Record<EnterpriseRole, string[]> = {
     'billing.view', 'billing.manage', 'billing.allowance.manage', 'billing.contract.manage',
     'billing.usage.view', 'audit.view',
   ],
-  viewer: [
-    'policy.view', 'analytics.view', 'remediation.view', 'alert.view', 'billing.view',
-    'reliability.view',
-  ],
+  viewer: ['policy.view', 'analytics.view', 'remediation.view', 'alert.view', 'billing.view'],
 };
 
 function array(value: string): string[] {

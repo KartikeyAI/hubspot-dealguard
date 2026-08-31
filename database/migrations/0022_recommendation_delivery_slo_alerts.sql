@@ -110,12 +110,49 @@ CREATE TABLE recommendation_delivery_slo_incidents (
   FOREIGN KEY (portal_id) REFERENCES tenants(portal_id) ON DELETE CASCADE,
   FOREIGN KEY (portal_id, slo_policy_id)
     REFERENCES recommendation_delivery_slo_policies(portal_id, id)
-    ON DELETE CASCADE
+    ON DELETE RESTRICT
 );
 
 CREATE UNIQUE INDEX uq_recommendation_delivery_slo_open_incident
   ON recommendation_delivery_slo_incidents(portal_id, slo_policy_id)
   WHERE status IN ('open', 'acknowledged');
+
+CREATE OR REPLACE FUNCTION protect_recommendation_delivery_slo_incident_semantics()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM recommendation_delivery_slo_incidents incident
+    WHERE incident.portal_id = OLD.portal_id
+      AND incident.slo_policy_id = OLD.id
+      AND incident.status IN ('open', 'acknowledged')
+  ) AND (
+    NEW.metric IS DISTINCT FROM OLD.metric
+    OR NEW.target_type IS DISTINCT FROM OLD.target_type
+    OR NEW.target_id IS DISTINCT FROM OLD.target_id
+    OR NEW.comparison IS DISTINCT FROM OLD.comparison
+    OR NEW.threshold_value IS DISTINCT FROM OLD.threshold_value
+    OR NEW.window_minutes IS DISTINCT FROM OLD.window_minutes
+    OR NEW.minimum_samples IS DISTINCT FROM OLD.minimum_samples
+    OR NEW.breach_evaluations IS DISTINCT FROM OLD.breach_evaluations
+    OR NEW.recovery_evaluations IS DISTINCT FROM OLD.recovery_evaluations
+    OR NEW.severity IS DISTINCT FROM OLD.severity
+    OR NEW.notification_route_id IS DISTINCT FROM OLD.notification_route_id
+    OR NEW.alert_cooldown_minutes IS DISTINCT FROM OLD.alert_cooldown_minutes
+    OR NEW.max_alerts_per_incident IS DISTINCT FROM OLD.max_alerts_per_incident
+    OR NEW.notify_recovery IS DISTINCT FROM OLD.notify_recovery
+  ) THEN
+    RAISE EXCEPTION 'Recommendation delivery SLO semantics cannot change while an incident is active.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_protect_recommendation_delivery_slo_incident_semantics
+  BEFORE UPDATE ON recommendation_delivery_slo_policies
+  FOR EACH ROW
+  EXECUTE FUNCTION protect_recommendation_delivery_slo_incident_semantics();
 
 CREATE TABLE recommendation_delivery_slo_notifications (
   id TEXT PRIMARY KEY,

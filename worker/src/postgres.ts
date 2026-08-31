@@ -29,6 +29,8 @@ const APP_RELATIONS = new Set([
   'recommendation_instances','recommendation_events','recommendation_outcomes',
   'recommendation_followup_batches','recommendation_followup_items',
   'recommendation_routing_policies','recommendation_policy_dispatches','recommendation_delivery_events',
+  'recommendation_delivery_slo_policies','recommendation_delivery_slo_states',
+  'recommendation_delivery_slo_incidents','recommendation_delivery_slo_notifications',
 ]);
 
 function placeholders(sql: string): string {

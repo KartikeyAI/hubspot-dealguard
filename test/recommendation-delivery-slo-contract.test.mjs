@@ -45,23 +45,27 @@ test('active incidents freeze SLO semantics and historical evidence cannot be de
   assert.match(route, /saveGovernedRecommendationDeliverySlo/);
   assert.match(route, /deleteGovernedRecommendationDeliverySlo/);
   assert.match(migration, /protect_recommendation_delivery_slo_incident_semantics/);
-  assert.match(migration, /ON DELETE RESTRICT/);
+  assert.match(migration, /ON DELETE NO ACTION/);
 });
 
 test('governed notifications require explicit event opt-in and revalidate routing before delivery', () => {
   const notifications = read('worker/src/recommendation-delivery-slo-notifications.ts');
   const routeSetup = read('worker/src/recommendation-delivery-slo-route-setup.ts');
+  const governance = read('worker/src/recommendation-delivery-slo-governance.ts');
   const operationsModel = read('worker/src/recommendation-operations-model.ts');
   assert.match(notifications, /eventType,/);
   assert.match(notifications, /routing\.fingerprint !== row\.routing_fingerprint/);
   assert.match(notifications, /state\.quietRouteIds\.has\(route\.id\)/);
   assert.match(notifications, /status = 'deferred'/);
+  assert.match(notifications, /completed_at IS NULL/);
   assert.match(notifications, /MAX_ATTEMPTS = 5/);
   assert.match(notifications, /wakeDeliveryQueue\(env, 'outbox'\)/);
   assert.match(routeSetup, /RECOMMENDATION_DELIVERY_SLO_BREACHED_EVENT/);
   assert.match(routeSetup, /RECOMMENDATION_DELIVERY_SLO_REMINDER_EVENT/);
   assert.match(routeSetup, /RECOMMENDATION_DELIVERY_SLO_RECOVERED_EVENT/);
   assert.match(routeSetup, /delivery_slo_route_scope_invalid/);
+  assert.match(governance, /delivery_slo_route_opt_in_required/);
+  assert.match(governance, /delivery_slo_recovery_route_severity_incompatible/);
   assert.match(operationsModel, /route\.eventTypes\.includes\(eventType\)/);
 });
 

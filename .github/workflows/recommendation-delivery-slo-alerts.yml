@@ -31,6 +31,7 @@ on:
       - 'src/app/pages/ManagerDecisionQueuePanel.tsx'
       - 'test/recommendation-delivery-slo.test.mjs'
       - 'test/recommendation-delivery-slo-contract.test.mjs'
+      - 'test/recommendation-delivery-slo-access-contract.test.mjs'
       - 'test/recommendation-delivery-analytics.test.mjs'
       - 'test/recommendation-delivery-analytics-contract.test.mjs'
       - 'test/recommendation-routing-policy.test.mjs'
@@ -103,8 +104,8 @@ jobs:
           npm run db:migrate:check
           npm run db:validate
           npm run db:validate:delivery-slos
-      - name: Run delivery SLO behavior and contract tests
-        run: node --test test/recommendation-delivery-slo.test.mjs test/recommendation-delivery-slo-contract.test.mjs
+      - name: Run delivery SLO behavior, access and contract tests
+        run: node --test test/recommendation-delivery-slo.test.mjs test/recommendation-delivery-slo-contract.test.mjs test/recommendation-delivery-slo-access-contract.test.mjs
       - name: Run delivery analytics and routing-policy regressions
         run: |
           node --test test/recommendation-delivery-analytics.test.mjs test/recommendation-delivery-analytics-contract.test.mjs

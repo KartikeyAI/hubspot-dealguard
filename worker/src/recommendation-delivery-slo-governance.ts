@@ -13,6 +13,12 @@ function object(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function text(value: unknown, maximum = 128): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return normalized ? normalized.slice(0, maximum) : null;
+}
+
 function comparable(value: unknown): unknown {
   if (value === undefined) return undefined;
   if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
@@ -40,25 +46,62 @@ function structuralChange(input: Record<string, unknown>, current: DeliverySloPo
     input[key] !== undefined && comparable(input[key]) !== comparable(existing));
 }
 
+async function validateRouteSeverity(
+  env: Env,
+  portalId: string,
+  input: Record<string, unknown>,
+  current: DeliverySloPolicyRow | null,
+): Promise<void> {
+  const routeId = text(input.notificationRouteId) ?? current?.notification_route_id ?? null;
+  if (!routeId) return;
+  const route = await env.DB.prepare(
+    `SELECT minimum_severity FROM notification_routes
+     WHERE portal_id = ? AND id = ? LIMIT 1`,
+  ).bind(portalId, routeId).first<{ minimum_severity: 'info' | 'warning' | 'critical' }>();
+  if (!route) return;
+  const severity = input.severity === 'critical' || input.severity === 'warning'
+    ? input.severity
+    : current?.severity ?? 'warning';
+  const notifyRecovery = input.notifyRecovery === undefined
+    ? Boolean(current?.notify_recovery ?? 1)
+    : input.notifyRecovery === true;
+  const rank = { info: 0, warning: 1, critical: 2 } as const;
+  if (rank[severity] < rank[route.minimum_severity]) {
+    throw new AppError(
+      400,
+      'delivery_slo_route_severity_incompatible',
+      `The selected route requires ${route.minimum_severity} severity, which would reject this ${severity} SLO breach.`,
+    );
+  }
+  if (notifyRecovery && route.minimum_severity === 'critical') {
+    throw new AppError(
+      400,
+      'delivery_slo_recovery_route_severity_incompatible',
+      'Recovery notifications require a route whose minimum severity is warning or info.',
+    );
+  }
+}
+
 export async function saveGovernedRecommendationDeliverySlo(
   env: Env,
   identity: RequestIdentity,
   value: unknown,
   policyId: string | null = null,
 ): Promise<RecommendationDeliverySloPolicy> {
-  if (policyId) {
-    const [current, incident] = await Promise.all([
-      env.DB.prepare(
+  const input = object(value);
+  const current = policyId
+    ? await env.DB.prepare(
         `SELECT * FROM recommendation_delivery_slo_policies
          WHERE portal_id = ? AND id = ? LIMIT 1`,
-      ).bind(identity.portalId, policyId).first<DeliverySloPolicyRow>(),
-      env.DB.prepare(
-        `SELECT id FROM recommendation_delivery_slo_incidents
-         WHERE portal_id = ? AND slo_policy_id = ?
-           AND status IN ('open', 'acknowledged') LIMIT 1`,
-      ).bind(identity.portalId, policyId).first<{ id: string }>(),
-    ]);
-    if (current && incident && structuralChange(object(value), current)) {
+      ).bind(identity.portalId, policyId).first<DeliverySloPolicyRow>()
+    : null;
+  if (current) {
+    const incident = await env.DB.prepare(
+      `SELECT id FROM recommendation_delivery_slo_incidents
+       WHERE portal_id = ? AND slo_policy_id = ?
+         AND status IN ('open', 'acknowledged') LIMIT 1`,
+    ).bind(identity.portalId, policyId).first<{ id: string }>();
+    if (incident && structuralChange(input, current)) {
       throw new AppError(
         409,
         'delivery_slo_active_incident_semantics_locked',
@@ -66,6 +109,7 @@ export async function saveGovernedRecommendationDeliverySlo(
       );
     }
   }
+  await validateRouteSeverity(env, identity.portalId, input, current);
   return saveRecommendationDeliverySlo(env, identity, value, policyId);
 }
 

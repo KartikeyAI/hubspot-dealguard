@@ -6,6 +6,7 @@ on:
       - 'worker/src/recommendation-delivery-slo-types.ts'
       - 'worker/src/recommendation-delivery-slo-model.ts'
       - 'worker/src/recommendation-delivery-slos.ts'
+      - 'worker/src/recommendation-delivery-slo-governance.ts'
       - 'worker/src/recommendation-delivery-slo-evaluator.ts'
       - 'worker/src/recommendation-delivery-slo-notifications.ts'
       - 'worker/src/recommendation-delivery-slo-route-setup.ts'

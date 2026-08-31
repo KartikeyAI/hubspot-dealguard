@@ -4,7 +4,12 @@ import {
   saveRecommendationDeliverySlo,
   type DeliverySloPolicyRow,
 } from './recommendation-delivery-slos.js';
-import type { RecommendationDeliverySloPolicy } from './recommendation-delivery-slo-types.js';
+import {
+  RECOMMENDATION_DELIVERY_SLO_BREACHED_EVENT,
+  RECOMMENDATION_DELIVERY_SLO_RECOVERED_EVENT,
+  RECOMMENDATION_DELIVERY_SLO_REMINDER_EVENT,
+  type RecommendationDeliverySloPolicy,
+} from './recommendation-delivery-slo-types.js';
 import type { Env, RequestIdentity } from './types.js';
 
 function object(value: unknown): Record<string, unknown> {
@@ -17,6 +22,20 @@ function text(value: unknown, maximum = 128): string | null {
   if (typeof value !== 'string') return null;
   const normalized = value.trim();
   return normalized ? normalized.slice(0, maximum) : null;
+}
+
+function strings(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return [...new Set(value
+      .filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
+      .map((item) => item.trim()))];
+  }
+  if (typeof value !== 'string') return [];
+  try {
+    return strings(JSON.parse(value));
+  } catch {
+    return [];
+  }
 }
 
 function comparable(value: unknown): unknown {
@@ -46,7 +65,7 @@ function structuralChange(input: Record<string, unknown>, current: DeliverySloPo
     input[key] !== undefined && comparable(input[key]) !== comparable(existing));
 }
 
-async function validateRouteSeverity(
+async function validateRouteContract(
   env: Env,
   portalId: string,
   input: Record<string, unknown>,
@@ -55,10 +74,30 @@ async function validateRouteSeverity(
   const routeId = text(input.notificationRouteId) ?? current?.notification_route_id ?? null;
   if (!routeId) return;
   const route = await env.DB.prepare(
-    `SELECT minimum_severity FROM notification_routes
+    `SELECT minimum_severity, event_types_json
+     FROM notification_routes
      WHERE portal_id = ? AND id = ? LIMIT 1`,
-  ).bind(portalId, routeId).first<{ minimum_severity: 'info' | 'warning' | 'critical' }>();
+  ).bind(portalId, routeId).first<{
+    minimum_severity: 'info' | 'warning' | 'critical';
+    event_types_json: string;
+  }>();
   if (!route) return;
+
+  const requiredEvents = [
+    RECOMMENDATION_DELIVERY_SLO_BREACHED_EVENT,
+    RECOMMENDATION_DELIVERY_SLO_REMINDER_EVENT,
+    RECOMMENDATION_DELIVERY_SLO_RECOVERED_EVENT,
+  ];
+  const eventTypes = strings(route.event_types_json);
+  const missing = requiredEvents.filter((eventType) => !eventTypes.includes(eventType));
+  if (missing.length > 0) {
+    throw new AppError(
+      400,
+      'delivery_slo_route_opt_in_required',
+      `The selected route must explicitly subscribe to: ${missing.join(', ')}.`,
+    );
+  }
+
   const severity = input.severity === 'critical' || input.severity === 'warning'
     ? input.severity
     : current?.severity ?? 'warning';
@@ -109,7 +148,7 @@ export async function saveGovernedRecommendationDeliverySlo(
       );
     }
   }
-  await validateRouteSeverity(env, identity.portalId, input, current);
+  await validateRouteContract(env, identity.portalId, input, current);
   return saveRecommendationDeliverySlo(env, identity, value, policyId);
 }
 

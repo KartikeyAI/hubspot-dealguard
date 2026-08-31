@@ -8,8 +8,8 @@ import { wakeDeliveryQueue } from './queue-publisher.js';
 import type {
   RecommendationDeliverySloEventType,
   RecommendationDeliverySloIncident,
-  RecommendationDeliverySloPolicy,
   RecommendationDeliverySloNotificationStatus,
+  RecommendationDeliverySloPolicy,
 } from './recommendation-delivery-slo-types.js';
 import type { Env } from './types.js';
 
@@ -46,12 +46,20 @@ interface NotificationRow extends Record<string, unknown> {
 
 function parseJson<T>(value: unknown, fallback: T): T {
   if (typeof value !== 'string') return fallback;
-  try { return JSON.parse(value) as T; } catch { return fallback; }
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
 }
 
 function escapeHtml(value: string): string {
-  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;').replaceAll("'", '&#039;');
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
 }
 
 async function hmacBase64(secret: string, body: string): Promise<string> {
@@ -76,6 +84,14 @@ function severityForEvent(
   return eventType === 'recommendation.delivery.slo.recovered' ? 'info' : policy.severity;
 }
 
+function routingSeverity(
+  policy: RecommendationDeliverySloPolicy,
+  eventType: RecommendationDeliverySloEventType,
+): 'warning' | 'critical' {
+  const severity = severityForEvent(policy, eventType);
+  return severity === 'critical' ? 'critical' : 'warning';
+}
+
 function eventLabel(eventType: RecommendationDeliverySloEventType): string {
   if (eventType === 'recommendation.delivery.slo.recovered') return 'recovered';
   if (eventType === 'recommendation.delivery.slo.reminder') return 'still breached';
@@ -83,20 +99,6 @@ function eventLabel(eventType: RecommendationDeliverySloEventType): string {
 }
 
 export async function queueRecommendationDeliverySloNotification(
-  env: Env,
-  policy: RecommendationDeliverySloPolicy,
-  incident: RecommendationDeliverySloIncident,
-  eventType: RecommendationDeliverySloEventType,
-  input: { summary: string; dedupeKey: string },
-): Promise<string> {
-  const state = await loadFollowupRoutingState(env, incident.policyName ? incident.sloPolicyId && '' : '');
-  void state;
-  const routingState = await loadFollowupRoutingState(env, (incident as RecommendationDeliverySloIncident & { portalId?: string }).portalId ?? '');
-  void routingState;
-  throw new Error('queueRecommendationDeliverySloNotification must be called with a portal-aware wrapper.');
-}
-
-export async function queuePortalRecommendationDeliverySloNotification(
   env: Env,
   portalId: string,
   policy: RecommendationDeliverySloPolicy,
@@ -106,13 +108,17 @@ export async function queuePortalRecommendationDeliverySloNotification(
 ): Promise<string> {
   const state = await loadFollowupRoutingState(env, portalId);
   const route = state.routes.find((item) => item.id === policy.notificationRouteId);
-  if (!route) throw new AppError(409, 'delivery_slo_route_unavailable', 'The configured SLO notification route is unavailable.');
+  if (!route) {
+    throw new AppError(409, 'delivery_slo_route_unavailable', 'The configured SLO notification route is unavailable.');
+  }
   const match = await routingMatch({
     routes: [route],
     channels: state.channelSummaries,
+    // Quiet hours defer actual delivery. They do not prevent a durable alert
+    // from being queued after the SLO lifecycle has authorized it.
     quietRouteIds: new Set(),
     scope: PORTAL_SCOPE,
-    severity: severityForEvent(policy, eventType) === 'info' ? 'warning' : severityForEvent(policy, eventType),
+    severity: routingSeverity(policy, eventType),
     recommendationId: incident.id,
     recommendationStatus: incident.status,
     priority: policy.severity === 'critical' ? 'high' : 'medium',
@@ -122,10 +128,16 @@ export async function queuePortalRecommendationDeliverySloNotification(
     eventType,
   });
   if (!match.ready) {
-    throw new AppError(409, 'delivery_slo_route_not_opted_in', `The configured route must explicitly subscribe to ${eventType} and contain an enabled channel.`);
+    throw new AppError(
+      409,
+      'delivery_slo_route_not_opted_in',
+      `The configured route must explicitly subscribe to ${eventType} and contain an enabled channel.`,
+    );
   }
+
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
+  const dedupeKey = input.dedupeKey.slice(0, 500);
   const payload = {
     title: `Recommendation delivery SLO ${eventLabel(eventType)}: ${policy.name}`,
     summary: input.summary,
@@ -155,14 +167,25 @@ export async function queuePortalRecommendationDeliverySloNotification(
     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, '[]', 0, ?, ?, ?, ?)
     ON CONFLICT(portal_id, dedupe_key) DO NOTHING`,
   ).bind(
-    id, portalId, policy.id, incident.id, policy.notificationRouteId, eventType,
-    severityForEvent(policy, eventType), match.fingerprint, JSON.stringify(payload),
-    now, input.dedupeKey.slice(0, 500), now, now,
+    id,
+    portalId,
+    policy.id,
+    incident.id,
+    policy.notificationRouteId,
+    eventType,
+    severityForEvent(policy, eventType),
+    match.fingerprint,
+    JSON.stringify(payload),
+    now,
+    dedupeKey,
+    now,
+    now,
   ).run();
+
   const stored = await env.DB.prepare(
     `SELECT id FROM recommendation_delivery_slo_notifications
      WHERE portal_id = ? AND dedupe_key = ? LIMIT 1`,
-  ).bind(portalId, input.dedupeKey.slice(0, 500)).first<{ id: string }>();
+  ).bind(portalId, dedupeKey).first<{ id: string }>();
   const notificationId = stored?.id ?? id;
   await env.DB.prepare(
     `UPDATE recommendation_delivery_slo_incidents
@@ -185,7 +208,9 @@ async function deliverChannel(
   if (channel.type === 'email') {
     const recipients = parseJson<{ recipients?: string[] }>(channel.config_json, {}).recipients ?? [];
     const valid = [...new Set(recipients.filter((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)))];
-    if (valid.length === 0) throw new AppError(409, 'delivery_slo_email_unconfigured', `Email channel ${channel.name} has no valid recipients.`);
+    if (valid.length === 0) {
+      throw new AppError(409, 'delivery_slo_email_unconfigured', `Email channel ${channel.name} has no valid recipients.`);
+    }
     await sendEmail(
       env,
       valid,
@@ -227,7 +252,9 @@ async function deliverChannel(
     }
   }
   const response = await fetch(endpoint, { method: 'POST', headers, body });
-  if (!response.ok) throw new AppError(502, 'delivery_slo_notification_failed', `Channel ${channel.name} returned HTTP ${response.status}.`);
+  if (!response.ok) {
+    throw new AppError(502, 'delivery_slo_notification_failed', `Channel ${channel.name} returned HTTP ${response.status}.`);
+  }
 }
 
 async function failNotification(
@@ -245,7 +272,16 @@ async function failNotification(
        SET status = 'failed', attempts = ?, available_at = ?, last_error = ?,
            completed_at = CASE WHEN ? = 1 THEN ? ELSE NULL END, updated_at = ?
        WHERE portal_id = ? AND id = ?`,
-    ).bind(attempts, terminal ? now : retryAt(attempts), error.slice(0, 1000), terminal ? 1 : 0, now, now, row.portal_id, row.id),
+    ).bind(
+      attempts,
+      terminal ? now : retryAt(attempts),
+      error.slice(0, 1000),
+      terminal ? 1 : 0,
+      now,
+      now,
+      row.portal_id,
+      row.id,
+    ),
     env.DB.prepare(
       `UPDATE recommendation_delivery_slo_incidents
        SET last_notification_status = 'failed', updated_at = ?
@@ -268,11 +304,12 @@ export async function dispatchRecommendationDeliverySloNotifications(
   ).bind(MAX_NOTIFICATION_ATTEMPTS, Math.min(100, Math.max(1, limit))).all<NotificationRow>();
 
   for (const row of rows.results ?? []) {
+    const claimedAt = new Date().toISOString();
     const claimed = await env.DB.prepare(
       `UPDATE recommendation_delivery_slo_notifications
        SET status = 'delivering', updated_at = ?
        WHERE portal_id = ? AND id = ? AND status IN ('queued', 'deferred', 'failed')`,
-    ).bind(new Date().toISOString(), row.portal_id, row.id).run();
+    ).bind(claimedAt, row.portal_id, row.id).run();
     if (Number(claimed.meta?.changes ?? 0) <= 0) continue;
 
     try {
@@ -284,27 +321,30 @@ export async function dispatchRecommendationDeliverySloNotifications(
         continue;
       }
       if (state.quietRouteIds.has(route.id)) {
+        const now = new Date().toISOString();
         const availableAt = new Date(Date.now() + QUIET_HOURS_RETRY_MINUTES * 60_000).toISOString();
         await env.DB.batch([
           env.DB.prepare(
             `UPDATE recommendation_delivery_slo_notifications
-             SET status = 'deferred', available_at = ?, last_error = 'Deferred by configured quiet hours.', updated_at = ?
+             SET status = 'deferred', available_at = ?,
+                 last_error = 'Deferred by configured quiet hours.', updated_at = ?
              WHERE portal_id = ? AND id = ?`,
-          ).bind(availableAt, new Date().toISOString(), row.portal_id, row.id),
+          ).bind(availableAt, now, row.portal_id, row.id),
           env.DB.prepare(
             `UPDATE recommendation_delivery_slo_incidents
              SET last_notification_status = 'deferred', updated_at = ?
              WHERE portal_id = ? AND id = ?`,
-          ).bind(new Date().toISOString(), row.portal_id, row.incident_id),
+          ).bind(now, row.portal_id, row.incident_id),
         ]);
         continue;
       }
+
       const match = await routingMatch({
         routes: [route],
         channels: state.channelSummaries,
         quietRouteIds: new Set(),
         scope: PORTAL_SCOPE,
-        severity: row.severity === 'info' ? 'warning' : row.severity,
+        severity: row.severity === 'critical' ? 'critical' : 'warning',
         recommendationId: row.incident_id,
         recommendationStatus: String(payload.incidentStatus ?? 'open'),
         priority: row.severity === 'critical' ? 'high' : 'medium',
@@ -314,11 +354,19 @@ export async function dispatchRecommendationDeliverySloNotifications(
         eventType: row.event_type,
       });
       if (!match.ready || match.fingerprint !== row.routing_fingerprint) {
-        await failNotification(env, row, 'Route or channel configuration changed after the SLO notification was queued.', false);
+        await failNotification(
+          env,
+          row,
+          'Route or channel configuration changed after the SLO notification was queued.',
+          false,
+        );
         continue;
       }
+
       const channelById = new Map(state.channels.map((channel) => [channel.id, channel]));
-      const channels = match.channelIds.map((id) => channelById.get(id)).filter((item): item is FollowupChannelRow => Boolean(item));
+      const channels = match.channelIds
+        .map((id) => channelById.get(id))
+        .filter((item): item is FollowupChannelRow => Boolean(item));
       const results: Array<{
         channelId: string;
         channelName: string;
@@ -329,7 +377,13 @@ export async function dispatchRecommendationDeliverySloNotifications(
       for (const channel of channels) {
         try {
           await deliverChannel(env, channel, row, payload);
-          results.push({ channelId: channel.id, channelName: channel.name, channelType: channel.type, status: 'delivered', error: null });
+          results.push({
+            channelId: channel.id,
+            channelName: channel.name,
+            channelType: channel.type,
+            status: 'delivered',
+            error: null,
+          });
         } catch (error) {
           results.push({
             channelId: channel.id,
@@ -340,6 +394,7 @@ export async function dispatchRecommendationDeliverySloNotifications(
           });
         }
       }
+
       const delivered = results.filter((result) => result.status === 'delivered').length;
       const failed = results.length - delivered;
       if (delivered === 0) {
@@ -351,23 +406,39 @@ export async function dispatchRecommendationDeliverySloNotifications(
         );
         continue;
       }
-      const status: RecommendationDeliverySloNotificationStatus = failed > 0 ? 'partially_failed' : 'delivered';
-      const now = new Date().toISOString();
+
+      const status: RecommendationDeliverySloNotificationStatus = failed > 0
+        ? 'partially_failed'
+        : 'delivered';
+      const completedAt = new Date().toISOString();
       await env.DB.batch([
         env.DB.prepare(
           `UPDATE recommendation_delivery_slo_notifications
            SET status = ?, attempts = attempts + 1, delivery_summary_json = ?,
                last_error = ?, completed_at = ?, updated_at = ?
            WHERE portal_id = ? AND id = ?`,
-        ).bind(status, JSON.stringify(results), results.find((result) => result.status === 'failed')?.error ?? null, now, now, row.portal_id, row.id),
+        ).bind(
+          status,
+          JSON.stringify(results),
+          results.find((result) => result.status === 'failed')?.error ?? null,
+          completedAt,
+          completedAt,
+          row.portal_id,
+          row.id,
+        ),
         env.DB.prepare(
           `UPDATE recommendation_delivery_slo_incidents
            SET last_notification_status = ?, updated_at = ?
            WHERE portal_id = ? AND id = ?`,
-        ).bind(status, now, row.portal_id, row.incident_id),
+        ).bind(status, completedAt, row.portal_id, row.incident_id),
       ]);
     } catch (error) {
-      await failNotification(env, row, error instanceof Error ? error.message : String(error), true);
+      await failNotification(
+        env,
+        row,
+        error instanceof Error ? error.message : String(error),
+        true,
+      );
     }
   }
 }

@@ -1,13 +1,15 @@
 import { requireCommercialTier } from './billing.js';
 import { json, methodNotAllowed, readJson } from './http.js';
 import { evaluateRecommendationDeliverySlos } from './recommendation-delivery-slo-evaluator.js';
+import {
+  deleteGovernedRecommendationDeliverySlo,
+  saveGovernedRecommendationDeliverySlo,
+} from './recommendation-delivery-slo-governance.js';
 import { enableRecommendationDeliverySloRouteEvents } from './recommendation-delivery-slo-route-setup.js';
 import {
   acknowledgeRecommendationDeliverySloIncident,
-  deleteRecommendationDeliverySlo,
   listRecommendationDeliverySlos,
   requirePortalWideDeliverySloAccess,
-  saveRecommendationDeliverySlo,
 } from './recommendation-delivery-slos.js';
 import { Repository } from './repository.js';
 import { route as routeV16 } from './routes-v16.js';
@@ -66,7 +68,7 @@ export async function route(
     await requireCommercialTier(env, identity.portalId, 'enterprise');
     if (request.method === 'GET') return json(await listRecommendationDeliverySlos(env, identity));
     if (request.method === 'POST') {
-      return json(await saveRecommendationDeliverySlo(env, identity, await readJson<unknown>(request)), 201);
+      return json(await saveGovernedRecommendationDeliverySlo(env, identity, await readJson<unknown>(request)), 201);
     }
     return methodNotAllowed(['GET', 'POST']);
   }
@@ -77,10 +79,12 @@ export async function route(
     await requireCommercialTier(env, identity.portalId, 'enterprise');
     const policyId = decodeURIComponent(item[1]!);
     if (request.method === 'PUT') {
-      return json(await saveRecommendationDeliverySlo(env, identity, await readJson<unknown>(request), policyId));
+      return json(await saveGovernedRecommendationDeliverySlo(
+        env, identity, await readJson<unknown>(request), policyId,
+      ));
     }
     if (request.method === 'DELETE') {
-      await deleteRecommendationDeliverySlo(env, identity, policyId);
+      await deleteGovernedRecommendationDeliverySlo(env, identity, policyId);
       return json({ ok: true });
     }
     return methodNotAllowed(['PUT', 'DELETE']);

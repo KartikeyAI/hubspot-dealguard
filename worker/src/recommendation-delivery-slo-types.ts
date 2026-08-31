@@ -1,13 +1,15 @@
 import type { RecommendationChannelSummary, RecommendationFollowupRoutingMatch } from './recommendation-operations-types.js';
 
-export const RECOMMENDATION_DELIVERY_SLO_BREACHED_EVENT = 'recommendation.delivery.slo.breached' as const;
-export const RECOMMENDATION_DELIVERY_SLO_REMINDER_EVENT = 'recommendation.delivery.slo.reminder' as const;
-export const RECOMMENDATION_DELIVERY_SLO_RECOVERED_EVENT = 'recommendation.delivery.slo.recovered' as const;
-
 export type RecommendationDeliverySloEventType =
-  | typeof RECOMMENDATION_DELIVERY_SLO_BREACHED_EVENT
-  | typeof RECOMMENDATION_DELIVERY_SLO_REMINDER_EVENT
-  | typeof RECOMMENDATION_DELIVERY_SLO_RECOVERED_EVENT;
+  | 'recommendation.delivery.slo.breached'
+  | 'recommendation.delivery.slo.reminder'
+  | 'recommendation.delivery.slo.recovered';
+
+const deliverySloEventType = (value: RecommendationDeliverySloEventType): RecommendationDeliverySloEventType => value;
+
+export const RECOMMENDATION_DELIVERY_SLO_BREACHED_EVENT = deliverySloEventType('recommendation.delivery.slo.breached');
+export const RECOMMENDATION_DELIVERY_SLO_REMINDER_EVENT = deliverySloEventType('recommendation.delivery.slo.reminder');
+export const RECOMMENDATION_DELIVERY_SLO_RECOVERED_EVENT = deliverySloEventType('recommendation.delivery.slo.recovered');
 
 export type RecommendationDeliverySloMetric =
   | 'delivery_success_percent'

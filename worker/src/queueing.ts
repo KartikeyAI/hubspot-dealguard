@@ -7,6 +7,7 @@ import { sendDueDigests } from './email.js';
 import { expirePolicyExceptions } from './enterprise-policy.js';
 import { runMaintenance } from './maintenance.js';
 import { dispatchOutbox } from './outbox.js';
+import { dispatchRecommendationDeliverySloNotifications } from './recommendation-delivery-slo-notifications.js';
 import { dispatchQueuedRecommendationFollowups } from './recommendation-followup-queue.js';
 import { runDueSyntheticChecks } from './reliability.js';
 import { escalateOverdueRemediations } from './remediation.js';
@@ -38,6 +39,7 @@ async function processMessage(env: Env, message: DealGuardQueueMessage): Promise
       await Promise.all([
         dispatchOutbox(env),
         dispatchQueuedRecommendationFollowups(env, 10),
+        dispatchRecommendationDeliverySloNotifications(env, 20),
       ]);
     }
     else if (message.task === 'siem') await dispatchSiemEvents(env);

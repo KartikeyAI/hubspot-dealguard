@@ -83,6 +83,13 @@ try {
        AND indexname = 'uq_recommendation_delivery_slo_open_incident'
        AND indexdef ILIKE '%WHERE%open%acknowledged%'`,
   );
+  const semanticTrigger = await client.query(
+    `SELECT COUNT(*)::int AS count
+     FROM information_schema.triggers
+     WHERE trigger_schema = 'dealguard'
+       AND event_object_table = 'recommendation_delivery_slo_policies'
+       AND trigger_name = 'trg_protect_recommendation_delivery_slo_incident_semantics'`,
+  );
   const eventChecks = await client.query(
     `SELECT COUNT(*)::int AS count
      FROM pg_constraint constraint_info
@@ -104,6 +111,7 @@ try {
     deliverySloForeignKeyCount: Number(foreignKeys.rows[0]?.count ?? 0),
     notificationRouteTenantUniqueCount: Number(portalRouteUnique.rows[0]?.count ?? 0),
     openIncidentGuardCount: Number(openIncidentIndex.rows[0]?.count ?? 0),
+    activeIncidentSemanticTriggerCount: Number(semanticTrigger.rows[0]?.count ?? 0),
     notificationEventCheckCount: Number(eventChecks.rows[0]?.count ?? 0),
   };
   if (result.migrationVersion < 22 || result.migrationCount < 22) {
@@ -126,6 +134,9 @@ try {
   }
   if (result.openIncidentGuardCount !== 1) {
     throw new Error('Expected one-open-incident-per-policy database guard.');
+  }
+  if (result.activeIncidentSemanticTriggerCount !== 1) {
+    throw new Error('Expected active-incident SLO semantic protection trigger.');
   }
   if (result.notificationEventCheckCount !== 1) {
     throw new Error('Expected breach, reminder, and recovery notification event constraints.');

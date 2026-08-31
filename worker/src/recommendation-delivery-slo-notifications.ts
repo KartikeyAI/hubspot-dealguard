@@ -14,8 +14,8 @@ import type {
 import type { Env } from './types.js';
 
 const encoder = new TextEncoder();
-const MAX_NOTIFICATION_ATTEMPTS = 5;
-const QUIET_HOURS_RETRY_MINUTES = 15;
+const MAX_ATTEMPTS = 5;
+const QUIET_RETRY_MINUTES = 15;
 const PORTAL_SCOPE: RecommendationFollowupScope = {
   pipelineId: null,
   teamId: null,
@@ -34,32 +34,18 @@ interface NotificationRow extends Record<string, unknown> {
   status: RecommendationDeliverySloNotificationStatus;
   routing_fingerprint: string;
   payload_json: string;
-  delivery_summary_json: string;
   attempts: number;
-  available_at: string;
-  last_error: string | null;
-  dedupe_key: string;
   created_at: string;
-  completed_at: string | null;
-  updated_at: string;
 }
 
 function parseJson<T>(value: unknown, fallback: T): T {
   if (typeof value !== 'string') return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
+  try { return JSON.parse(value) as T; } catch { return fallback; }
 }
 
 function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;');
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;').replaceAll("'", '&#039;');
 }
 
 async function hmacBase64(secret: string, body: string): Promise<string> {
@@ -72,24 +58,18 @@ async function hmacBase64(secret: string, body: string): Promise<string> {
   return btoa(binary);
 }
 
-function retryAt(attempt: number): string {
-  const seconds = Math.min(3600, 30 * 2 ** Math.min(8, Math.max(0, attempt)));
-  return new Date(Date.now() + seconds * 1000).toISOString();
-}
-
-function severityForEvent(
+function eventSeverity(
   policy: RecommendationDeliverySloPolicy,
   eventType: RecommendationDeliverySloEventType,
 ): 'info' | 'warning' | 'critical' {
   return eventType === 'recommendation.delivery.slo.recovered' ? 'info' : policy.severity;
 }
 
-function routingSeverity(
+function routeSeverity(
   policy: RecommendationDeliverySloPolicy,
   eventType: RecommendationDeliverySloEventType,
 ): 'warning' | 'critical' {
-  const severity = severityForEvent(policy, eventType);
-  return severity === 'critical' ? 'critical' : 'warning';
+  return eventSeverity(policy, eventType) === 'critical' ? 'critical' : 'warning';
 }
 
 function eventLabel(eventType: RecommendationDeliverySloEventType): string {
@@ -98,7 +78,12 @@ function eventLabel(eventType: RecommendationDeliverySloEventType): string {
   return 'breached';
 }
 
-export async function queueRecommendationDeliverySloNotification(
+function retryAt(attempt: number): string {
+  const seconds = Math.min(3600, 30 * 2 ** Math.min(8, Math.max(0, attempt)));
+  return new Date(Date.now() + seconds * 1000).toISOString();
+}
+
+export async function queuePortalRecommendationDeliverySloNotification(
   env: Env,
   portalId: string,
   policy: RecommendationDeliverySloPolicy,
@@ -108,17 +93,16 @@ export async function queueRecommendationDeliverySloNotification(
 ): Promise<string> {
   const state = await loadFollowupRoutingState(env, portalId);
   const route = state.routes.find((item) => item.id === policy.notificationRouteId);
-  if (!route) {
-    throw new AppError(409, 'delivery_slo_route_unavailable', 'The configured SLO notification route is unavailable.');
-  }
-  const match = await routingMatch({
+  if (!route) throw new AppError(409, 'delivery_slo_route_unavailable', 'The configured SLO notification route is unavailable.');
+
+  const routing = await routingMatch({
     routes: [route],
     channels: state.channelSummaries,
-    // Quiet hours defer actual delivery. They do not prevent a durable alert
-    // from being queued after the SLO lifecycle has authorized it.
+    // A durable incident alert can be queued while quiet hours are active;
+    // actual transport remains deferred until the calendar allows delivery.
     quietRouteIds: new Set(),
     scope: PORTAL_SCOPE,
-    severity: routingSeverity(policy, eventType),
+    severity: routeSeverity(policy, eventType),
     recommendationId: incident.id,
     recommendationStatus: incident.status,
     priority: policy.severity === 'critical' ? 'high' : 'medium',
@@ -127,12 +111,8 @@ export async function queueRecommendationDeliverySloNotification(
     managerNote: input.summary,
     eventType,
   });
-  if (!match.ready) {
-    throw new AppError(
-      409,
-      'delivery_slo_route_not_opted_in',
-      `The configured route must explicitly subscribe to ${eventType} and contain an enabled channel.`,
-    );
+  if (!routing.ready) {
+    throw new AppError(409, 'delivery_slo_route_not_opted_in', `The configured route must explicitly subscribe to ${eventType} and contain an enabled channel.`);
   }
 
   const id = crypto.randomUUID();
@@ -167,21 +147,10 @@ export async function queueRecommendationDeliverySloNotification(
     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, '[]', 0, ?, ?, ?, ?)
     ON CONFLICT(portal_id, dedupe_key) DO NOTHING`,
   ).bind(
-    id,
-    portalId,
-    policy.id,
-    incident.id,
-    policy.notificationRouteId,
-    eventType,
-    severityForEvent(policy, eventType),
-    match.fingerprint,
-    JSON.stringify(payload),
-    now,
-    dedupeKey,
-    now,
-    now,
+    id, portalId, policy.id, incident.id, policy.notificationRouteId, eventType,
+    eventSeverity(policy, eventType), routing.fingerprint, JSON.stringify(payload),
+    now, dedupeKey, now, now,
   ).run();
-
   const stored = await env.DB.prepare(
     `SELECT id FROM recommendation_delivery_slo_notifications
      WHERE portal_id = ? AND dedupe_key = ? LIMIT 1`,
@@ -208,9 +177,7 @@ async function deliverChannel(
   if (channel.type === 'email') {
     const recipients = parseJson<{ recipients?: string[] }>(channel.config_json, {}).recipients ?? [];
     const valid = [...new Set(recipients.filter((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)))];
-    if (valid.length === 0) {
-      throw new AppError(409, 'delivery_slo_email_unconfigured', `Email channel ${channel.name} has no valid recipients.`);
-    }
+    if (valid.length === 0) throw new AppError(409, 'delivery_slo_email_unconfigured', `Email channel ${channel.name} has no valid recipients.`);
     await sendEmail(
       env,
       valid,
@@ -243,18 +210,12 @@ async function deliverChannel(
     headers['x-dealguard-event'] = row.event_type;
     headers['x-dealguard-delivery'] = row.id;
     if (channel.signing_secret_cipher && channel.signing_secret_iv) {
-      const secret = await decryptSecret(
-        channel.signing_secret_cipher,
-        channel.signing_secret_iv,
-        env.TOKEN_ENCRYPTION_KEY,
-      );
+      const secret = await decryptSecret(channel.signing_secret_cipher, channel.signing_secret_iv, env.TOKEN_ENCRYPTION_KEY);
       headers['x-dealguard-signature'] = `v1=${await hmacBase64(secret, body)}`;
     }
   }
   const response = await fetch(endpoint, { method: 'POST', headers, body });
-  if (!response.ok) {
-    throw new AppError(502, 'delivery_slo_notification_failed', `Channel ${channel.name} returned HTTP ${response.status}.`);
-  }
+  if (!response.ok) throw new AppError(502, 'delivery_slo_notification_failed', `Channel ${channel.name} returned HTTP ${response.status}.`);
 }
 
 async function failNotification(
@@ -264,7 +225,7 @@ async function failNotification(
   retryable: boolean,
 ): Promise<void> {
   const attempts = Number(row.attempts ?? 0) + 1;
-  const terminal = !retryable || attempts >= MAX_NOTIFICATION_ATTEMPTS;
+  const terminal = !retryable || attempts >= MAX_ATTEMPTS;
   const now = new Date().toISOString();
   await env.DB.batch([
     env.DB.prepare(
@@ -272,16 +233,7 @@ async function failNotification(
        SET status = 'failed', attempts = ?, available_at = ?, last_error = ?,
            completed_at = CASE WHEN ? = 1 THEN ? ELSE NULL END, updated_at = ?
        WHERE portal_id = ? AND id = ?`,
-    ).bind(
-      attempts,
-      terminal ? now : retryAt(attempts),
-      error.slice(0, 1000),
-      terminal ? 1 : 0,
-      now,
-      now,
-      row.portal_id,
-      row.id,
-    ),
+    ).bind(attempts, terminal ? now : retryAt(attempts), error.slice(0, 1000), terminal ? 1 : 0, now, now, row.portal_id, row.id),
     env.DB.prepare(
       `UPDATE recommendation_delivery_slo_incidents
        SET last_notification_status = 'failed', updated_at = ?
@@ -290,10 +242,7 @@ async function failNotification(
   ]);
 }
 
-export async function dispatchRecommendationDeliverySloNotifications(
-  env: Env,
-  limit = 20,
-): Promise<void> {
+export async function dispatchRecommendationDeliverySloNotifications(env: Env, limit = 20): Promise<void> {
   const rows = await env.DB.prepare(
     `SELECT * FROM recommendation_delivery_slo_notifications
      WHERE status IN ('queued', 'deferred', 'failed')
@@ -301,15 +250,14 @@ export async function dispatchRecommendationDeliverySloNotifications(
        AND attempts < ?
      ORDER BY created_at ASC
      LIMIT ?`,
-  ).bind(MAX_NOTIFICATION_ATTEMPTS, Math.min(100, Math.max(1, limit))).all<NotificationRow>();
+  ).bind(MAX_ATTEMPTS, Math.min(100, Math.max(1, limit))).all<NotificationRow>();
 
   for (const row of rows.results ?? []) {
-    const claimedAt = new Date().toISOString();
     const claimed = await env.DB.prepare(
       `UPDATE recommendation_delivery_slo_notifications
        SET status = 'delivering', updated_at = ?
        WHERE portal_id = ? AND id = ? AND status IN ('queued', 'deferred', 'failed')`,
-    ).bind(claimedAt, row.portal_id, row.id).run();
+    ).bind(new Date().toISOString(), row.portal_id, row.id).run();
     if (Number(claimed.meta?.changes ?? 0) <= 0) continue;
 
     try {
@@ -322,7 +270,7 @@ export async function dispatchRecommendationDeliverySloNotifications(
       }
       if (state.quietRouteIds.has(route.id)) {
         const now = new Date().toISOString();
-        const availableAt = new Date(Date.now() + QUIET_HOURS_RETRY_MINUTES * 60_000).toISOString();
+        const availableAt = new Date(Date.now() + QUIET_RETRY_MINUTES * 60_000).toISOString();
         await env.DB.batch([
           env.DB.prepare(
             `UPDATE recommendation_delivery_slo_notifications
@@ -339,7 +287,7 @@ export async function dispatchRecommendationDeliverySloNotifications(
         continue;
       }
 
-      const match = await routingMatch({
+      const routing = await routingMatch({
         routes: [route],
         channels: state.channelSummaries,
         quietRouteIds: new Set(),
@@ -353,18 +301,13 @@ export async function dispatchRecommendationDeliverySloNotifications(
         managerNote: String(payload.summary ?? ''),
         eventType: row.event_type,
       });
-      if (!match.ready || match.fingerprint !== row.routing_fingerprint) {
-        await failNotification(
-          env,
-          row,
-          'Route or channel configuration changed after the SLO notification was queued.',
-          false,
-        );
+      if (!routing.ready || routing.fingerprint !== row.routing_fingerprint) {
+        await failNotification(env, row, 'Route or channel configuration changed after the SLO notification was queued.', false);
         continue;
       }
 
       const channelById = new Map(state.channels.map((channel) => [channel.id, channel]));
-      const channels = match.channelIds
+      const channels = routing.channelIds
         .map((id) => channelById.get(id))
         .filter((item): item is FollowupChannelRow => Boolean(item));
       const results: Array<{
@@ -377,13 +320,7 @@ export async function dispatchRecommendationDeliverySloNotifications(
       for (const channel of channels) {
         try {
           await deliverChannel(env, channel, row, payload);
-          results.push({
-            channelId: channel.id,
-            channelName: channel.name,
-            channelType: channel.type,
-            status: 'delivered',
-            error: null,
-          });
+          results.push({ channelId: channel.id, channelName: channel.name, channelType: channel.type, status: 'delivered', error: null });
         } catch (error) {
           results.push({
             channelId: channel.id,
@@ -398,18 +335,10 @@ export async function dispatchRecommendationDeliverySloNotifications(
       const delivered = results.filter((result) => result.status === 'delivered').length;
       const failed = results.length - delivered;
       if (delivered === 0) {
-        await failNotification(
-          env,
-          row,
-          results[0]?.error ?? 'No configured channel accepted the notification.',
-          true,
-        );
+        await failNotification(env, row, results[0]?.error ?? 'No configured channel accepted the notification.', true);
         continue;
       }
-
-      const status: RecommendationDeliverySloNotificationStatus = failed > 0
-        ? 'partially_failed'
-        : 'delivered';
+      const status: RecommendationDeliverySloNotificationStatus = failed > 0 ? 'partially_failed' : 'delivered';
       const completedAt = new Date().toISOString();
       await env.DB.batch([
         env.DB.prepare(
@@ -417,15 +346,7 @@ export async function dispatchRecommendationDeliverySloNotifications(
            SET status = ?, attempts = attempts + 1, delivery_summary_json = ?,
                last_error = ?, completed_at = ?, updated_at = ?
            WHERE portal_id = ? AND id = ?`,
-        ).bind(
-          status,
-          JSON.stringify(results),
-          results.find((result) => result.status === 'failed')?.error ?? null,
-          completedAt,
-          completedAt,
-          row.portal_id,
-          row.id,
-        ),
+        ).bind(status, JSON.stringify(results), results.find((result) => result.status === 'failed')?.error ?? null, completedAt, completedAt, row.portal_id, row.id),
         env.DB.prepare(
           `UPDATE recommendation_delivery_slo_incidents
            SET last_notification_status = ?, updated_at = ?
@@ -433,12 +354,7 @@ export async function dispatchRecommendationDeliverySloNotifications(
         ).bind(status, completedAt, row.portal_id, row.incident_id),
       ]);
     } catch (error) {
-      await failNotification(
-        env,
-        row,
-        error instanceof Error ? error.message : String(error),
-        true,
-      );
+      await failNotification(env, row, error instanceof Error ? error.message : String(error), true);
     }
   }
 }

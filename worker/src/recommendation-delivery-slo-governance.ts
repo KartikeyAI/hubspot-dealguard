@@ -1,6 +1,7 @@
 import { AppError } from './errors.js';
 import {
   deleteRecommendationDeliverySlo,
+  requirePortalWideDeliverySloAccess,
   saveRecommendationDeliverySlo,
   type DeliverySloPolicyRow,
 } from './recommendation-delivery-slos.js';
@@ -127,6 +128,7 @@ export async function saveGovernedRecommendationDeliverySlo(
   value: unknown,
   policyId: string | null = null,
 ): Promise<RecommendationDeliverySloPolicy> {
+  await requirePortalWideDeliverySloAccess(env, identity, 'reliability.manage');
   const input = object(value);
   const current = policyId
     ? await env.DB.prepare(
@@ -157,6 +159,7 @@ export async function deleteGovernedRecommendationDeliverySlo(
   identity: RequestIdentity,
   policyId: string,
 ): Promise<void> {
+  await requirePortalWideDeliverySloAccess(env, identity, 'reliability.manage');
   const historical = await env.DB.prepare(
     `SELECT id FROM recommendation_delivery_slo_incidents
      WHERE portal_id = ? AND slo_policy_id = ? LIMIT 1`,

@@ -1,6 +1,7 @@
 import { requireCommercialTier } from './billing.js';
 import { json, methodNotAllowed, readJson } from './http.js';
 import { evaluateRecommendationDeliverySlos } from './recommendation-delivery-slo-evaluator.js';
+import { enableRecommendationDeliverySloRouteEvents } from './recommendation-delivery-slo-route-setup.js';
 import {
   acknowledgeRecommendationDeliverySloIncident,
   deleteRecommendationDeliverySlo,
@@ -38,6 +39,16 @@ export async function route(
       }));
     }));
     return json({ accepted: true, evaluationQueued: true }, 202);
+  }
+
+  const routeOptIn = url.pathname.match(/^\/api\/v1\/enterprise\/recommendation-delivery-slos\/routes\/([^/]+)\/enable-events$/);
+  if (routeOptIn) {
+    if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    const identity = await validateHubSpotRequest(request, env);
+    await requireCommercialTier(env, identity.portalId, 'enterprise');
+    return json(await enableRecommendationDeliverySloRouteEvents(
+      env, identity, decodeURIComponent(routeOptIn[1]!),
+    ));
   }
 
   const acknowledge = url.pathname.match(/^\/api\/v1\/enterprise\/recommendation-delivery-slos\/incidents\/([^/]+)\/acknowledge$/);

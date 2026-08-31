@@ -46,7 +46,7 @@ CREATE TABLE recommendation_delivery_slo_policies (
   FOREIGN KEY (portal_id) REFERENCES tenants(portal_id) ON DELETE CASCADE,
   FOREIGN KEY (portal_id, notification_route_id)
     REFERENCES notification_routes(portal_id, id)
-    ON DELETE RESTRICT
+    ON DELETE NO ACTION
 );
 
 CREATE TABLE recommendation_delivery_slo_states (
@@ -110,7 +110,7 @@ CREATE TABLE recommendation_delivery_slo_incidents (
   FOREIGN KEY (portal_id) REFERENCES tenants(portal_id) ON DELETE CASCADE,
   FOREIGN KEY (portal_id, slo_policy_id)
     REFERENCES recommendation_delivery_slo_policies(portal_id, id)
-    ON DELETE RESTRICT
+    ON DELETE NO ACTION
 );
 
 CREATE UNIQUE INDEX uq_recommendation_delivery_slo_open_incident
@@ -190,7 +190,7 @@ CREATE TABLE recommendation_delivery_slo_notifications (
     ON DELETE CASCADE,
   FOREIGN KEY (portal_id, route_id)
     REFERENCES notification_routes(portal_id, id)
-    ON DELETE RESTRICT
+    ON DELETE NO ACTION
 );
 
 CREATE INDEX idx_recommendation_delivery_slo_policies_schedule

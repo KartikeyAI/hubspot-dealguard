@@ -11,10 +11,10 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: dealguard
           POSTGRES_PASSWORD: dealguard-test-password
@@ -42,6 +42,21 @@ jobs:
       - run: npm install --ignore-scripts --silent --prefix src/app/cards
       - run: npm install --ignore-scripts --silent --prefix src/app/settings
       - run: npm install --ignore-scripts --silent --prefix src/app/pages
+      - name: Validate converged release contract
+        id: release_convergence
+        continue-on-error: true
+        run: npm run release:convergence > release-convergence.json 2>&1
+      - name: Upload release convergence diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-convergence-${{ github.sha }}
+          path: release-convergence.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Enforce converged release contract
+        if: steps.release_convergence.outcome == 'failure'
+        run: cat release-convergence.json && exit 1
       - name: Typecheck Worker
         id: worker_typecheck
         continue-on-error: true

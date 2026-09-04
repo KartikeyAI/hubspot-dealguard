@@ -3,10 +3,118 @@ name: P2 Decision Intelligence
 on:
   pull_request:
     paths:
+      - 'worker/src/config.ts'
+      - 'worker/src/types.ts'
+      - 'worker/src/hubspot.ts'
+      - 'worker/src/deal-intelligence.ts'
+      - 'worker/src/deal-history.ts'
+      - 'worker/src/deal-momentum-types.ts'
+      - 'worker/src/deal-momentum.ts'
+      - 'worker/src/buyer-committee-data.ts'
+      - 'worker/src/buyer-committee-types.ts'
+      - 'worker/src/buyer-committee.ts'
+      - 'worker/src/deal-brief-types.ts'
+      - 'worker/src/deal-brief.ts'
+      - 'worker/src/deal-brief-engagement.ts'
+      - 'worker/src/deal-brief-commercial.ts'
+      - 'worker/src/engagement-metadata-types.ts'
+      - 'worker/src/engagement-metadata-data.ts'
+      - 'worker/src/engagement-metadata-utils.ts'
+      - 'worker/src/engagement-analysis.ts'
+      - 'worker/src/engagement-signals.ts'
+      - 'worker/src/engagement-actions.ts'
+      - 'worker/src/engagement-intelligence.ts'
+      - 'worker/src/commercial-integrity-types.ts'
+      - 'worker/src/commercial-integrity-data.ts'
+      - 'worker/src/commercial-integrity-analysis.ts'
+      - 'worker/src/commercial-integrity-actions.ts'
+      - 'worker/src/commercial-integrity.ts'
+      - 'worker/src/decision-snapshot.ts'
+      - 'worker/src/manager-decision-queue-types.ts'
+      - 'worker/src/manager-decision-queue.ts'
+      - 'worker/src/executive-revenue-types.ts'
+      - 'worker/src/executive-revenue-model.ts'
+      - 'worker/src/executive-revenue-cohorts.ts'
+      - 'worker/src/executive-revenue-candidates.ts'
+      - 'worker/src/executive-revenue-analysis.ts'
+      - 'worker/src/executive-revenue.ts'
+      - 'worker/src/recommendation-outcome-types.ts'
+      - 'worker/src/recommendation-outcome-model.ts'
+      - 'worker/src/recommendation-outcome-storage.ts'
+      - 'worker/src/recommendation-observation.ts'
+      - 'worker/src/recommendation-lifecycle.ts'
+      - 'worker/src/recommendation-outcomes.ts'
+      - 'worker/src/recommendation-operations-types.ts'
+      - 'worker/src/recommendation-operations-model.ts'
+      - 'worker/src/recommendation-operations.ts'
+      - 'worker/src/recommendation-evidence-export.ts'
+      - 'worker/src/secure-downloads.ts'
+      - 'worker/src/postgres.ts'
+      - 'worker/src/assessment-service.ts'
+      - 'worker/src/routes-v2.ts'
+      - 'worker/src/routes-v10.ts'
+      - 'worker/src/routes-v11.ts'
+      - 'worker/src/routes-v12.ts'
+      - 'worker/src/routes-v13.ts'
+      - 'worker/src/routes-v14.ts'
+      - 'worker/src/index.ts'
       - 'worker/src/enterprise-analytics-v2.ts'
+      - 'database/migrations/0015_trustworthy_intelligence_currency.sql'
+      - 'database/migrations/0016_manager_decision_queue.sql'
+      - 'database/migrations/0017_executive_revenue_view.sql'
+      - 'database/migrations/0018_recommendation_outcomes.sql'
+      - 'database/migrations/0019_recommendation_operations.sql'
+      - 'src/app/app-hsmeta.json'
+      - 'src/app/cards/DealGuardEngagementCard.tsx'
+      - 'src/app/cards/dealguard-engagement-card-hsmeta.json'
+      - 'src/app/cards/DealGuardCommercialCard.tsx'
+      - 'src/app/cards/dealguard-commercial-card-hsmeta.json'
+      - 'src/app/cards/**'
+      - 'src/app/pages/EnterpriseHomeV3.tsx'
       - 'src/app/pages/EnterpriseHomeV4.tsx'
+      - 'src/app/pages/ManagerDecisionQueuePanel.tsx'
+      - 'src/app/pages/ManagerDecisionQueueCore.tsx'
+      - 'src/app/pages/ExecutiveRevenuePanel.tsx'
+      - 'src/app/pages/RecommendationOutcomePanel.tsx'
+      - 'src/app/pages/tsconfig.json'
       - 'test/p2-intelligence-contract.test.mjs'
+      - 'test/trustworthy-intelligence.test.mjs'
+      - 'test/deal-momentum.test.mjs'
+      - 'test/deal-momentum-contract.test.mjs'
+      - 'test/deal-history-client.test.mjs'
+      - 'test/buyer-committee.test.mjs'
+      - 'test/buyer-committee-contract.test.mjs'
+      - 'test/deal-brief.test.mjs'
+      - 'test/deal-brief-contract.test.mjs'
+      - 'test/engagement-intelligence.test.mjs'
+      - 'test/engagement-intelligence-contract.test.mjs'
+      - 'test/deal-brief-engagement.test.mjs'
+      - 'test/commercial-integrity.test.mjs'
+      - 'test/commercial-integrity-contract.test.mjs'
+      - 'test/deal-brief-commercial.test.mjs'
+      - 'test/manager-decision-queue.test.mjs'
+      - 'test/manager-decision-queue-contract.test.mjs'
+      - 'test/manager-decision-queue-ui-contract.test.mjs'
+      - 'test/executive-revenue.test.mjs'
+      - 'test/executive-revenue-contract.test.mjs'
+      - 'test/executive-revenue-ui-contract.test.mjs'
+      - 'test/recommendation-outcome.test.mjs'
+      - 'test/recommendation-outcome-contract.test.mjs'
+      - 'test/recommendation-outcome-ui-contract.test.mjs'
+      - 'test/recommendation-operations.test.mjs'
+      - 'test/recommendation-operations-contract.test.mjs'
       - 'scripts/postgres-migrate.mjs'
+      - 'scripts/postgres-validate.mjs'
+      - 'docs/ENTERPRISE_ANALYTICS.md'
+      - 'docs/DEAL_MOMENTUM_AND_CLOSE_DATE.md'
+      - 'docs/BUYER_COMMITTEE_INTELLIGENCE.md'
+      - 'docs/DEAL_BRIEF.md'
+      - 'docs/ENGAGEMENT_INTELLIGENCE.md'
+      - 'docs/COMMERCIAL_INTEGRITY.md'
+      - 'docs/MANAGER_DECISION_QUEUE.md'
+      - 'docs/EXECUTIVE_REVENUE_VIEW.md'
+      - 'docs/RECOMMENDATION_OUTCOMES.md'
+      - 'docs/RECOMMENDATION_OPERATIONS.md'
       - '.github/workflows/p2-decision-intelligence.yml'
   workflow_dispatch:
 
@@ -19,7 +127,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: dealguard
           POSTGRES_PASSWORD: dealguard-test-password
@@ -41,11 +149,16 @@ jobs:
       - name: Install dependencies
         run: |
           npm install --ignore-scripts --silent
+          npm install --ignore-scripts --silent --prefix src/app/cards
           npm install --ignore-scripts --silent --prefix src/app/pages
       - name: Typecheck analytics worker
         run: npm run typecheck
-      - name: Typecheck enterprise Home
+      - name: Typecheck deal intelligence cards
+        run: npm run typecheck --prefix src/app/cards
+      - name: Typecheck deployed enterprise Home
         run: npm run typecheck --prefix src/app/pages
+      - name: Build Worker contracts
+        run: npm run build
       - name: Apply canonical PostgreSQL migrations
         id: migrations
         continue-on-error: true
@@ -64,6 +177,26 @@ jobs:
         run: |
           npm run db:migrate:check
           npm run db:validate
+      - name: Run trustworthy-intelligence tests
+        run: node --test test/trustworthy-intelligence.test.mjs
+      - name: Run deal-momentum tests
+        run: node --test test/deal-momentum.test.mjs test/deal-momentum-contract.test.mjs test/deal-history-client.test.mjs
+      - name: Run buyer-committee tests
+        run: node --test test/buyer-committee.test.mjs test/buyer-committee-contract.test.mjs
+      - name: Run Deal Brief tests
+        run: node --test test/deal-brief.test.mjs test/deal-brief-contract.test.mjs
+      - name: Run engagement-intelligence tests
+        run: node --test test/engagement-intelligence.test.mjs test/engagement-intelligence-contract.test.mjs test/deal-brief-engagement.test.mjs
+      - name: Run commercial-integrity tests
+        run: node --test test/commercial-integrity.test.mjs test/commercial-integrity-contract.test.mjs test/deal-brief-commercial.test.mjs
+      - name: Run manager-decision-queue tests
+        run: node --test test/manager-decision-queue.test.mjs test/manager-decision-queue-contract.test.mjs test/manager-decision-queue-ui-contract.test.mjs
+      - name: Run executive-revenue tests
+        run: node --test test/executive-revenue.test.mjs test/executive-revenue-contract.test.mjs test/executive-revenue-ui-contract.test.mjs
+      - name: Run recommendation-outcome tests
+        run: node --test test/recommendation-outcome.test.mjs test/recommendation-outcome-contract.test.mjs test/recommendation-outcome-ui-contract.test.mjs
+      - name: Run recommendation-operations tests
+        run: node --test test/recommendation-operations.test.mjs test/recommendation-operations-contract.test.mjs
       - name: Run P2 contract tests
         run: node --test test/p2-intelligence-contract.test.mjs
       - name: Run full automated test suite

@@ -1,39 +1,157 @@
 import React from 'react';
-import { Alert, Button, Flex, Heading, StatusTag, Text, hubspot } from '@hubspot/ui-extensions';
-import { CardLoading, CardUnavailable, delta, statusVariant, useDealAssessment } from './deal-intelligence-shared';
+import { Alert, Button, Divider, Flex, Heading, StatusTag, Text, hubspot } from '@hubspot/ui-extensions';
+import {
+  CardLoading,
+  CardUnavailable,
+  attentionVariant,
+  briefVariant,
+  commercialVariant,
+  credibilityVariant,
+  engagementVariant,
+  formatAgeHours,
+  formatDate,
+  freshnessVariant,
+  momentumVariant,
+  relationshipVariant,
+  statusVariant,
+  useDealAssessment,
+} from './deal-intelligence-shared';
 
-hubspot.extend<'crm.record.tab'>(({ context }) => <DealGuardReadinessCard dealId={String(context.crm.objectId)} />);
+hubspot.extend<'crm.record.tab'>(({ context }) => <DealGuardBriefCard dealId={String(context.crm.objectId)} />);
 
-const DealGuardReadinessCard = ({ dealId }: { dealId: string }) => {
+const DealGuardBriefCard = ({ dealId }: { dealId: string }) => {
   const { assessment, loading, working, error, notice, load, postAction } = useDealAssessment(dealId);
-  if (loading) return <CardLoading label="Loading DealGuard readiness" />;
+  if (loading) return <CardLoading label="Loading DealGuard deal brief" />;
   if (!assessment) return <CardUnavailable error={error} />;
+
   const intelligence = assessment.intelligence;
-  const change = intelligence?.change;
-  const topRisks = intelligence?.risk.contributors.slice(0, 3) ?? [];
+  const brief = intelligence?.dealBrief;
+  const momentum = intelligence?.momentum;
+  const closeDate = intelligence?.closeDateCredibility;
+  const relationship = intelligence?.relationshipCoverage;
+  const engagement = intelligence?.engagement;
+  const commercial = intelligence?.commercialIntegrity;
+  const nextAction = brief?.nextAction;
 
   return <Flex direction="column" gap="medium">
     {error && <Alert title="Action failed" variant="danger">{error}</Alert>}
     {notice && <Alert title="Done" variant="success">{notice}</Alert>}
+
     <Flex direction="row" justify="between" align="center" gap="medium">
       <Flex direction="column" gap="extra-small">
-        <Heading>{assessment.score}/100 · Grade {assessment.grade}</Heading>
-        <Text>{assessment.readinessSummary}</Text>
-        {change?.scoreDelta !== null && change?.scoreDelta !== undefined && <Text variant="microcopy">Since last assessment: {delta(change.scoreDelta)} points.</Text>}
+        <Heading>Deal brief</Heading>
+        <Text>{brief?.summary ?? assessment.readinessSummary}</Text>
       </Flex>
-      <StatusTag variant={statusVariant(assessment.status)}>{assessment.status === 'at_risk' ? 'At risk' : assessment.status.charAt(0).toUpperCase() + assessment.status.slice(1)}</StatusTag>
+      <StatusTag variant={brief ? briefVariant(brief.status) : statusVariant(assessment.status)}>
+        {brief ? brief.status.replaceAll('_', ' ') : assessment.status.replaceAll('_', ' ')}
+      </StatusTag>
     </Flex>
-    {intelligence && <Text>{intelligence.risk.lostPoints} readiness points blocked · critical fixes can raise readiness to {intelligence.risk.afterCriticalFixes} · full detected potential {intelligence.risk.potentialScore}.</Text>}
-    {topRisks.length > 0 && <Flex direction="column" gap="extra-small">
-      <Text format={{ fontWeight: 'bold' }}>Top risks</Text>
-      {topRisks.map((item) => <Text key={item.code}>• −{item.impact} · {item.label}</Text>)}
-    </Flex>}
-    {assessment.isWon && <Alert title="Sales-to-delivery handoff" variant={assessment.handoffStatus === 'confirmed' ? 'success' : 'warning'}>{assessment.handoffStatus === 'confirmed' ? 'The handoff has been confirmed.' : 'Resolve critical gaps, then confirm that delivery has enough information to begin.'}</Alert>}
+
+    {brief ? <>
+      <Flex direction="row" gap="medium" wrap="wrap">
+        <Flex direction="column" gap="extra-small">
+          <Text variant="microcopy">ATTENTION PRIORITY</Text>
+          <Heading>{brief.attentionScore}/100</Heading>
+          <StatusTag variant={attentionVariant(brief.attentionScore)}>{brief.attentionScore >= 70 ? 'Act now' : brief.attentionScore >= 35 ? 'Review' : 'Low'}</StatusTag>
+        </Flex>
+        <Flex direction="column" gap="extra-small">
+          <Text variant="microcopy">EVIDENCE COVERAGE</Text>
+          <Heading>{brief.coverage.percent}%</Heading>
+          <StatusTag variant={brief.confidence === 'high' ? 'success' : brief.confidence === 'medium' ? 'warning' : 'default'}>{brief.confidence} confidence</StatusTag>
+        </Flex>
+        <Flex direction="column" gap="extra-small">
+          <Text variant="microcopy">EVIDENCE FRESHNESS</Text>
+          <Heading>{brief.freshness.status}</Heading>
+          <StatusTag variant={freshnessVariant(brief.freshness.status)}>{formatAgeHours(brief.freshness.ageHours)}</StatusTag>
+        </Flex>
+        <Flex direction="column" gap="extra-small">
+          <Text variant="microcopy">READINESS</Text>
+          <Heading>{assessment.score}/100</Heading>
+          <StatusTag variant={statusVariant(assessment.status)}>{assessment.status.replaceAll('_', ' ')}</StatusTag>
+        </Flex>
+      </Flex>
+
+      {nextAction && <Alert title="Recommended next action" variant={nextAction.priority === 'high' ? 'danger' : nextAction.priority === 'medium' ? 'warning' : 'info'}>
+        {nextAction.action} Owner: {nextAction.owner === 'deal_owner' ? 'Deal owner' : 'Sales manager'}. Due: {formatDate(nextAction.dueAt)}. Why: {nextAction.rationale}
+      </Alert>}
+
+      <Flex direction="row" gap="large" wrap="wrap">
+        <Flex direction="column" gap="extra-small">
+          <Text format={{ fontWeight: 'bold' }}>Top risks</Text>
+          {brief.risks.length === 0
+            ? <Text>No material deterministic risk is currently detected.</Text>
+            : brief.risks.slice(0, 3).map((item) => <Text key={item.code}>• {item.label}: {item.detail}</Text>)}
+        </Flex>
+        <Flex direction="column" gap="extra-small">
+          <Text format={{ fontWeight: 'bold' }}>Positive signals</Text>
+          {brief.positiveSignals.length === 0
+            ? <Text>No positive evidence is currently strong enough to highlight.</Text>
+            : brief.positiveSignals.slice(0, 3).map((item) => <Text key={item.code}>• {item.label}: {item.detail}</Text>)}
+        </Flex>
+      </Flex>
+
+      <Divider />
+      <Flex direction="column" gap="extra-small">
+        <Text format={{ fontWeight: 'bold' }}>What changed</Text>
+        {brief.changes.length === 0
+          ? <Text>No material deterministic change is available since the previous assessment.</Text>
+          : brief.changes.slice(0, 5).map((item) => <Text key={item.code}>• {item.label}: {item.detail}</Text>)}
+      </Flex>
+
+      <Divider />
+      <Heading>Evidence by dimension</Heading>
+      <Flex direction="row" gap="medium" wrap="wrap">
+        <Flex direction="column" gap="extra-small">
+          <Text variant="microcopy">CRM PROCESS MOMENTUM</Text>
+          <Heading>{momentum?.score === null || momentum?.score === undefined ? '—' : `${momentum.score}/100`}</Heading>
+          <StatusTag variant={momentum ? momentumVariant(momentum.band) : 'default'}>{momentum?.band.replaceAll('_', ' ') ?? 'Unavailable'}</StatusTag>
+        </Flex>
+        <Flex direction="column" gap="extra-small">
+          <Text variant="microcopy">CLOSE-DATE CREDIBILITY</Text>
+          <Heading>{closeDate?.score === null || closeDate?.score === undefined ? '—' : `${closeDate.score}/100`}</Heading>
+          <StatusTag variant={closeDate ? credibilityVariant(closeDate.status) : 'default'}>{closeDate?.status ?? 'Unavailable'}</StatusTag>
+        </Flex>
+        <Flex direction="column" gap="extra-small">
+          <Text variant="microcopy">RELATIONSHIP COVERAGE</Text>
+          <Heading>{relationship ? `${relationship.score}/100` : '—'}</Heading>
+          <StatusTag variant={relationship ? relationshipVariant(relationship.status) : 'default'}>{relationship?.status ?? 'Unavailable'}</StatusTag>
+        </Flex>
+        <Flex direction="column" gap="extra-small">
+          <Text variant="microcopy">ENGAGEMENT METADATA</Text>
+          <Heading>{engagement?.score === null || engagement?.score === undefined ? '—' : `${engagement.score}/100`}</Heading>
+          <StatusTag variant={engagement ? engagementVariant(engagement.status) : 'default'}>{engagement?.status.replaceAll('_', ' ') ?? 'Unavailable'}</StatusTag>
+        </Flex>
+        <Flex direction="column" gap="extra-small">
+          <Text variant="microcopy">COMMERCIAL INTEGRITY</Text>
+          <Heading>{commercial?.score === null || commercial?.score === undefined ? '—' : `${commercial.score}/100`}</Heading>
+          <StatusTag variant={commercial ? commercialVariant(commercial.status) : 'default'}>{commercial?.status.replaceAll('_', ' ') ?? 'Unavailable'}</StatusTag>
+        </Flex>
+        <Flex direction="column" gap="extra-small">
+          <Text variant="microcopy">STAGE READINESS</Text>
+          <Heading>{intelligence?.stageReadiness.percent ?? assessment.score}%</Heading>
+          <Text>{intelligence?.stageReadiness.satisfied ?? 0} of {intelligence?.stageReadiness.total ?? 0} configured requirements</Text>
+        </Flex>
+      </Flex>
+
+      {brief.coverage.percent < 100 && <Alert title="Evidence is incomplete" variant="warning">
+        Available dimensions: readiness{brief.coverage.momentum ? ', momentum' : ''}{brief.coverage.closeDate ? ', close date' : ''}{brief.coverage.relationship ? ', relationship coverage' : ''}{brief.coverage.engagement ? ', engagement metadata' : ''}{brief.coverage.commercial ? ', commercial integrity' : ''}. Missing, unauthorized, or bounded evidence lowers confidence; it does not imply the deal will be lost.
+      </Alert>}
+      <Alert title="How to read this brief" variant="info">
+        The Deal Brief synthesises deterministic readiness, CRM movement, close-date, structured relationship, metadata-only engagement, and optional commercial-object evidence. Attention priority is not buyer intent, sentiment, a forecast category, a win probability, or an expected-loss estimate.
+      </Alert>
+    </> : <Alert title="Refresh to build the full Deal Brief" variant="info">
+      The stored readiness assessment is available, but the unified evidence synthesis has not yet been generated for this record.
+    </Alert>}
+
+    {assessment.isWon && <Alert title="Sales-to-delivery handoff" variant={assessment.handoffStatus === 'confirmed' ? 'success' : 'warning'}>
+      {assessment.handoffStatus === 'confirmed' ? 'The handoff has been confirmed.' : 'Resolve critical gaps, then confirm that delivery has enough information to begin.'}
+    </Alert>}
+
     <Flex direction="row" gap="small" wrap="wrap">
-      <Button onClick={() => void load(true)} disabled={working}>Refresh readiness</Button>
+      <Button onClick={() => void load(true)} disabled={working}>Refresh Deal Brief</Button>
       <Button variant="secondary" onClick={() => void postAction('review')} disabled={working}>Mark reviewed</Button>
       {assessment.isWon && assessment.handoffStatus !== 'confirmed' && <Button variant="primary" onClick={() => void postAction('handoff')} disabled={working || assessment.status === 'critical'}>Confirm handoff</Button>}
     </Flex>
-    <Text variant="microcopy">Last assessed {new Date(assessment.assessedAt).toLocaleString()}.</Text>
+    <Text variant="microcopy">Assessment: {formatDate(assessment.assessedAt)} · Deal Brief generated: {formatDate(brief?.generatedAt)}</Text>
   </Flex>;
 };

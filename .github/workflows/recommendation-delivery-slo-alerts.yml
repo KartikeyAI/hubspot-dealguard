@@ -1,0 +1,114 @@
+name: Recommendation Delivery SLO Alerts
+
+on:
+  pull_request:
+    paths:
+      - 'worker/src/enterprise-access.ts'
+      - 'worker/src/recommendation-delivery-slo-types.ts'
+      - 'worker/src/recommendation-delivery-slo-model.ts'
+      - 'worker/src/recommendation-delivery-slos.ts'
+      - 'worker/src/recommendation-delivery-slo-governance.ts'
+      - 'worker/src/recommendation-delivery-slo-evaluator.ts'
+      - 'worker/src/recommendation-delivery-slo-notifications.ts'
+      - 'worker/src/recommendation-delivery-slo-route-setup.ts'
+      - 'worker/src/recommendation-delivery-analytics-model.ts'
+      - 'worker/src/recommendation-delivery-observer.ts'
+      - 'worker/src/recommendation-followup-delivery.ts'
+      - 'worker/src/recommendation-operations-model.ts'
+      - 'worker/src/maintenance.ts'
+      - 'worker/src/queueing.ts'
+      - 'worker/src/postgres.ts'
+      - 'worker/src/routes-v17.ts'
+      - 'worker/src/index.ts'
+      - 'database/migrations/0020_recommendation_routing_policies.sql'
+      - 'database/migrations/0021_recommendation_delivery_sla_analytics.sql'
+      - 'database/migrations/0022_recommendation_delivery_slo_alerts.sql'
+      - 'scripts/postgres-validate-delivery-slos.mjs'
+      - 'scripts/postgres-validate-delivery-analytics.mjs'
+      - 'scripts/postgres-validate-recommendation-operations.mjs'
+      - 'scripts/postgres-validate.mjs'
+      - 'src/app/pages/RecommendationDeliverySloPanel.tsx'
+      - 'src/app/pages/ManagerDecisionQueuePanel.tsx'
+      - 'test/recommendation-delivery-slo.test.mjs'
+      - 'test/recommendation-delivery-slo-contract.test.mjs'
+      - 'test/recommendation-delivery-slo-access-contract.test.mjs'
+      - 'test/recommendation-delivery-analytics.test.mjs'
+      - 'test/recommendation-delivery-analytics-contract.test.mjs'
+      - 'test/recommendation-routing-policy.test.mjs'
+      - 'test/recommendation-routing-policy-contract.test.mjs'
+      - 'docs/RECOMMENDATION_DELIVERY_SLO_ALERTS.md'
+      - 'package.json'
+      - '.github/workflows/recommendation-delivery-slo-alerts.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recommendation-delivery-slo-alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: dealguard
+          POSTGRES_PASSWORD: dealguard-test-password
+          POSTGRES_DB: dealguard_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U dealguard -d dealguard_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
+      DEALGUARD_CUTOVER_TEST_DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Create non-secret CI environment file
+        run: touch .env
+      - name: Install dependencies
+        run: |
+          npm install --ignore-scripts --silent
+          npm install --ignore-scripts --silent --prefix src/app/cards
+          npm install --ignore-scripts --silent --prefix src/app/settings
+          npm install --ignore-scripts --silent --prefix src/app/pages
+      - name: Typecheck Worker and HubSpot product surfaces
+        run: |
+          npm run typecheck
+          npm run typecheck --prefix src/app/cards
+          npm run typecheck --prefix src/app/settings
+          npm run typecheck --prefix src/app/pages
+      - name: Build Worker
+        run: npm run build
+      - name: Apply PostgreSQL migrations
+        id: migrations
+        continue-on-error: true
+        run: npm run db:migrate > recommendation-delivery-slo-migrations.log 2>&1
+      - name: Upload migration diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-delivery-slo-migrations-${{ github.sha }}
+          path: recommendation-delivery-slo-migrations.log
+          retention-days: 7
+      - name: Enforce migrations
+        if: steps.migrations.outcome == 'failure'
+        run: cat recommendation-delivery-slo-migrations.log && exit 1
+      - name: Validate PostgreSQL schema
+        run: |
+          npm run db:migrate:check
+          npm run db:validate
+          npm run db:validate:delivery-slos
+      - name: Run delivery SLO behavior, access and contract tests
+        run: node --test test/recommendation-delivery-slo.test.mjs test/recommendation-delivery-slo-contract.test.mjs test/recommendation-delivery-slo-access-contract.test.mjs
+      - name: Run delivery analytics and routing-policy regressions
+        run: |
+          node --test test/recommendation-delivery-analytics.test.mjs test/recommendation-delivery-analytics-contract.test.mjs
+          node --test test/recommendation-routing-policy.test.mjs test/recommendation-routing-policy-contract.test.mjs
+      - name: Run full automated suite
+        run: npm test

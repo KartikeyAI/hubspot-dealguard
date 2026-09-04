@@ -4,9 +4,10 @@ import { exportAnalyticsCsv } from './enterprise-analytics-v2.js';
 import { exportPolicyPackage } from './enterprise-policy.js';
 import { AppError } from './errors.js';
 import { downloadDataExport, exportImmutableAudit } from './compliance.js';
+import { exportRecommendationEvidence } from './recommendation-evidence-export.js';
 import type { Env, RequestIdentity } from './types.js';
 
-export type SecureDownloadKind = 'policy' | 'analytics' | 'audit' | 'data_export';
+export type SecureDownloadKind = 'policy' | 'analytics' | 'audit' | 'data_export' | 'recommendation_evidence';
 
 interface TokenRow {
   token_hash: string;
@@ -26,15 +27,22 @@ const PERMISSION_BY_KIND: Record<SecureDownloadKind, string> = {
   analytics: 'analytics.export',
   audit: 'audit.export',
   data_export: 'data_export.manage',
+  recommendation_evidence: 'analytics.export',
 };
 
 function sanitizeParams(value: unknown): Record<string, string> {
   const input = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  const allowed = ['days', 'audience', 'pipelineId', 'stageId', 'ownerId', 'teamId', 'regionCode', 'action', 'resourceType', 'actorEmail', 'source', 'from', 'to', 'format'];
+  const allowed = [
+    'days', 'audience', 'pipelineId', 'stageId', 'ownerId', 'teamId', 'regionCode',
+    'action', 'resourceType', 'actorEmail', 'source', 'from', 'to', 'format',
+    'status', 'priority', 'overdueOnly', 'recommendationCode',
+  ];
   const result: Record<string, string> = {};
   for (const key of allowed) {
     const item = input[key];
-    if (typeof item === 'string' || typeof item === 'number') result[key] = String(item).slice(0, 512);
+    if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
+      result[key] = String(item).slice(0, 512);
+    }
   }
   return result;
 }
@@ -45,8 +53,9 @@ export async function createSecureDownload(
   value: unknown,
 ): Promise<{ url: string; expiresAt: string }> {
   const input = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  const kind = ['policy', 'analytics', 'audit', 'data_export'].includes(String(input.kind))
-    ? String(input.kind) as SecureDownloadKind
+  const supported: SecureDownloadKind[] = ['policy', 'analytics', 'audit', 'data_export', 'recommendation_evidence'];
+  const kind = supported.includes(input.kind as SecureDownloadKind)
+    ? input.kind as SecureDownloadKind
     : null;
   if (!kind) throw new AppError(400, 'secure_download_kind_invalid', 'Choose a supported export type.');
   await requireEnterprisePermission(env, identity, PERMISSION_BY_KIND[kind]);
@@ -55,6 +64,9 @@ export async function createSecureDownload(
     throw new AppError(400, 'secure_download_resource_required', 'This export requires a resource ID.');
   }
   const format = typeof input.format === 'string' ? input.format.slice(0, 20) : null;
+  if (kind === 'recommendation_evidence' && format && !['csv', 'json'].includes(format)) {
+    throw new AppError(400, 'recommendation_export_format_invalid', 'Recommendation evidence exports support CSV or JSON.');
+  }
   const params = sanitizeParams(input.params);
   if (format) params.format = format;
   const token = randomToken();
@@ -98,6 +110,7 @@ export async function consumeSecureDownload(env: Env, token: string): Promise<Re
   if (row.kind === 'analytics') return exportAnalyticsCsv(env, identity, url);
   if (row.kind === 'audit') return exportImmutableAudit(env, identity, url);
   if (row.kind === 'data_export') return downloadDataExport(env, identity, row.resource_id!);
+  if (row.kind === 'recommendation_evidence') return exportRecommendationEvidence(env, identity, url);
   throw new AppError(400, 'secure_download_kind_invalid', 'The secure download type is unsupported.');
 }
 

@@ -1,0 +1,99 @@
+name: Recommendation Delivery Analytics
+
+on:
+  pull_request:
+    paths:
+      - 'worker/src/recommendation-delivery-analytics-types.ts'
+      - 'worker/src/recommendation-delivery-analytics-model.ts'
+      - 'worker/src/recommendation-delivery-analytics.ts'
+      - 'worker/src/recommendation-delivery-observer.ts'
+      - 'worker/src/recommendation-routing-policy-runner.ts'
+      - 'worker/src/recommendation-routing-policy-model.ts'
+      - 'worker/src/recommendation-followup-delivery.ts'
+      - 'worker/src/maintenance.ts'
+      - 'worker/src/routes-v15.ts'
+      - 'worker/src/routes-v16.ts'
+      - 'worker/src/index.ts'
+      - 'worker/src/postgres.ts'
+      - 'database/migrations/0019_recommendation_operations.sql'
+      - 'database/migrations/0020_recommendation_routing_policies.sql'
+      - 'database/migrations/0021_recommendation_delivery_sla_analytics.sql'
+      - 'scripts/postgres-migrate.mjs'
+      - 'scripts/postgres-validate.mjs'
+      - 'scripts/postgres-validate-recommendation-operations.mjs'
+      - 'scripts/postgres-validate-delivery-analytics.mjs'
+      - 'src/app/pages/RecommendationDeliveryAnalyticsPanel.tsx'
+      - 'src/app/pages/ManagerDecisionQueuePanel.tsx'
+      - 'test/recommendation-delivery-analytics.test.mjs'
+      - 'test/recommendation-delivery-analytics-contract.test.mjs'
+      - 'docs/RECOMMENDATION_DELIVERY_SLA_ANALYTICS.md'
+      - 'package.json'
+      - '.github/workflows/recommendation-delivery-analytics.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recommendation-delivery-analytics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: dealguard
+          POSTGRES_PASSWORD: dealguard-test-password
+          POSTGRES_DB: dealguard_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U dealguard -d dealguard_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
+      DEALGUARD_CUTOVER_TEST_DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Create non-secret CI environment file
+        run: touch .env
+      - name: Install dependencies
+        run: |
+          npm install --ignore-scripts --silent
+          npm install --ignore-scripts --silent --prefix src/app/cards
+          npm install --ignore-scripts --silent --prefix src/app/settings
+          npm install --ignore-scripts --silent --prefix src/app/pages
+      - name: Typecheck Worker and HubSpot product surfaces
+        run: |
+          npm run typecheck
+          npm run typecheck:ui
+      - name: Build Worker contracts
+        run: npm run build
+      - name: Apply canonical PostgreSQL migrations
+        id: migrations
+        continue-on-error: true
+        run: npm run db:migrate > recommendation-delivery-analytics-migrations.log 2>&1
+      - name: Upload migration diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-delivery-analytics-migrations-${{ github.sha }}
+          path: recommendation-delivery-analytics-migrations.log
+          retention-days: 7
+      - name: Enforce migrations
+        if: steps.migrations.outcome == 'failure'
+        run: cat recommendation-delivery-analytics-migrations.log && exit 1
+      - name: Validate PostgreSQL schema
+        run: |
+          npm run db:migrate:check
+          npm run db:validate
+      - name: Run delivery and SLA analytics tests
+        run: node --test test/recommendation-delivery-analytics.test.mjs test/recommendation-delivery-analytics-contract.test.mjs
+      - name: Run recommendation routing regression tests
+        run: node --test test/recommendation-operations.test.mjs test/recommendation-operations-contract.test.mjs test/recommendation-routing-policy.test.mjs test/recommendation-routing-policy-contract.test.mjs
+      - name: Run full automated suite
+        run: npm test

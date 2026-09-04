@@ -1,0 +1,26 @@
+name: Temporary source snapshot
+
+on:
+  push:
+    branches:
+      - release/dealguard-intelligence-convergence
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive exact source tree
+        run: git archive --format=tar.gz --output=exact-source.tar.gz HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exact-source-${{ github.sha }}
+          path: exact-source.tar.gz
+          if-no-files-found: error
+          retention-days: 1

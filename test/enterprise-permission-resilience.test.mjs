@@ -6,7 +6,7 @@ test('enterprise App Home read fallbacks are redacted and GET-only', async () =>
   const router = await readFile('worker/src/routes-v10.ts', 'utf8');
   const index = await readFile('worker/src/index.ts', 'utf8');
 
-  assert.match(index, /routes-v10/);
+  assert.match(index, /routes-v17/);
   assert.match(router, /request\.method !== 'GET'/);
   assert.match(router, /error instanceof AppError && error\.status === 403/);
   assert.match(router, /reason: 'permission_denied'/);

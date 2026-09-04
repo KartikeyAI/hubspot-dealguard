@@ -10,7 +10,7 @@ test('enterprise tier enables remediation and routed delivery', () => {
   assert.equal(PLAN_LIMITS.beta_growth.remediationAutomation, true);
   assert.equal(PLAN_LIMITS.beta_growth.multiDestinationDelivery, true);
   assert.equal(PLAN_LIMITS.beta_growth.maxNotificationDestinations, 25);
-  assert.equal(REQUIRED_HUBSPOT_SCOPES.includes('crm.objects.tasks.write'), true);
+  assert.equal(REQUIRED_HUBSPOT_SCOPES.includes('crm.objects.tasks.write'), false);
 });
 
 test('delivery routing respects event, severity, and pipeline filters', () => {

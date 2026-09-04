@@ -44,8 +44,9 @@ export async function executeWorkflowAction(env: Env, value: unknown): Promise<R
   const repository = new Repository(env);
   const tenant = await repository.getTenant(parsed.portalId);
   if (tenant.plan === 'free') throw new AppError(403, 'growth_plan_required', 'The DealGuard workflow action requires DealGuard Growth.');
-  const assessment = await assessDealForPortal(env, parsed.portalId, parsed.dealId, 'workflow', parsed.notifySlack);
-  if (!assessment) throw new AppError(500, 'assessment_not_saved', 'DealGuard could not persist the workflow assessment.');
+  const assessmentResult = await assessDealForPortal(env, parsed.portalId, parsed.dealId, 'workflow', parsed.notifySlack);
+  if (!assessmentResult) throw new AppError(500, 'assessment_not_saved', 'DealGuard could not persist the workflow assessment.');
+  const assessment = assessmentResult as unknown as DealAssessment & { handoffStatus?: string | null };
   const outputFields = workflowOutputFields(assessment);
   await repository.audit(parsed.portalId, null, null, 'workflow.assessment_completed', {
     dealId: parsed.dealId,

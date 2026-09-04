@@ -1,0 +1,11 @@
+{
+  "uid": "dealguard_commercial_integrity_card",
+  "type": "card",
+  "config": {
+    "name": "DealGuard — Commercial Integrity",
+    "description": "Optional quote and line-item readiness, amount alignment, proposal state, discount review, and commercial deadlines.",
+    "location": "crm.record.tab",
+    "entrypoint": "/app/cards/DealGuardCommercialCard.tsx",
+    "objectTypes": ["DEALS"]
+  }
+}

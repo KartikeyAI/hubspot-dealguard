@@ -1,3 +1,6 @@
+import { observeRecommendationDeliveryControls } from './recommendation-delivery-observer.js';
+import { evaluateRecommendationDeliverySlos } from './recommendation-delivery-slo-evaluator.js';
+import { evaluateRecommendationRoutingPolicies } from './recommendation-routing-policy-runner.js';
 import type { Env } from './types.js';
 
 export async function runMaintenance(env: Env): Promise<void> {
@@ -10,4 +13,7 @@ export async function runMaintenance(env: Env): Promise<void> {
     env.DB.prepare(`DELETE FROM inbound_events WHERE created_at < ?`).bind(inboundCutoff),
     env.DB.prepare(`DELETE FROM notification_events WHERE created_at < ?`).bind(notificationCutoff),
   ]);
+  await evaluateRecommendationRoutingPolicies(env);
+  await observeRecommendationDeliveryControls(env);
+  await evaluateRecommendationDeliverySlos(env);
 }

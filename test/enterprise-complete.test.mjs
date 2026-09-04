@@ -220,7 +220,7 @@ test('release source uses hardened Dodo, approval, dimension, simulation and que
   assert.match(planChange, /on_payment_failure/);
   assert.match(scheduler, /provider = 'manual'/);
   assert.doesNotMatch(scheduler, /provider = 'dodo'/);
-  assert.match(index, /routes-v10/);
+  assert.match(index, /routes-v17/);
   assert.match(index, /async queue\(/);
   assert.match(index, /processQueueBatch/);
   assert.doesNotMatch(index, /applyManualScheduledPlanChanges|retryAtomicUsageReports/);

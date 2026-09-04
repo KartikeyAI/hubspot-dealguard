@@ -1,12 +1,8 @@
+import { enrichStoredAssessmentForPortal } from './assessment-service.js';
 import { operationalPermissionsForRole } from './authorization.js';
-import { buildDealIntelligence, previousDealHistory } from './deal-intelligence.js';
 import { AppError } from './errors.js';
 import { governanceContext } from './governance.js';
-import { HubSpotClient } from './hubspot.js';
 import { json } from './http.js';
-import { policyDimensionPropertyNames } from './policy-dimensions.js';
-import { resolveSegmentedRulesForDeal } from './policy-runtime.js';
-import { Repository } from './repository.js';
 import { route as routeV9 } from './routes-v9.js';
 import { validateHubSpotRequest } from './signature.js';
 import type { Env } from './types.js';
@@ -46,19 +42,8 @@ async function commercialAccessFallback(request: Request, env: Env): Promise<Rec
 
 async function enrichedCachedAssessment(request: Request, env: Env, dealId: string): Promise<Response | null> {
   const identity = await validateHubSpotRequest(request, env);
-  const repository = new Repository(env);
-  const cached = await repository.getAssessment(identity.portalId, dealId);
-  if (!cached || Date.now() - Date.parse(cached.assessedAt) >= 15 * 60_000) return null;
-  const client = await HubSpotClient.forPortal(env, identity.portalId);
-  const dimensionProperties = await policyDimensionPropertyNames(env, identity.portalId);
-  const deal = await client.getDeal(dealId, undefined, dimensionProperties);
-  const policy = await resolveSegmentedRulesForDeal(env, identity.portalId, client.settings.rules, deal);
-  const previous = await previousDealHistory(env, identity.portalId, dealId, cached.assessedAt);
-  return json({
-    ...cached,
-    intelligence: buildDealIntelligence(deal, policy.rules, cached, previous),
-    policy: { id: policy.policyId, segmentIds: policy.segmentIds },
-  });
+  const enriched = await enrichStoredAssessmentForPortal(env, identity.portalId, dealId);
+  return enriched ? json(enriched) : null;
 }
 
 export async function route(request: Request, env: Env, ctx: { waitUntil(promise: Promise<unknown>): void }): Promise<Response> {

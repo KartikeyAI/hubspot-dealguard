@@ -1,0 +1,24 @@
+name: Self-hosted runner probe
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/self-hosted-runner-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Confirm runner allocation
+        run: |
+          echo "runner allocated"
+          echo "name=${RUNNER_NAME:-unknown}"
+          echo "os=${RUNNER_OS:-unknown}"
+          echo "arch=${RUNNER_ARCH:-unknown}"
+          node --version || true
+          docker --version || true

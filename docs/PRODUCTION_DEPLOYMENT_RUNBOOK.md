@@ -262,6 +262,7 @@ Required evidence:
 - tenant and foreign-key validation;
 - self-referential policy history validation;
 - encrypted Tigris backup reference;
+- independent SHA-256 digest for the encrypted object;
 - isolated restore result.
 
 ### 4.3 Deploy staging
@@ -271,7 +272,8 @@ Run **Controlled deploy** with:
 ```text
 target=staging
 release_sha=<exact production SHA>
-backup_reference=<verified staging backup key>
+backup_reference=<verified staging encrypted backup key>
+backup_sha256=<independently recorded 64-character digest>
 acceptance_profile=full
 portal_id=<staging acceptance portal>
 user_email=<staging acceptance admin>
@@ -319,7 +321,7 @@ This phase applies to the first migration from the previous production persisten
 9. Verify object metadata and checksum:
 
 ```bash
-npm run storage:backup:head -- backups/production/<date>/<object>.enc
+npm run storage:backup:head -- backups/production/<date>/<object>.enc <expected-sha256>
 ```
 
 10. Restore a protected copy into an isolated branch and validate it.
@@ -357,6 +359,7 @@ In GitHub Actions, run **Controlled deploy** with:
 target=production
 release_sha=<exact release SHA>
 backup_reference=backups/production/<date>/<verified-object>.enc
+backup_sha256=<independently recorded 64-character digest>
 staging_run_id=<successful full-profile staging run ID>
 acceptance_profile=full
 portal_id=<production acceptance portal>

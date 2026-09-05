@@ -298,8 +298,8 @@ Use a dedicated live-mode billing test customer and the smallest approved transa
 3. Download it through the approved access path.
 4. Confirm expired or replayed links fail.
 5. Create an encrypted production backup.
-6. Verify the backup object with `storage:backup:head`.
-7. Download it with checksum verification.
+6. Verify the backup object with `storage:backup:head`, supplying the independently recorded SHA-256.
+7. Download the exact object with the same expected checksum and verify the downloaded bytes.
 8. Restore into an isolated Neon branch.
 9. Run `db:migrate:check` and `db:validate`.
 10. Verify tenant counts, subscriptions, policy history, remediation, audit continuity, and object references.
@@ -359,7 +359,7 @@ The final acceptance package must include:
 - workflow and webhook evidence;
 - queue and dead-letter evidence;
 - Dodo lifecycle evidence;
-- Tigris upload and restore evidence;
+- Tigris encrypted-object key, independent SHA-256, download verification, and restore evidence;
 - audit-chain and legal-hold evidence;
 - performance baseline;
 - list of skipped optional tests with reasons;

@@ -14,7 +14,11 @@ on:
         required: true
         type: string
       backup_reference:
-        description: Verified Tigris backup object key created before this change
+        description: Verified encrypted Tigris backup object key created before this change
+        required: true
+        type: string
+      backup_sha256:
+        description: Independent SHA-256 digest of the encrypted backup object
         required: true
         type: string
       staging_run_id:
@@ -83,6 +87,7 @@ jobs:
       RELEASE_SHA: ${{ inputs.release_sha }}
       RELEASE_INCLUDE_HUBSPOT_UPLOAD: 'false'
       BACKUP_REFERENCE: ${{ inputs.backup_reference }}
+      BACKUP_SHA256: ${{ inputs.backup_sha256 }}
       APP_BASE_URL: ${{ vars.APP_BASE_URL }}
       HUBSPOT_APP_ID: ${{ vars.HUBSPOT_APP_ID }}
       HUBSPOT_CLIENT_ID: ${{ vars.HUBSPOT_CLIENT_ID }}
@@ -130,6 +135,10 @@ jobs:
         run: |
           [[ "$RELEASE_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'release_sha must be a full commit SHA'; exit 1; }
           [[ "$BACKUP_REFERENCE" =~ ^backups/[a-z0-9_-]+/[A-Za-z0-9._/-]+$ ]] || { echo 'backup_reference is required and must be a Tigris backups/... object key'; exit 1; }
+          expected_backup_prefix="backups/${RELEASE_TARGET}/"
+          [[ "$BACKUP_REFERENCE" == "${expected_backup_prefix}"* ]] || { echo "backup_reference must use ${expected_backup_prefix}"; exit 1; }
+          [[ "$BACKUP_REFERENCE" == *.enc ]] || { echo 'backup_reference must identify an encrypted .enc object'; exit 1; }
+          [[ "$BACKUP_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'backup_sha256 must be a 64-character SHA-256 digest'; exit 1; }
           [[ "${{ inputs.portal_id }}" =~ ^[0-9]+$ ]] || { echo 'portal_id must contain only digits'; exit 1; }
           if [ "$RELEASE_TARGET" = production ]; then
             [ -n "${{ inputs.staging_run_id }}" ] || { echo 'staging_run_id is required for production promotion'; exit 1; }
@@ -183,7 +192,7 @@ jobs:
           npm run release:verify-staging -- --input .release/staging-evidence
 
       - name: Verify encrypted pre-change backup
-        run: npm run storage:backup:head -- "$BACKUP_REFERENCE"
+        run: npm run storage:backup:head -- "$BACKUP_REFERENCE" "$BACKUP_SHA256"
 
       - name: Apply reviewed PostgreSQL migrations
         run: npm run db:migrate
@@ -240,6 +249,7 @@ jobs:
           console.log(`- Public smoke: **${record.smoke?.summary?.failed === 0 ? 'passed' : 'failed'}**`);
           console.log(`- Signed acceptance: **${record.acceptance?.summary?.failed === 0 ? 'passed' : 'failed'}**`);
           console.log(`- Backup reference recorded: **${Boolean(record.backupReference)}**`);
+          console.log(`- Backup SHA-256 recorded: **${Boolean(record.backupSha256)}**`);
           NODE
           fi
 

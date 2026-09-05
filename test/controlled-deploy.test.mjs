@@ -38,7 +38,7 @@ function deploymentRecord(extraEnvironment = {}) {
       RELEASE_TARGET: 'staging',
       RELEASE_SHA: commit,
       BACKUP_REFERENCE: `backups/staging/dealguard-${version}.sql.enc`,
-      GITHUB_REPOSITORY: 'rokadhq/hubspot-dealguard',
+      GITHUB_REPOSITORY: 'KartikeyAI/hubspot-dealguard',
       GITHUB_WORKFLOW: 'Controlled deploy',
       GITHUB_RUN_ID: '123',
       ...extraEnvironment,
@@ -128,6 +128,9 @@ test('controlled deployment workflow retains production release invariants', asy
   assert.match(workflow, /gh run download/);
   assert.match(workflow, /release:verify-staging/);
   assert.match(workflow, /storage:backup:head/);
+  assert.match(workflow, /- name: Create non-secret CI environment file\s+run: touch \.env/);
+  assert.ok(workflow.indexOf('run: touch .env') < workflow.indexOf('run: npm run check'));
+  assert.ok(workflow.indexOf('run: touch .env') < workflow.indexOf('run: npm run db:migrate'));
   assert.match(workflow, /npm run db:migrate/);
   assert.match(workflow, /npm run db:migrate:check/);
   assert.match(workflow, /npm run db:validate/);

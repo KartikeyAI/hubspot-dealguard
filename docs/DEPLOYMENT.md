@@ -174,10 +174,11 @@ npm run storage:backup:upload -- ./artifacts/dealguard-2.1.0.sql.enc \
   backups/production/2026-07-18/dealguard-2.1.0.sql.enc
 
 npm run storage:backup:head -- \
-  backups/production/2026-07-18/dealguard-2.1.0.sql.enc
+  backups/production/2026-07-18/dealguard-2.1.0.sql.enc \
+  <sha256-from-.release/backup-reference.json>
 ```
 
-Before production, download and restore one protected backup into an isolated Neon branch and record the restore test.
+Controlled deployment requires both the target-specific encrypted object key and the independent SHA-256 recorded when the object was created. Before production, download that exact object with checksum verification, restore it into an isolated Neon branch, and record the restore test.
 
 ## Controlled deploy
 

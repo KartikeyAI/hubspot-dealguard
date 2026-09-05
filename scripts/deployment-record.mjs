@@ -19,12 +19,18 @@ async function json(path) {
 }
 
 async function optionalJson(path) {
-  try { return await json(path); } catch { return null; }
+  try {
+    return await json(path);
+  } catch {
+    return null;
+  }
 }
 
 async function findAcceptance() {
   try {
-    const files = (await readdir(acceptanceDir)).filter((name) => name.endsWith('.json')).sort();
+    const files = (await readdir(acceptanceDir))
+      .filter((name) => name.endsWith('.json'))
+      .sort();
     return files.length ? json(resolve(acceptanceDir, files.at(-1))) : null;
   } catch {
     return null;
@@ -39,9 +45,10 @@ const packageJson = await json(resolve(root, 'package.json'));
 const target = process.env.RELEASE_TARGET === 'production' ? 'production' : 'staging';
 const commit = String(process.env.RELEASE_SHA ?? process.env.GITHUB_SHA ?? '').trim();
 const backupReference = String(process.env.BACKUP_REFERENCE ?? '').trim();
+const backupSha256 = String(process.env.BACKUP_SHA256 ?? '').trim().toLowerCase();
 
 const record = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   generatedAt: new Date().toISOString(),
   repository: process.env.GITHUB_REPOSITORY ?? null,
   workflow: process.env.GITHUB_WORKFLOW ?? null,
@@ -50,6 +57,7 @@ const record = {
   commit,
   version: packageJson.version,
   backupReference,
+  backupSha256,
   preflight: preflight.summary,
   health: {
     status: health.status ?? health.ok ?? null,
@@ -69,15 +77,41 @@ const record = {
 };
 
 const failures = [];
-if (!/^[0-9a-f]{40}$/i.test(record.commit)) failures.push('release commit is not a full SHA');
-if (!record.backupReference) failures.push('backup reference is missing');
+if (!/^[0-9a-f]{40}$/i.test(record.commit)) {
+  failures.push('release commit is not a full SHA');
+}
+if (!record.backupReference) {
+  failures.push('backup reference is missing');
+} else {
+  if (!/^backups\/[a-z0-9_-]+\/[A-Za-z0-9._/-]+\.enc$/.test(record.backupReference)) {
+    failures.push('backup reference is not an encrypted Tigris object key');
+  }
+  if (!record.backupReference.startsWith(`backups/${target}/`)) {
+    failures.push('backup reference does not match deployment target');
+  }
+}
+if (!/^[0-9a-f]{64}$/.test(record.backupSha256)) {
+  failures.push('backup SHA-256 is missing or invalid');
+}
 if (record.preflight?.failed !== 0) failures.push('release preflight did not pass');
-if (record.health.status !== 'ok' || record.health.service !== 'dealguard-api') failures.push('deployed health identity is invalid');
-if (record.health.version !== record.version) failures.push('deployed health version does not match package version');
-if (!record.smoke || Number(record.smoke.summary?.failed ?? 1) !== 0) failures.push('public deployment smoke did not pass');
-if (record.smoke?.expectedVersion !== record.version) failures.push('public smoke version does not match package version');
-if (!record.acceptance || Number(record.acceptance.summary?.failed ?? 1) !== 0) failures.push('signed acceptance did not pass');
-if (target === 'production' && record.acceptance?.profile !== 'full') failures.push('production acceptance profile is not full');
+if (record.health.status !== 'ok' || record.health.service !== 'dealguard-api') {
+  failures.push('deployed health identity is invalid');
+}
+if (record.health.version !== record.version) {
+  failures.push('deployed health version does not match package version');
+}
+if (!record.smoke || Number(record.smoke.summary?.failed ?? 1) !== 0) {
+  failures.push('public deployment smoke did not pass');
+}
+if (record.smoke?.expectedVersion !== record.version) {
+  failures.push('public smoke version does not match package version');
+}
+if (!record.acceptance || Number(record.acceptance.summary?.failed ?? 1) !== 0) {
+  failures.push('signed acceptance did not pass');
+}
+if (target === 'production' && record.acceptance?.profile !== 'full') {
+  failures.push('production acceptance profile is not full');
+}
 
 record.result = failures.length ? 'failed' : 'passed';
 record.failures = failures;

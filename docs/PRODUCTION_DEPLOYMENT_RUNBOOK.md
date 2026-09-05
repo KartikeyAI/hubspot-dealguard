@@ -1,6 +1,6 @@
 # DealGuard 2.1.0 production deployment runbook
 
-This is the authoritative operator procedure for the first production deployment of DealGuard on Neon PostgreSQL, Cloudflare Hyperdrive, Tigris, and Cloudflare Queues.
+This is the authoritative operator procedure for the first production deployment of DealGuard on Cloudflare Workers with direct TLS-enforced Neon PostgreSQL connectivity, Tigris, and Cloudflare Queues.
 
 The production release is not a single `wrangler deploy` command. It is a controlled sequence with immutable source, backup verification, data reconciliation, HubSpot platform deployment, signed acceptance, evidence retention, and an explicit go/no-go decision.
 
@@ -64,7 +64,6 @@ Configure these separately for staging and production:
 APP_BASE_URL
 HUBSPOT_APP_ID
 HUBSPOT_CLIENT_ID
-HYPERDRIVE_CONFIG_ID
 TIGRIS_ENDPOINT
 TIGRIS_REGION
 TIGRIS_BUCKET
@@ -110,9 +109,9 @@ DODO_WEBHOOK_SECRET
 Rules:
 
 - use independent staging and production credentials;
-- use a direct Neon connection only for migration and validation jobs;
-- runtime database traffic must use Hyperdrive;
-- grant the Cloudflare token only the Worker, Hyperdrive, Queue, route, and related permissions required for this application;
+- use separate TLS-enforced direct Neon URLs and least-privilege roles for migration and runtime access;
+- provide the runtime Neon URL only through the protected Worker secret binding;
+- grant the Cloudflare token only the Worker, Queue, route, and related permissions required for this application;
 - grant Tigris credentials only the DealGuard production bucket;
 - never store populated secrets in repository files or deployment artifacts.
 
@@ -123,7 +122,7 @@ Rules:
 1. Create the production Neon project or protected production branch.
 2. Select the region closest to the primary Cloudflare and customer traffic profile.
 3. Create a migration role with schema-change permission.
-4. Create or verify the runtime role used behind Hyperdrive.
+4. Create or verify the least-privilege runtime role used by the Worker.
 5. Require TLS.
 6. Record the project, branch, database, and region without recording credentials.
 7. Ensure the target application tables are empty before the first data import.
@@ -138,15 +137,15 @@ NEON_DATABASE_URL="$PRODUCTION_NEON_URL" npm run db:validate
 
 Expected result: migrations `0001` through `0014` are applied, checksums match, and all schema and tenant checks pass.
 
-### 2.2 Cloudflare Hyperdrive
+### 2.2 Direct Worker-to-Neon connectivity
 
-1. Create one production Hyperdrive configuration.
-2. Point it to the production Neon runtime connection.
-3. Enable the required TLS mode.
-4. Store its 32-character ID as `HYPERDRIVE_CONFIG_ID` in `dealguard-production`.
-5. Confirm the staging environment uses a different Hyperdrive ID.
+1. Create a least-privilege production runtime role distinct from the migration role.
+2. Use the Neon pooled endpoint appropriate for serverless Worker traffic.
+3. Require TLS for every connection.
+4. Store the complete runtime URL only as the protected `NEON_DATABASE_URL` environment secret.
+5. Confirm staging uses a different Neon branch, runtime role, and URL.
 
-Do not repoint an existing production Hyperdrive configuration during an active release without an approved incident or change record.
+Do not repoint the production Worker database secret during an active release without an approved incident or change record.
 
 ### 2.3 Tigris
 
@@ -443,7 +442,7 @@ Reopen in this order:
 For at least the agreed rollback window, monitor:
 
 - Worker error rate and latency;
-- Hyperdrive connection and transaction failures;
+- Worker-to-Neon connection and transaction failures;
 - Neon CPU, storage, connections, and slow queries;
 - queue depth, age, retries, and dead letters;
 - Tigris errors;
@@ -498,7 +497,7 @@ After reopening writes:
 3. determine how post-cutover writes will be reconciled;
 4. restore into an isolated Neon branch first;
 5. validate tenant, subscription, policy, remediation, audit, and object-reference state;
-6. switch Hyperdrive only through an approved incident change;
+6. update the protected Worker database secret only through an approved incident change;
 7. deploy the compatible Worker version;
 8. run public smoke and read-only signed acceptance before reopening writes.
 

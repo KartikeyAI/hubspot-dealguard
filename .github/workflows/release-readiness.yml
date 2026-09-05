@@ -1,6 +1,9 @@
 name: Release readiness
 
 on:
+  push:
+    branches:
+      - ops/staging-readiness-run
   workflow_dispatch:
     inputs:
       target:
@@ -19,17 +22,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: dealguard-release-readiness-${{ inputs.target }}
+  group: dealguard-release-readiness-${{ inputs.target || 'staging' }}
   cancel-in-progress: false
 
 jobs:
   readiness:
     runs-on: ubuntu-latest
-    environment: dealguard-${{ inputs.target }}
+    environment: dealguard-${{ inputs.target || 'staging' }}
     timeout-minutes: 35
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: dealguard
           POSTGRES_PASSWORD: dealguard-readiness-password
@@ -43,8 +46,8 @@ jobs:
           --health-retries 20
     env:
       DATABASE_URL: postgresql://dealguard:dealguard-readiness-password@127.0.0.1:5432/dealguard_readiness
-      RELEASE_TARGET: ${{ inputs.target }}
-      RELEASE_INCLUDE_HUBSPOT_UPLOAD: ${{ inputs.include_hubspot_upload }}
+      RELEASE_TARGET: ${{ inputs.target || 'staging' }}
+      RELEASE_INCLUDE_HUBSPOT_UPLOAD: ${{ inputs.include_hubspot_upload || false }}
       APP_BASE_URL: ${{ vars.APP_BASE_URL }}
       HUBSPOT_APP_ID: ${{ vars.HUBSPOT_APP_ID }}
       HUBSPOT_CLIENT_ID: ${{ vars.HUBSPOT_CLIENT_ID }}
@@ -141,7 +144,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dealguard-release-readiness-${{ inputs.target }}-${{ github.run_id }}
+          name: dealguard-release-readiness-${{ inputs.target || 'staging' }}-${{ github.run_id }}
           path: |
             .release/preflight.json
             .release/worker-checksums.txt

@@ -29,7 +29,7 @@ jobs:
     timeout-minutes: 35
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: dealguard
           POSTGRES_PASSWORD: dealguard-readiness-password
@@ -84,6 +84,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Create non-secret CI environment file
+        run: touch .env
 
       - name: Install dependencies
         run: |

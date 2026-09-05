@@ -1,6 +1,6 @@
 # DealGuard 2.1.0 deployment and release operations
 
-DealGuard runs on Cloudflare Workers with Neon PostgreSQL through Cloudflare Hyperdrive, Tigris S3-compatible object storage, Cloudflare Queues, HubSpot developer platform `2026.03`, Dodo Payments, Resend, Slack, and customer-configured delivery or SIEM endpoints.
+DealGuard runs on Cloudflare Workers with direct TLS-enforced Neon PostgreSQL connectivity, Tigris S3-compatible object storage, Cloudflare Queues, HubSpot developer platform `2026.03`, Dodo Payments, Resend, Slack, and customer-configured delivery or SIEM endpoints.
 
 For the first production deployment, follow these documents in order:
 
@@ -28,7 +28,6 @@ Configure separately for staging and production:
 APP_BASE_URL
 HUBSPOT_APP_ID
 HUBSPOT_CLIENT_ID
-HYPERDRIVE_CONFIG_ID
 TIGRIS_ENDPOINT
 TIGRIS_REGION
 TIGRIS_BUCKET
@@ -71,23 +70,22 @@ DODO_API_KEY
 DODO_WEBHOOK_SECRET
 ```
 
-`NEON_DATABASE_URL` is used by protected migration and validation jobs. Runtime database traffic uses the environment-specific Hyperdrive binding.
+`NEON_DATABASE_URL` is used by protected migration and validation jobs and by the Worker runtime through the Neon serverless driver. Store it only as an environment secret, require TLS, and use separate staging and production branches and least-privilege roles.
 
 ## Infrastructure isolation
 
 Provision independent staging and production resources:
 
-1. Neon database or branch;
-2. Cloudflare Hyperdrive configuration;
-3. Tigris bucket and scoped credentials;
-4. scan queue;
-5. delivery queue;
-6. maintenance queue;
-7. dead-letter queue;
-8. Worker custom domain;
-9. scheduled trigger.
+1. Neon database branch and least-privilege roles;
+2. Tigris bucket and scoped credentials;
+3. scan queue;
+4. delivery queue;
+5. maintenance queue;
+6. dead-letter queue;
+7. Worker custom domain;
+8. scheduled trigger.
 
-Never point staging and production at the same database, Hyperdrive configuration, bucket, queue, HubSpot app, or Dodo environment.
+Never point staging and production at the same database branch, bucket, queue, HubSpot app, or Dodo environment.
 
 ## Repository gate
 
@@ -145,7 +143,7 @@ It validates:
 - protected configuration presence and format;
 - stable release identity;
 - HubSpot marketplace manifest and target rendering;
-- Hyperdrive, Tigris, Queues, retry, and dead-letter contracts;
+- direct Neon, Tigris, Queues, retry, and dead-letter contracts;
 - production deployment and acceptance documentation;
 - target-specific Wrangler dry run;
 - non-sensitive checksums and evidence.
@@ -284,7 +282,7 @@ Validate App Home, the deal card, settings, webhooks, both workflow actions, OAu
 Operational rules:
 
 - never embed direct Neon credentials in Worker source or public configuration;
-- use one Hyperdrive configuration per protected environment;
+- use separate TLS-enforced Neon branches and least-privilege runtime roles per protected environment;
 - use advisory locking for migrations;
 - preserve immutable migration checksums;
 - enforce composite tenant constraints for tenant-owned relationships;
@@ -325,7 +323,7 @@ After writes reopen:
 3. reconcile the post-cutover write interval;
 4. restore into an isolated branch;
 5. validate tenant and domain invariants;
-6. switch Hyperdrive only through an approved incident change;
+6. update the protected Worker database secret only through an approved incident change;
 7. deploy the compatible Worker;
 8. run public smoke and read-only signed acceptance;
 9. reopen writes only after approval.

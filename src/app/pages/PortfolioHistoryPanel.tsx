@@ -64,9 +64,9 @@ export function PortfolioHistoryPanel({ enabled }: { enabled: boolean }) {
     <Heading>Portfolio history and evidence age</Heading>
     <Text>Daily portfolio states reconstructed from retained assessments, within your current access. This is separate from the same-day assessment trend.</Text>
     <Flex direction="row" gap="small" align="end">
-      <Select name="portfolio-history-days" label="Calendar days (UTC)" value={days} disabled={busy}
+      {busy ? <Text>Window: {days} calendar days (UTC)</Text> : <Select name="portfolio-history-days" label="Calendar days (UTC)" value={days}
         options={[7, 30, 90].map((value) => ({ label: `${value} days`, value }))}
-        onChange={(value) => { requestId.current += 1; setDays(Number(value)); setHistory(null); setError(null); setPage(0); }} />
+        onChange={(value) => { requestId.current += 1; setDays(Number(value)); setHistory(null); setError(null); setPage(0); }} />}
       <Button onClick={load} disabled={busy}>Load history</Button>
     </Flex>
     {busy ? <LoadingSpinner label="Loading recorded portfolio history" /> : null}

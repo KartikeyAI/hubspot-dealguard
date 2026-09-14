@@ -157,3 +157,27 @@ history, evidence freshness and live acceptance still require further work.
 Authorization reflects latest recorded DealGuard dimensions, not an additional
 live HubSpot authorization lookup. No new scope, migration, provider request,
 notification, billing action or deployment is introduced by this slice.
+
+## M1.2 slice 2: portfolio carry-forward history and evidence age
+
+Built on PR #46 head `64d446125271b363511910b568a74271f982a00c`.
+
+- Added a signed, Enterprise/analytics.view-protected portfolio-history GET API
+  and an on-demand App Home panel with 7/30/90-day windows and paginated rows.
+- Reconstruct daily recorded states from retained pre-window seeds and daily
+  final assessments. Recorded closures/reopenings and scope changes end previous
+  intervals before historical filters are applied. Existing trend API is unchanged.
+- Separate report generation, daily cutoff, and oldest/latest observation clocks.
+  Carried-forward evidence retains its age; missing history and scores stay null.
+- Apply current and historical scope, currency-safe aggregates, timestamp validity
+  checks and a 10,000-authorized-deal/90-day expansion bound without partial totals.
+- Added eight focused tests plus a real PostgreSQL service suite including the
+  10,000-deal/90-day fixture. Local boundary compilation/tests do not claim full
+  dependency or provider validation; current-head CI evidence is on the PR.
+
+See `PORTFOLIO_HISTORY.md` for exact semantics. This is reconstructed retained
+history, NOT a durable snapshot ledger. Lifecycle ingestion/reconciliation,
+materialized snapshot retention/provenance, handoff timing, production load and
+real-account UI acceptance remain pending. M1.1 live/admin gates are unchanged.
+No new migration, OAuth grant, provider request, notification or deployment is
+performed by this slice. Version remains 2.1.0; M1.2 is not declared complete.

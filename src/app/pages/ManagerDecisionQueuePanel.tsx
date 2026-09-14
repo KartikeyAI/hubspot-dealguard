@@ -1,5 +1,6 @@
 import React from 'react';
 import { Flex } from '@hubspot/ui-extensions';
+import { PortfolioHistoryPanel } from './PortfolioHistoryPanel';
 import { ExecutiveRevenuePanel } from './ExecutiveRevenuePanel';
 import { ManagerDecisionQueuePanel as ManagerDecisionQueueCore } from './ManagerDecisionQueueCore';
 import { RecommendationDeliveryAnalyticsPanel } from './RecommendationDeliveryAnalyticsPanel';
@@ -13,6 +14,7 @@ export function ManagerDecisionQueuePanel({ enabled }: { enabled: boolean }) {
   return <Flex direction="column" gap="large">
     <ManagerDecisionQueueCore enabled={enabled} />
     <ExecutiveRevenuePanel enabled={enabled} />
+    <PortfolioHistoryPanel enabled={enabled} />
     <RecommendationOutcomePanel enabled={enabled} />
     <RecommendationOperationsPanel enabled={enabled} />
     <RecommendationNotificationConfigurationPanel enabled={enabled} />

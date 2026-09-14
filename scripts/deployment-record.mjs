@@ -1,124 +1,63 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
+import { certificationContext, deploymentEvidenceFailures, intelligenceFingerprint } from './intelligence-certification.mjs';
 
 const root = process.cwd();
 const output = resolve(root, valueAfter('--output') ?? '.release/deployment-record.json');
-const preflightPath = resolve(root, valueAfter('--preflight') ?? '.release/preflight.json');
-const healthPath = resolve(root, valueAfter('--health') ?? '.release/health.json');
-const smokePath = resolve(root, valueAfter('--smoke') ?? '.release/production-smoke/evidence.json');
-const acceptanceDir = resolve(root, valueAfter('--acceptance-dir') ?? 'artifacts/acceptance');
-
 function valueAfter(name) {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : null;
 }
-
-async function json(path) {
-  return JSON.parse(await readFile(path, 'utf8'));
-}
-
 async function optionalJson(path) {
-  try {
-    return await json(path);
-  } catch {
-    return null;
-  }
+  try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; }
 }
-
-async function findAcceptance() {
+async function singleEvidence(directory) {
+  // Never select a convenient passing result from a directory containing stale or mixed runs.
   try {
-    const files = (await readdir(acceptanceDir))
-      .filter((name) => name.endsWith('.json'))
-      .sort();
-    return files.length ? json(resolve(acceptanceDir, files.at(-1))) : null;
-  } catch {
-    return null;
-  }
+    const entries = await readdir(directory, { withFileTypes: true });
+    const files = entries.filter((entry) => entry.name.endsWith('.json'));
+    if (files.length !== 1 || !files[0].isFile()) return null;
+    return optionalJson(resolve(directory, files[0].name));
+  } catch { return null; }
 }
-
-const preflight = await json(preflightPath);
-const health = await json(healthPath);
-const smoke = await optionalJson(smokePath);
-const acceptance = await findAcceptance();
-const packageJson = await json(resolve(root, 'package.json'));
-const target = process.env.RELEASE_TARGET === 'production' ? 'production' : 'staging';
-const commit = String(process.env.RELEASE_SHA ?? process.env.GITHUB_SHA ?? '').trim();
-const backupReference = String(process.env.BACKUP_REFERENCE ?? '').trim();
-const backupSha256 = String(process.env.BACKUP_SHA256 ?? '').trim().toLowerCase();
-
+const packageJson = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
+const context = certificationContext(process.env, packageJson.version);
+const preflight = await optionalJson(resolve(root, valueAfter('--preflight') ?? '.release/preflight.json'));
+const health = await optionalJson(resolve(root, valueAfter('--health') ?? '.release/health.json'));
+const smoke = await optionalJson(resolve(root, valueAfter('--smoke') ?? '.release/production-smoke/evidence.json'));
+const baseline = await optionalJson(resolve(root, valueAfter('--baseline') ?? '.release/release-baseline.json'));
+const acceptance = await singleEvidence(resolve(root, valueAfter('--acceptance-dir') ?? 'artifacts/acceptance'));
+const intelligence = await singleEvidence(resolve(root, valueAfter('--intelligence-dir') ?? 'artifacts/intelligence-acceptance'));
 const record = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   generatedAt: new Date().toISOString(),
   repository: process.env.GITHUB_REPOSITORY ?? null,
   workflow: process.env.GITHUB_WORKFLOW ?? null,
-  runId: process.env.GITHUB_RUN_ID ?? null,
-  target,
-  commit,
+  runId: context.workflowRunId,
+  runAttempt: context.workflowRunAttempt,
+  target: context.target,
+  commit: context.commit,
   version: packageJson.version,
-  backupReference,
-  backupSha256,
-  preflight: preflight.summary,
-  health: {
-    status: health.status ?? health.ok ?? null,
-    service: health.service ?? null,
-    version: health.version ?? null,
-  },
-  smoke: smoke ? {
-    target: smoke.target ?? null,
-    baseUrl: smoke.baseUrl ?? null,
-    expectedVersion: smoke.expectedVersion ?? null,
-    summary: smoke.summary ?? null,
-  } : null,
-  acceptance: acceptance ? {
-    profile: acceptance.profile ?? null,
-    summary: acceptance.summary ?? null,
-  } : null,
+  backupReference: String(process.env.BACKUP_REFERENCE ?? '').trim(),
+  backupSha256: String(process.env.BACKUP_SHA256 ?? '').trim().toLowerCase(),
+  acceptanceContext: context,
+  preflight: preflight?.summary ?? null,
+  health: health ? { status: health.status ?? null, service: health.service ?? null, version: health.version ?? null } : null,
+  baseline: baseline ? { target: baseline.target, source: baseline.source,
+    release: { version: baseline.release?.version }, verification: { repository: baseline.verification?.repository } } : null,
+  smoke,
+  acceptance,
+  intelligence,
+  intelligenceSha256: intelligence ? intelligenceFingerprint(intelligence) : null,
 };
-
-const failures = [];
-if (!/^[0-9a-f]{40}$/i.test(record.commit)) {
-  failures.push('release commit is not a full SHA');
-}
-if (!record.backupReference) {
-  failures.push('backup reference is missing');
-} else {
-  if (!/^backups\/[a-z0-9_-]+\/[A-Za-z0-9._/-]+\.enc$/.test(record.backupReference)) {
-    failures.push('backup reference is not an encrypted Tigris object key');
-  }
-  if (!record.backupReference.startsWith(`backups/${target}/`)) {
-    failures.push('backup reference does not match deployment target');
-  }
-}
-if (!/^[0-9a-f]{64}$/.test(record.backupSha256)) {
-  failures.push('backup SHA-256 is missing or invalid');
-}
-if (record.preflight?.failed !== 0) failures.push('release preflight did not pass');
-if (record.health.status !== 'ok' || record.health.service !== 'dealguard-api') {
-  failures.push('deployed health identity is invalid');
-}
-if (record.health.version !== record.version) {
-  failures.push('deployed health version does not match package version');
-}
-if (!record.smoke || Number(record.smoke.summary?.failed ?? 1) !== 0) {
-  failures.push('public deployment smoke did not pass');
-}
-if (record.smoke?.expectedVersion !== record.version) {
-  failures.push('public smoke version does not match package version');
-}
-if (!record.acceptance || Number(record.acceptance.summary?.failed ?? 1) !== 0) {
-  failures.push('signed acceptance did not pass');
-}
-if (target === 'production' && record.acceptance?.profile !== 'full') {
-  failures.push('production acceptance profile is not full');
-}
-
-record.result = failures.length ? 'failed' : 'passed';
-record.failures = failures;
+record.failures = deploymentEvidenceFailures(record);
+record.result = record.failures.length ? 'failed' : 'passed';
+record.promotable = record.result === 'passed' && record.target === 'staging' && acceptance?.profile === 'full';
 await mkdir(dirname(output), { recursive: true });
 await writeFile(output, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
 console.log(`Deployment record ${record.result}: ${output}`);
-if (failures.length) {
-  for (const failure of failures) console.error(`- ${failure}`);
+if (record.failures.length) {
+  for (const failure of record.failures) console.error(`- ${failure}`);
   process.exitCode = 1;
 }

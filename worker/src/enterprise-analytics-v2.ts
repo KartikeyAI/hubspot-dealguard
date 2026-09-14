@@ -1,17 +1,9 @@
 import { AppError } from './errors.js';
 import { activePolicy } from './governance.js';
 import type { DealAssessment, Env, RequestIdentity } from './types.js';
-import { requireEnterprisePermission } from './enterprise-access.js';
+import { analyticsFilters, analyticsPredicate, analyticsViewOwner, analyticsCsvCell,
+  selectedAnalyticsFilters, requireAnalyticsCollectionAccess, type AnalyticsFilters } from './analytics-scope.js';
 
-const FILTER_DIMENSIONS = [
-  ['pipelineId', 'pipeline_id'],
-  ['stageId', 'stage_id'],
-  ['ownerId', 'owner_id'],
-  ['teamId', 'team_id'],
-  ['regionCode', 'region_code'],
-] as const;
-
-type AnalyticsFilters = Record<string, string>;
 type AnalyticsRow = Record<string, unknown>;
 type MonetaryMode = 'company_currency' | 'single_deal_currency' | 'unavailable';
 
@@ -60,6 +52,8 @@ export const TRUSTWORTHY_INTELLIGENCE_SEMANTICS = {
   amountAtRisk: 'recorded_deal_amount_with_readiness_gaps_not_expected_loss',
   currency: 'company_currency_when_fully_covered_else_single_source_currency_else_not_aggregated',
   attentionPriority: 'deterministic_prioritisation_signal_not_win_probability',
+  authorization: 'current_recorded_scope_intersected_with_observation_scope',
+  handoffScope: 'latest_recorded_deal_dimensions_including_closed_deals',
 } as const;
 
 function number(value: unknown): number {
@@ -101,20 +95,11 @@ function stageAgeDays(
 }
 
 function filterSql(alias: string, filters: AnalyticsFilters): string {
-  const clauses: string[] = [];
-  for (const [key, column] of FILTER_DIMENSIONS) {
-    if (filters[key]) clauses.push(`${alias}.${column} = ?`);
-  }
-  return clauses.length > 0 ? clauses.join(' AND ') : 'TRUE';
+  return analyticsPredicate(alias, filters).sql;
 }
 
 function filterParams(filters: AnalyticsFilters): string[] {
-  const params: string[] = [];
-  for (const [key] of FILTER_DIMENSIONS) {
-    const value = filters[key];
-    if (value) params.push(value);
-  }
-  return params;
+  return analyticsPredicate('latest', filters).params;
 }
 
 function latestAssessmentCte(): string {
@@ -270,8 +255,15 @@ async function aggregate(
   portalId: string,
   since: string,
   filters: AnalyticsFilters,
+  authorization: AnalyticsFilters,
 ): Promise<Record<string, unknown>> {
   const scopedParams = filterParams(filters);
+  const authorizationParams = filterParams(authorization);
+  // Historical observations require both current access and in-scope observed dimensions.
+  const authorizedDeal = (alias: string) => `EXISTS (
+    SELECT 1 FROM latest_assessments authorized
+    WHERE authorized.deal_id = ${alias}.deal_id AND ${filterSql('authorized', authorization)}
+  )`;
 
   const current = await env.DB.prepare(
     `WITH ${latestAssessmentCte()}
@@ -325,7 +317,7 @@ async function aggregate(
   const monetary = monetarySummary(current, sourceCurrencies);
 
   const trend = await env.DB.prepare(
-    `WITH daily_latest AS (
+    `WITH ${latestAssessmentCte()}, daily_latest AS (
       SELECT DISTINCT ON (deal_id, substr(assessed_at, 1, 10)) *
       FROM assessment_history
       WHERE portal_id = ? AND assessed_at >= ?
@@ -344,11 +336,11 @@ async function aggregate(
       ) AS deals_with_company_currency_amount,
       COUNT(*) AS assessed_deals
     FROM daily_latest daily
-    WHERE ${currentStateWhere('daily', filters)}
+    WHERE ${currentStateWhere('daily', filters)} AND ${authorizedDeal('daily')}
     GROUP BY substr(daily.assessed_at, 1, 10)
     ORDER BY date ASC
     LIMIT 370`,
-  ).bind(portalId, since, ...scopedParams).all<AnalyticsRow>();
+  ).bind(portalId, portalId, since, ...scopedParams, ...authorizationParams).all<AnalyticsRow>();
 
   const breakdown = async (column: string, label: string): Promise<BreakdownRow[]> => {
     const rows = await env.DB.prepare(
@@ -460,7 +452,7 @@ async function aggregate(
 
   const outcomeFilter = filterSql('pre', filters);
   const outcomes = await env.DB.prepare(
-    `WITH closed_outcomes AS (
+    `WITH ${latestAssessmentCte()}, closed_outcomes AS (
       SELECT DISTINCT ON (deal_id)
         deal_id,
         is_won,
@@ -499,10 +491,10 @@ async function aggregate(
       pre.deal_amount,
       pre.assessed_at
     FROM pre_outcome pre
-    WHERE ${outcomeFilter}
+    WHERE ${outcomeFilter} AND ${authorizedDeal('pre')}
     ORDER BY pre.assessed_at DESC
     LIMIT 10000`,
-  ).bind(portalId, since, portalId, ...scopedParams).all<AnalyticsRow>();
+  ).bind(portalId, portalId, since, portalId, ...scopedParams, ...authorizationParams).all<AnalyticsRow>();
 
   const closed = outcomes.results ?? [];
   const won = closed.filter((row) => Boolean(row.is_won));
@@ -543,18 +535,21 @@ async function aggregate(
   ).bind(portalId, ...scopedParams).all<AnalyticsRow>();
 
   const handoff = await env.DB.prepare(
-    `SELECT
+    `WITH ${latestAssessmentCte()}
+    SELECT
       COUNT(*) AS total,
-      SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed,
-      AVG(CASE WHEN confirmed_at IS NOT NULL
-        THEN EXTRACT(EPOCH FROM (confirmed_at::timestamptz - created_at::timestamptz)) / 3600.0
-      END) AS average_hours
-    FROM handoffs
-    WHERE portal_id = ? AND created_at >= ?`,
-  ).bind(portalId, since).first<AnalyticsRow>();
+      SUM(CASE WHEN handoff.status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed,
+      SUM(CASE WHEN handoff.status = 'confirmed' AND handoff.confirmed_at >= ?
+        THEN 1 ELSE 0 END) AS confirmations_in_period
+    FROM handoffs handoff
+    WHERE handoff.portal_id = ? AND EXISTS (
+      SELECT 1 FROM latest_assessments latest
+      WHERE latest.deal_id = handoff.deal_id AND ${filterSql('latest', filters)}
+    )`,
+  ).bind(portalId, since, portalId, ...scopedParams).first<AnalyticsRow>();
 
   const policyImpact = await env.DB.prepare(
-    `WITH history AS (
+    `WITH ${latestAssessmentCte()}, history AS (
       SELECT *
       FROM assessment_history
       WHERE portal_id = ? AND assessed_at >= ?
@@ -566,7 +561,8 @@ async function aggregate(
     ),
     policy_period AS (
       SELECT policy_id, MIN(assessed_at) AS first_assessed_at, MAX(assessed_at) AS last_assessed_at
-      FROM history
+      FROM history observed
+      WHERE ${filterSql('observed', filters)} AND ${authorizedDeal('observed')}
       GROUP BY policy_id
     )
     SELECT
@@ -586,11 +582,11 @@ async function aggregate(
       ) AS deals_with_company_currency_amount
     FROM policy_latest latest
     JOIN policy_period period ON latest.policy_id IS NOT DISTINCT FROM period.policy_id
-    LEFT JOIN policy_versions policy ON policy.id = latest.policy_id
-    WHERE ${filterSql('latest', filters)}
+    LEFT JOIN policy_versions policy ON policy.id = latest.policy_id AND policy.portal_id = latest.portal_id
+    WHERE ${filterSql('latest', filters)} AND ${authorizedDeal('latest')}
     GROUP BY latest.policy_id, policy.name, period.first_assessed_at, period.last_assessed_at
     ORDER BY period.first_assessed_at ASC`,
-  ).bind(portalId, since, ...scopedParams).all<AnalyticsRow>();
+  ).bind(portalId, portalId, since, ...scopedParams, ...authorizationParams, ...scopedParams, ...authorizationParams).all<AnalyticsRow>();
 
   const totalDeals = number(current?.total_deals);
   const criticalDeals = number(current?.critical_deals);
@@ -688,7 +684,12 @@ async function aggregate(
       completionRate: number(handoff?.total)
         ? round((number(handoff?.confirmed) / number(handoff?.total)) * 100)
         : 0,
-      averageHours: round(number(handoff?.average_hours)),
+      // The canonical handoffs table has no creation/start timestamp. Do not invent SLA duration.
+      averageHours: null,
+      durationStatus: 'unavailable',
+      durationReason: 'Handoff start timestamps are not recorded; elapsed duration cannot be calculated.',
+      periodBasis: 'current_scoped_handoffs',
+      confirmationsInPeriod: number(handoff?.confirmations_in_period),
     },
     policyImpact: (policyImpact.results ?? []).map((row) => {
       const critical = number(row.critical_deals);
@@ -752,38 +753,17 @@ export async function enterpriseAnalyticsV2(
   identity: RequestIdentity,
   url: URL,
 ): Promise<Record<string, unknown>> {
-  const access = await requireEnterprisePermission(env, identity, 'analytics.view');
-  const days = Math.min(730, Math.max(1, Number(url.searchParams.get('days') ?? 90) || 90));
+  const access = await requireAnalyticsCollectionAccess(env, identity, 'analytics.view');
+  const days = Math.min(730, Math.max(1, Math.floor(Number(url.searchParams.get('days') ?? 90) || 90)));
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
-  const filters: AnalyticsFilters = {};
-
-  for (const [key] of FILTER_DIMENSIONS) {
-    const value = url.searchParams.get(key);
-    if (value) filters[key] = value.slice(0, 128);
-  }
-
-  for (const [scopeKey, filterKey] of [
-    ['pipelineIds', 'pipelineId'],
-    ['teamIds', 'teamId'],
-    ['ownerIds', 'ownerId'],
-    ['regionCodes', 'regionCode'],
-  ] as const) {
-    const allowed = access.scope[scopeKey];
-    if (allowed.length > 0 && filters[filterKey] && !allowed.includes(filters[filterKey]!)) {
-      throw new AppError(
-        403,
-        'analytics_scope_denied',
-        'The selected analytics filter is outside your assigned scope.',
-      );
-    }
-    if (allowed.length === 1 && !filters[filterKey]) filters[filterKey] = allowed[0]!;
-  }
+  const filters = selectedAnalyticsFilters(url.searchParams);
+  const { effective, authorization } = analyticsFilters(access.scope, filters);
 
   return {
     audience: url.searchParams.get('audience') ?? 'executive',
     days,
     filters,
-    ...await aggregate(env, identity.portalId, since, filters),
+    ...await aggregate(env, identity.portalId, since, effective, authorization),
   };
 }
 
@@ -791,14 +771,13 @@ export async function listAnalyticsViews(
   env: Env,
   identity: RequestIdentity,
 ): Promise<Array<Record<string, unknown>>> {
-  await requireEnterprisePermission(env, identity, 'analytics.view');
+  await requireAnalyticsCollectionAccess(env, identity, 'analytics.view');
+  const owner = analyticsViewOwner(identity);
   const rows = await env.DB.prepare(
     `SELECT * FROM analytics_saved_views
-    WHERE portal_id = ? AND (
-      is_shared = 1 OR created_by_user_id = ? OR lower(COALESCE(created_by_email, '')) = lower(COALESCE(?, ''))
-    )
+    WHERE portal_id = ? AND (is_shared = 1 OR (${owner.sql}))
     ORDER BY is_shared DESC, name`,
-  ).bind(identity.portalId, identity.userId, identity.userEmail).all<AnalyticsRow>();
+  ).bind(identity.portalId, ...owner.params).all<AnalyticsRow>();
 
   return (rows.results ?? []).map((row) => ({
     id: row.id,
@@ -818,7 +797,7 @@ export async function saveAnalyticsView(
   value: unknown,
   viewId: string | null = null,
 ): Promise<Record<string, unknown>> {
-  await requireEnterprisePermission(env, identity, 'analytics.view');
+  await requireAnalyticsCollectionAccess(env, identity, 'analytics.view');
   const input = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const name = typeof input.name === 'string' ? input.name.trim().slice(0, 120) : '';
   if (!name) {
@@ -831,31 +810,26 @@ export async function saveAnalyticsView(
   const now = new Date().toISOString();
   const columns = Array.isArray(input.columns) ? input.columns.slice(0, 100) : [];
 
-  await env.DB.prepare(
-    `INSERT INTO analytics_saved_views (
-      id, portal_id, name, audience, filters_json, columns_json, created_by_user_id,
-      created_by_email, is_shared, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      name = excluded.name,
-      audience = excluded.audience,
-      filters_json = excluded.filters_json,
-      columns_json = excluded.columns_json,
-      is_shared = excluded.is_shared,
-      updated_at = excluded.updated_at`,
-  ).bind(
-    id,
-    identity.portalId,
-    name,
-    audience,
-    JSON.stringify(input.filters ?? {}),
-    JSON.stringify(columns),
-    identity.userId,
-    identity.userEmail,
-    input.isShared === true ? 1 : 0,
-    now,
-    now,
-  ).run();
+  const owner = analyticsViewOwner(identity);
+  if (viewId !== null) {
+    // Update never creates a missing view and cannot overwrite another tenant or creator.
+    const updated = await env.DB.prepare(
+      `UPDATE analytics_saved_views SET name = ?, audience = ?, filters_json = ?,
+        columns_json = ?, is_shared = ?, updated_at = ?
+      WHERE id = ? AND portal_id = ? AND (${owner.sql}) RETURNING id`,
+    ).bind(name, audience, JSON.stringify(input.filters ?? {}), JSON.stringify(columns),
+      input.isShared === true ? 1 : 0, now, viewId, identity.portalId, ...owner.params).first<{ id: string }>();
+    if (!updated) throw new AppError(404, 'analytics_view_not_found', 'The saved view does not exist or is not owned by you.');
+  } else {
+    await env.DB.prepare(
+      `INSERT INTO analytics_saved_views (
+        id, portal_id, name, audience, filters_json, columns_json, created_by_user_id,
+        created_by_email, is_shared, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(id, identity.portalId, name, audience, JSON.stringify(input.filters ?? {}),
+      JSON.stringify(columns), identity.userId?.trim() || null, identity.userEmail?.trim() || null,
+      input.isShared === true ? 1 : 0, now, now).run();
+  }
 
   return {
     id,
@@ -873,18 +847,13 @@ export async function deleteAnalyticsView(
   identity: RequestIdentity,
   viewId: string,
 ): Promise<void> {
-  await requireEnterprisePermission(env, identity, 'analytics.view');
-  await env.DB.prepare(
+  await requireAnalyticsCollectionAccess(env, identity, 'analytics.view');
+  const owner = analyticsViewOwner(identity);
+  const deleted = await env.DB.prepare(
     `DELETE FROM analytics_saved_views
-    WHERE id = ? AND portal_id = ? AND (
-      created_by_user_id = ? OR lower(COALESCE(created_by_email, '')) = lower(COALESCE(?, ''))
-    )`,
-  ).bind(viewId, identity.portalId, identity.userId, identity.userEmail).run();
-}
-
-function csv(value: unknown): string {
-  const text = typeof value === 'string' ? value : JSON.stringify(value ?? '');
-  return `"${text.replaceAll('"', '""')}"`;
+    WHERE id = ? AND portal_id = ? AND (${owner.sql}) RETURNING id`,
+  ).bind(viewId, identity.portalId, ...owner.params).first<{ id: string }>();
+  if (!deleted) throw new AppError(404, 'analytics_view_not_found', 'The saved view does not exist or is not owned by you.');
 }
 
 export async function exportAnalyticsCsv(
@@ -892,7 +861,7 @@ export async function exportAnalyticsCsv(
   identity: RequestIdentity,
   url: URL,
 ): Promise<Response> {
-  await requireEnterprisePermission(env, identity, 'analytics.export');
+  await requireAnalyticsCollectionAccess(env, identity, 'analytics.export');
   const data = await enterpriseAnalyticsV2(env, identity, url);
   const rows = data.byPipeline as Array<Record<string, unknown>>;
   const monetary = data.monetary as MonetarySummary;
@@ -911,7 +880,7 @@ export async function exportAnalyticsCsv(
       row.monetaryMode,
       row.monetaryMode === 'company_currency' ? monetary.currencyCode : null,
       row.companyCurrencyCoveragePercent,
-    ].map(csv).join(','));
+    ].map(analyticsCsvCell).join(','));
   }
 
   return new Response(lines.join('\n'), {

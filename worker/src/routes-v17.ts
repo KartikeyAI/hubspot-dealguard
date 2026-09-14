@@ -1,4 +1,5 @@
 import { requireCommercialTier } from './billing.js';
+import { portfolioHistory } from './portfolio-history.js';
 import { json, methodNotAllowed, readJson } from './http.js';
 import { evaluateRecommendationDeliverySlos } from './recommendation-delivery-slo-evaluator.js';
 import {
@@ -24,6 +25,13 @@ export async function route(
   ctx: { waitUntil(promise: Promise<unknown>): void },
 ): Promise<Response> {
   const url = new URL(request.url);
+
+  if (url.pathname === '/api/v1/enterprise/portfolio-history') {
+    if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    const identity = await validateHubSpotRequest(request, env);
+    await requireCommercialTier(env, identity.portalId, 'enterprise');
+    return json(await portfolioHistory(env, identity, url));
+  }
 
   if (url.pathname === `${SLO_ROOT}/evaluate`) {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);

@@ -130,3 +130,30 @@ The second slice remains in the same Phase 1 review branch.
 No database migration, Worker deployment, HubSpot upload, OAuth grant change,
 customer notification or plan change was executed by this implementation slice.
 The live/admin gates above remain pending; M1.1 and Phase 1 are not complete.
+
+## M1.2 slice 1: scoped analytics, saved views and exports
+
+Built on PR #46 head `0846bc78e7b582e464f501ac99f57826261c2a73`.
+This is the first runtime product slice, not another release-tooling change.
+
+- Collection analytics now work for identified scoped users without weakening
+  record-level permission checks. SQL enforces all assigned dimensions, including
+  multi-value scopes when no explicit filter is selected.
+- Current-state selection remains latest-per-deal before filtering. Historical
+  observations and policy-period timestamps require current recorded access as
+  well as permitted observation dimensions. Handoffs use current deal dimensions
+  and include closed deals; missing assessment evidence does not grant access.
+- Saved-view updates/deletes require both tenant and creator ownership. Shared
+  definitions remain readable, not editable by other users. Empty-email matches
+  and cross-tenant global-ID upserts are removed.
+- CSV exports use the same scope and separate export permission, neutralize
+  formula-like string cells, and retain empty values as empty cells.
+- Added unit tests plus executed-SQL regression coverage using temporary tables
+  derived from the migrated PostgreSQL schema. Canonical CI requires the isolated
+  analytics database fixture. See `ANALYTICS_SCOPE.md` for exact semantics.
+
+M1.2 remains in progress: lifecycle/archive/reopen coverage, daily carry-forward
+history, evidence freshness and live acceptance still require further work.
+Authorization reflects latest recorded DealGuard dimensions, not an additional
+live HubSpot authorization lookup. No new scope, migration, provider request,
+notification, billing action or deployment is introduced by this slice.

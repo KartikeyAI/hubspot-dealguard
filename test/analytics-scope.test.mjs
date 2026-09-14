@@ -69,7 +69,7 @@ test('view ownership requires nonempty identity and keeps ID ownership authorita
   assert.throws(() => analyticsViewOwner({ userId: '', userEmail: null }), { status: 403 });
   const result = analyticsViewOwner(identity);
   assert.match(result.sql, /NULLIF\(created_by_user_id, ''\) IS NULL/);
-  assert.match(result.sql, /\? IS NOT NULL/);
+  assert.match(result.sql, /\?::text IS NOT NULL/);
   assert.deepEqual(result.params, ['1', 'owner@example.test', 'owner@example.test']);
 });
 

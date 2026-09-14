@@ -43,6 +43,15 @@ apply the same effective filters. Closed deals are included because handoffs
 commonly follow closure. Handoffs without assessment evidence are excluded;
 missing scope evidence is not treated as permission.
 
+The canonical `handoffs` schema contains no creation/start timestamp. Previous
+analytics incorrectly queried `created_at`, which fails against that schema.
+The corrected response reports current scoped counts/completion rate and a
+separate `confirmationsInPeriod` count using the recorded confirmation timestamp.
+`periodBasis` identifies current-state counts. `averageHours` is null and
+`durationStatus` is `unavailable`, with an explicit reason; no invented start
+clock or zero-duration fallback is used. Adding durable start/reopen timing is
+separate handoff-lifecycle work, not a silent historical backfill.
+
 Authorization uses DealGuard's latest RECORDED state, not a fresh HubSpot check.
 Changes made in HubSpot take effect here when recorded by DealGuard. This slice
 does not add archive/deletion ingestion, snapshot carry-forward, real-time scope

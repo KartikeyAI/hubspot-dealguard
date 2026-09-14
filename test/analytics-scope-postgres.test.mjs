@@ -54,8 +54,8 @@ test('analytics SQL and saved-view isolation on migrated PostgreSQL', { skip: !d
   await observation('TIE', '1', 'p1', current);
   await observation('TIE', '3', 'p1', current);
   for (const [deal, status, hours] of [['A', 'confirmed', 2], ['B', 'pending', null], ['I', 'confirmed', 4], ['C', 'confirmed', 50], ['H', 'confirmed', 50], ['missing', 'confirmed', 50]]) {
-    await insert('handoffs', { id: `handoff-${deal}`, portal_id: '100', deal_id: deal, status,
-      created_at: iso(2), confirmed_at: hours === null ? null : new Date(Date.now() - 2 * 86400000 + hours * 3600000).toISOString() });
+    await insert('handoffs', { portal_id: '100', deal_id: deal, status,
+      confirmed_at: hours === null ? null : new Date(Date.now() - 2 * 86400000 + hours * 3600000).toISOString() });
   }
   const queries = [];
   const envFor = (assignment = scope, role = 'revops_manager') => ({ DB: { prepare(sql) {
@@ -88,13 +88,20 @@ test('analytics SQL and saved-view isolation on migrated PostgreSQL', { skip: !d
     assert.deepEqual(data.attentionPriority.deals.map((row) => row.dealId).sort(), ['A', 'B', 'J']);
     assert.equal(data.handoffSla.total, 3);
     assert.equal(data.handoffSla.confirmed, 2);
-    assert.equal(Math.round(data.handoffSla.averageHours), 3);
+    assert.equal(data.handoffSla.averageHours, null, 'Absent start timestamps cannot become fabricated durations.');
+    assert.equal(data.handoffSla.durationStatus, 'unavailable');
+    assert.equal(data.handoffSla.periodBasis, 'current_scoped_handoffs');
+    assert.equal(data.handoffSla.confirmationsInPeriod, 2);
     assert.equal(data.outcomeCorrelation.sampleSize, 1);
     assert.equal(data.outcomeCorrelation.wonAverageScore, 65, 'Do not use post-close score 99.');
     assert.equal(data.policyImpact[0].firstAssessedAt, earlier);
     assert.equal(data.policyImpact[0].assessedDeals, 4);
+    assert.equal(data.policyImpact[0].amountWithReadinessGaps, 200);
     assert.equal(data.trend.reduce((sum, row) => sum + row.assessedDeals, 0), 5);
     assert.doesNotMatch(JSON.stringify(data), /FORBIDDEN/);
+    const recent = await enterpriseAnalyticsV2(env, actor, new URL('https://example.test/api/v1/enterprise/analytics?days=1'));
+    assert.equal(recent.handoffSla.total, 3, 'Current handoff counts are not a fabricated creation-date cohort.');
+    assert.equal(recent.handoffSla.confirmationsInPeriod, 0);
   });
   await t.test('explicit selection narrows rather than overrides assigned scope', async () => {
     const data = await enterpriseAnalyticsV2(env, actor, url('ownerId=1&pipelineId=p1'));

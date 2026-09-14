@@ -88,7 +88,7 @@ export function analyticsViewOwner(identity: Pick<RequestIdentity, 'userId' | 'u
   if (!userId && !email) throw new AppError(403, 'analytics_identity_required', 'An identified user is required for saved views.');
   return {
     sql: `NULLIF(created_by_user_id, '') = ? OR (
-      NULLIF(created_by_user_id, '') IS NULL AND ? IS NOT NULL
+      NULLIF(created_by_user_id, '') IS NULL AND ?::text IS NOT NULL
       AND lower(NULLIF(created_by_email, '')) = lower(?)
     )`,
     params: [userId, email, email],

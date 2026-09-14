@@ -539,15 +539,14 @@ async function aggregate(
     SELECT
       COUNT(*) AS total,
       SUM(CASE WHEN handoff.status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed,
-      AVG(CASE WHEN handoff.confirmed_at IS NOT NULL
-        THEN EXTRACT(EPOCH FROM (handoff.confirmed_at::timestamptz - handoff.created_at::timestamptz)) / 3600.0
-      END) AS average_hours
+      SUM(CASE WHEN handoff.status = 'confirmed' AND handoff.confirmed_at >= ?
+        THEN 1 ELSE 0 END) AS confirmations_in_period
     FROM handoffs handoff
-    WHERE handoff.portal_id = ? AND handoff.created_at >= ? AND EXISTS (
+    WHERE handoff.portal_id = ? AND EXISTS (
       SELECT 1 FROM latest_assessments latest
       WHERE latest.deal_id = handoff.deal_id AND ${filterSql('latest', filters)}
     )`,
-  ).bind(portalId, portalId, since, ...scopedParams).first<AnalyticsRow>();
+  ).bind(portalId, since, portalId, ...scopedParams).first<AnalyticsRow>();
 
   const policyImpact = await env.DB.prepare(
     `WITH ${latestAssessmentCte()}, history AS (
@@ -685,7 +684,12 @@ async function aggregate(
       completionRate: number(handoff?.total)
         ? round((number(handoff?.confirmed) / number(handoff?.total)) * 100)
         : 0,
-      averageHours: round(number(handoff?.average_hours)),
+      // The canonical handoffs table has no creation/start timestamp. Do not invent SLA duration.
+      averageHours: null,
+      durationStatus: 'unavailable',
+      durationReason: 'Handoff start timestamps are not recorded; elapsed duration cannot be calculated.',
+      periodBasis: 'current_scoped_handoffs',
+      confirmationsInPeriod: number(handoff?.confirmations_in_period),
     },
     policyImpact: (policyImpact.results ?? []).map((row) => {
       const critical = number(row.critical_deals);

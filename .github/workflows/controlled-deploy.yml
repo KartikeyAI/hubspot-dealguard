@@ -86,6 +86,8 @@ jobs:
       RELEASE_TARGET: ${{ inputs.target }}
       RELEASE_SHA: ${{ inputs.release_sha }}
       RELEASE_INCLUDE_HUBSPOT_UPLOAD: 'false'
+      STAGING_RUN_ID: ${{ inputs.staging_run_id }}
+      PRODUCTION_CONFIRMATION: ${{ inputs.production_confirmation }}
       BACKUP_REFERENCE: ${{ inputs.backup_reference }}
       BACKUP_SHA256: ${{ inputs.backup_sha256 }}
       APP_BASE_URL: ${{ vars.APP_BASE_URL }}
@@ -139,12 +141,12 @@ jobs:
           [[ "$BACKUP_REFERENCE" == "${expected_backup_prefix}"* ]] || { echo "backup_reference must use ${expected_backup_prefix}"; exit 1; }
           [[ "$BACKUP_REFERENCE" == *.enc ]] || { echo 'backup_reference must identify an encrypted .enc object'; exit 1; }
           [[ "$BACKUP_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'backup_sha256 must be a 64-character SHA-256 digest'; exit 1; }
-          [[ "${{ inputs.portal_id }}" =~ ^[0-9]+$ ]] || { echo 'portal_id must contain only digits'; exit 1; }
+          [[ "$ACCEPTANCE_PORTAL_ID" =~ ^[0-9]+$ ]] || { echo 'portal_id must contain only digits'; exit 1; }
           if [ "$RELEASE_TARGET" = production ]; then
-            [ -n "${{ inputs.staging_run_id }}" ] || { echo 'staging_run_id is required for production promotion'; exit 1; }
-            [ "${{ inputs.acceptance_profile }}" = full ] || { echo 'production requires the full acceptance profile'; exit 1; }
-            [ -n "${{ inputs.test_deal_id }}" ] || { echo 'test_deal_id is required for production certification'; exit 1; }
-            [ "${{ inputs.production_confirmation }}" = 'DEPLOY DEALGUARD TO PRODUCTION' ] || { echo 'production confirmation phrase is invalid'; exit 1; }
+            [ -n "$STAGING_RUN_ID" ] || { echo 'staging_run_id is required for production promotion'; exit 1; }
+            [ "$ACCEPTANCE_PROFILE" = full ] || { echo 'production requires the full acceptance profile'; exit 1; }
+            [ -n "$ACCEPTANCE_TEST_DEAL_ID" ] || { echo 'test_deal_id is required for production certification'; exit 1; }
+            [ "$PRODUCTION_CONFIRMATION" = 'DEPLOY DEALGUARD TO PRODUCTION' ] || { echo 'production confirmation phrase is invalid'; exit 1; }
           fi
 
       - uses: actions/checkout@v4
@@ -153,17 +155,14 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Verify checked-out release
-        run: |
-          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
-          node - <<'NODE'
-          const pkg = require('./package.json');
-          if (!/^\d+\.\d+\.\d+$/.test(pkg.version)) throw new Error(`Production release version must be stable semver, received ${pkg.version}`);
-          NODE
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Verify checked-out release and capture baseline
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          node scripts/release-baseline.mjs
 
       - name: Create non-secret CI environment file
         run: touch .env
@@ -228,7 +227,7 @@ jobs:
 
       - name: Record source and migration checksums
         run: |
-          sha256sum package.json wrangler.toml worker/src/version.ts src/app/app-hsmeta.json src/app/pages/pages-hsmeta.json > .release/release-checksums.txt
+          sha256sum .release/release-baseline.json package.json wrangler.toml worker/src/version.ts src/app/app-hsmeta.json src/app/pages/pages-hsmeta.json > .release/release-checksums.txt
           find database/migrations -type f -name '*.sql' -print0 | sort -z | xargs -0 sha256sum > .release/migration-checksums.txt
 
       - name: Generate deployment evidence record
@@ -263,6 +262,7 @@ jobs:
         with:
           name: dealguard-deployment-${{ inputs.target }}-${{ github.run_id }}
           path: |
+            .release/release-baseline.json
             .release/deployment-record.json
             .release/preflight.json
             .release/health.json
@@ -271,4 +271,5 @@ jobs:
             .release/migration-checksums.txt
             artifacts/acceptance/
           if-no-files-found: warn
+          include-hidden-files: true
           retention-days: 90

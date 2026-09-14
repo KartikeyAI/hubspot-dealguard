@@ -13,6 +13,7 @@
     "acceptance:intelligence": "node scripts/intelligence-acceptance.mjs",
     "production:smoke": "node scripts/production-smoke.mjs",
     "release:convergence": "node scripts/release-convergence.mjs",
+    "release:baseline": "node scripts/release-baseline.mjs",
     "release:preflight": "node scripts/release-preflight.mjs",
     "release:bundle": "node scripts/release-bundle.mjs",
     "release:record": "node scripts/deployment-record.mjs",

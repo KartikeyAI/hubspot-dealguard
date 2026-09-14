@@ -1,9 +1,10 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve } from 'node:path';
 import process from 'node:process';
+import { releaseTarget, releaseVersionPolicy } from './release-baseline.mjs';
 
 const ROOT = process.cwd();
-const target = process.env.RELEASE_TARGET === 'production' ? 'production' : 'staging';
+const target = releaseTarget(process.env.RELEASE_TARGET);
 const includeHubSpotUpload = String(process.env.RELEASE_INCLUDE_HUBSPOT_UPLOAD ?? 'false') === 'true';
 const renderWrangler = !process.argv.includes('--no-render');
 const outputPath = resolve(ROOT, valueAfter('--output') ?? '.release/preflight.json');
@@ -180,10 +181,11 @@ async function validateRepository() {
   const targetRenderer = await text('scripts/render-hubspot-target.mjs');
   const smokeSource = await text('scripts/production-smoke.mjs');
 
+  const versionPolicy = releaseVersionPolicy(packageJson.version, target);
   add(
     'package.version.production',
-    /^2\.1\.0$/.test(packageJson.version),
-    `package version is ${packageJson.version}`,
+    versionPolicy.ok,
+    `${versionPolicy.rule} Package version is ${packageJson.version}`,
   );
   add(
     'runtime.version.matches',

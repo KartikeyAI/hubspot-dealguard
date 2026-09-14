@@ -3,7 +3,7 @@
 Updated: 2026-09-14. Programme: the agreed three-phase production roadmap.
 This file records development progress, not a production-release declaration.
 
-## Current slice: M1.1 release baseline and staging controls
+## M1.1 slice 1: release baseline and staging controls
 
 Starting source: `eb8f49612fa3d6b85a3b5732af9db9517be1be00` on `main`.
 The intelligence programme from PR #35 is already merged. The package and Worker
@@ -107,3 +107,26 @@ Versions follow alpha, beta, RC, then stable only when their respective gates
 pass. Useful deterministic behavior remains mandatory when AI is unavailable.
 Marketplace approval, Breeze approval, code merge and production readiness are
 separate states.
+
+## M1.1 slice 2: required intelligence certification and evidence binding
+
+Built on PR #46 head `e80284a275ba8b39824d45f82f1323ebbbadd5a0`.
+The second slice remains in the same Phase 1 review branch.
+
+- Full Controlled deploy runs now execute standard and required intelligence
+  acceptance. All twelve intelligence tests must be present, required and passed.
+- Missing configuration fails before the intelligence suite sends requests;
+  diagnostics remain available but never produce promotable release evidence.
+- Deployment evidence v4 retains result sets and binds the baseline, smoke,
+  standard suite and intelligence suite to the selected release/context.
+- Production promotion revalidates evidence against trusted GitHub run metadata,
+  requires the selected run/attempt, and rejects legacy, mixed or stale reports.
+- Updated current controlled-deployment documentation to direct Neon/Tigris and
+  documented the complete gate in `INTELLIGENCE_RELEASE_GATE.md`.
+- Focused validation: 55 tests pass locally, including real CLI execution with
+  isolated test transport, evidence-file selection, promotion and shell guards.
+  Canonical GitHub CI remains the full repository validation gate.
+
+No database migration, Worker deployment, HubSpot upload, OAuth grant change,
+customer notification or plan change was executed by this implementation slice.
+The live/admin gates above remain pending; M1.1 and Phase 1 are not complete.

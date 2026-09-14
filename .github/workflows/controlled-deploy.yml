@@ -49,7 +49,7 @@ on:
         type: choice
         options: ['', free, growth, enterprise]
       test_deal_id:
-        description: Existing test deal ID; required for final production certification
+        description: Dedicated Enterprise test deal ID; required for every full acceptance run
         required: false
         type: string
       checkout_tier:
@@ -128,6 +128,9 @@ jobs:
       ACCEPTANCE_CHECKOUT_TIER: ${{ inputs.checkout_tier }}
       ACCEPTANCE_CHECKOUT_INTERVAL: ${{ inputs.checkout_interval }}
       ACCEPTANCE_OPERATOR: ${{ github.actor }}
+      ACCEPTANCE_INTELLIGENCE_REQUIRED: 'true'
+      ACCEPTANCE_INTELLIGENCE_PORTFOLIO: 'true'
+      ACCEPTANCE_INTELLIGENCE_REFRESH_DEAL: 'true'
       PRODUCTION_SMOKE_BASE_URL: ${{ vars.APP_BASE_URL }}
       PRODUCTION_SMOKE_OUTPUT: .release/production-smoke/evidence.json
 
@@ -142,7 +145,13 @@ jobs:
           [[ "$BACKUP_REFERENCE" == *.enc ]] || { echo 'backup_reference must identify an encrypted .enc object'; exit 1; }
           [[ "$BACKUP_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'backup_sha256 must be a 64-character SHA-256 digest'; exit 1; }
           [[ "$ACCEPTANCE_PORTAL_ID" =~ ^[0-9]+$ ]] || { echo 'portal_id must contain only digits'; exit 1; }
+          [[ "$RELEASE_TARGET" = staging || "$RELEASE_TARGET" = production ]] || { echo 'Invalid deployment target'; exit 1; }
+          [[ "$ACCEPTANCE_PROFILE" = full || "$ACCEPTANCE_PROFILE" = read-only ]] || { echo 'Invalid acceptance profile'; exit 1; }
+          if [ "$ACCEPTANCE_PROFILE" = full ]; then
+            [[ "$ACCEPTANCE_TEST_DEAL_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'Full acceptance requires a dedicated test deal'; exit 1; }
+          fi
           if [ "$RELEASE_TARGET" = production ]; then
+            [[ "$STAGING_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'staging_run_id must contain only digits'; exit 1; }
             [ -n "$STAGING_RUN_ID" ] || { echo 'staging_run_id is required for production promotion'; exit 1; }
             [ "$ACCEPTANCE_PROFILE" = full ] || { echo 'production requires the full acceptance profile'; exit 1; }
             [ -n "$ACCEPTANCE_TEST_DEAL_ID" ] || { echo 'test_deal_id is required for production certification'; exit 1; }
@@ -187,7 +196,9 @@ jobs:
           STAGING_RUN_ID: ${{ inputs.staging_run_id }}
         run: |
           mkdir -p .release/staging-evidence
-          gh run download "$STAGING_RUN_ID" --dir .release/staging-evidence
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$STAGING_RUN_ID" > .release/staging-run.json
+          attempt="$(node -e 'const r = require("./.release/staging-run.json"); if (!Number.isSafeInteger(r.run_attempt) || r.run_attempt < 1) process.exit(1); process.stdout.write(String(r.run_attempt));')"
+          gh run download "$STAGING_RUN_ID" --name "dealguard-deployment-staging-${STAGING_RUN_ID}-${attempt}" --dir .release/staging-evidence
           npm run release:verify-staging -- --input .release/staging-evidence
 
       - name: Verify encrypted pre-change backup
@@ -222,8 +233,15 @@ jobs:
           PRODUCTION_SMOKE_ALLOW_NON_PRODUCTION: ${{ inputs.target == 'staging' && 'true' || 'false' }}
         run: npm run production:smoke
 
+      - name: Clear prior acceptance evidence
+        run: rm -rf artifacts/acceptance artifacts/intelligence-acceptance
+
       - name: Run signed post-deployment acceptance
         run: npm run acceptance:live
+
+      - name: Run required intelligence certification
+        if: inputs.acceptance_profile == 'full'
+        run: npm run acceptance:intelligence
 
       - name: Record source and migration checksums
         run: |
@@ -247,6 +265,8 @@ jobs:
           console.log(`- Result: **${record.result}**`);
           console.log(`- Public smoke: **${record.smoke?.summary?.failed === 0 ? 'passed' : 'failed'}**`);
           console.log(`- Signed acceptance: **${record.acceptance?.summary?.failed === 0 ? 'passed' : 'failed'}**`);
+          console.log(`- Intelligence certification: **${record.intelligence ? (record.result === 'passed' ? 'passed' : 'failed') : 'not run'}**`);
+          console.log(`- Promotable staging evidence: **${record.promotable === true}**`);
           console.log(`- Backup reference recorded: **${Boolean(record.backupReference)}**`);
           console.log(`- Backup SHA-256 recorded: **${Boolean(record.backupSha256)}**`);
           NODE
@@ -260,7 +280,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dealguard-deployment-${{ inputs.target }}-${{ github.run_id }}
+          name: dealguard-deployment-${{ inputs.target }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             .release/release-baseline.json
             .release/deployment-record.json
@@ -270,6 +290,7 @@ jobs:
             .release/release-checksums.txt
             .release/migration-checksums.txt
             artifacts/acceptance/
+            artifacts/intelligence-acceptance/
           if-no-files-found: warn
           include-hidden-files: true
           retention-days: 90

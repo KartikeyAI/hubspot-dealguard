@@ -84,7 +84,7 @@ jobs:
           npm install --ignore-scripts --silent --prefix src/app/settings
           npm install --ignore-scripts --silent --prefix src/app/pages
       - name: Preserve public build dependencies for local validation
-        run: tar -czf "$RUNNER_TEMP/build-dependencies.tar.gz" node_modules/aws4fetch node_modules/@neondatabase node_modules/@types node_modules/pg node_modules/pg-* node_modules/postgres-* node_modules/packet-reader node_modules/pgpass node_modules/split2 node_modules/xtend node_modules/undici-types src/app/cards/node_modules src/app/settings/node_modules src/app/pages/node_modules
+        run: tar -czf "$RUNNER_TEMP/build-dependencies.tar.gz" node_modules src/app/cards/node_modules src/app/settings/node_modules src/app/pages/node_modules
       - uses: actions/upload-artifact@v4
         with:
           name: build-dependencies-${{ github.run_id }}

@@ -1,3 +1,4 @@
+import { WebhookHealthPanel } from './WebhookHealthPanel';
 import { BackgroundIntelligencePanel } from './BackgroundIntelligencePanel';
 import React from 'react';
 import { Flex } from '@hubspot/ui-extensions';
@@ -17,6 +18,7 @@ export function ManagerDecisionQueuePanel({ enabled }: { enabled: boolean }) {
     <ExecutiveRevenuePanel enabled={enabled} />
     <PortfolioHistoryPanel enabled={enabled} />
     <BackgroundIntelligencePanel enabled={enabled} />
+    <WebhookHealthPanel enabled={enabled} />
     <RecommendationOutcomePanel enabled={enabled} />
     <RecommendationOperationsPanel enabled={enabled} />
     <RecommendationNotificationConfigurationPanel enabled={enabled} />

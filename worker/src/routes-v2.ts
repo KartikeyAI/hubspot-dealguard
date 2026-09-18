@@ -178,9 +178,10 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   if (url.pathname === '/webhooks/hubspot') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     await validateHubSpotSignature(request, env);
-    const events = normalizeHubSpotWebhookEvents(await readJson<unknown>(request, 1_000_000));
-    if (events.length > 0) ctx.waitUntil(processHubSpotWebhookEvents(env, events));
-    return json({ accepted: events.length }, 202);
+    const body = await readJson<unknown>(request, 1_000_000);
+    if (!Array.isArray(body) || body.length > 100) throw new AppError(400, 'webhook_batch_invalid', 'Provide a webhook batch of at most 100 events.');
+    const events = normalizeHubSpotWebhookEvents(body);
+    return json(await processHubSpotWebhookEvents(env, events), 202);
   }
 
   if (url.pathname === '/integrations/hubspot/workflow-actions/assess-deal') {

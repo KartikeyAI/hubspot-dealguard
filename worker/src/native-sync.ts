@@ -253,7 +253,7 @@ export async function backfillNativeSync(env: Env, portalId: string): Promise<nu
        h.status AS handoff_status
        FROM deal_assessments a
        LEFT JOIN handoffs h ON h.portal_id = a.portal_id AND h.deal_id = a.deal_id
-       WHERE a.portal_id = ? ORDER BY a.assessed_at DESC LIMIT ?`,
+       WHERE dealguard.record_is_available(a.portal_id,a.deal_id) AND a.portal_id = ? ORDER BY a.assessed_at DESC LIMIT ?`,
     ).bind(portalId, PLAN_LIMITS[credentials.tenant.plan].maxDealsPerScan).all<Record<string, unknown>>();
     const assessments = (rows.results ?? []).map((row) => ({
       assessment: {

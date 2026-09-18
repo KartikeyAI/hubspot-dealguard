@@ -48,7 +48,7 @@ export async function backgroundIntelligenceStatus(env: Env, identity: RequestId
   const coverage = await env.DB.prepare(`SELECT COUNT(*)::integer AS open_deals,
     COUNT(*) FILTER (WHERE s.assessment_at = a.assessed_at AND s.generated_at::timestamptz >= NOW() - INTERVAL '24 hours')::integer AS recent_briefs
     FROM deal_assessments a LEFT JOIN deal_decision_snapshots s ON s.portal_id = a.portal_id AND s.deal_id = a.deal_id
-    WHERE a.portal_id = ? AND a.is_closed = 0`).bind(identity.portalId).first();
+    WHERE a.portal_id = ? AND a.is_closed = 0 AND dealguard.record_is_available(a.portal_id,a.deal_id)`).bind(identity.portalId).first();
   return { settings: { enabled: settings?.enabled === 1, refreshHours: Number(settings?.refresh_hours ?? 24),
     dailyRequestLimit: Number(settings?.daily_request_limit ?? 1000), version: Number(settings?.version ?? 0) },
     lastRunAt: settings?.last_run_at ?? null, nextRunAt: settings?.next_run_at ?? null,
@@ -193,13 +193,13 @@ export async function runBackgroundIntelligence(env: Env): Promise<void> {
       await requireCommercialTier(env, settings.portal_id, 'enterprise');
       await env.DB.prepare(`INSERT INTO background_intelligence_jobs (portal_id, deal_id, status)
         SELECT a.portal_id, a.deal_id, 'queued' FROM deal_assessments a
-        WHERE a.portal_id = ? AND a.is_closed = 0
+        WHERE a.portal_id = ? AND a.is_closed = 0 AND dealguard.record_is_available(a.portal_id,a.deal_id)
         AND NOT EXISTS (SELECT 1 FROM background_intelligence_jobs j WHERE j.portal_id = a.portal_id AND j.deal_id = a.deal_id)
         ORDER BY CASE WHEN a.status = 'critical' THEN 0 ELSE 1 END, a.assessed_at, a.deal_id LIMIT 50
         ON CONFLICT (portal_id, deal_id) DO NOTHING`).bind(settings.portal_id).run();
       const jobs = await env.DB.prepare(`SELECT j.deal_id, j.status, j.attempts FROM background_intelligence_jobs j
         JOIN deal_assessments a ON a.portal_id = j.portal_id AND a.deal_id = j.deal_id
-        WHERE j.portal_id = ? AND a.is_closed = 0 AND j.available_at <= NOW()
+        WHERE j.portal_id = ? AND a.is_closed = 0 AND dealguard.record_is_available(a.portal_id,a.deal_id) AND j.available_at <= NOW()
           AND (j.status IN ('queued','retry','cancelled')
             OR (j.status = 'processing' AND j.started_at < NOW() - INTERVAL '5 minutes')
             OR (j.status = 'completed' AND j.completed_at <= NOW() - (?::integer * INTERVAL '1 hour')))

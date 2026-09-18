@@ -1,3 +1,4 @@
+import { assertRecordAvailable } from './record-lifecycle.js';
 import { PLAN_LIMITS } from './config.js';
 import { decryptSecret, encryptSecret, randomToken } from './crypto.js';
 import { sendEmail } from './email.js';
@@ -227,6 +228,9 @@ async function hmacHex(secret: string, body: string): Promise<string> {
 }
 
 async function deliver(env: Env, destination: DestinationRow, event: OutboxRow): Promise<number | null> {
+  const context = JSON.parse(event.payload_json) as Record<string,unknown>;
+  const dealId = event.aggregate_type === 'deal' ? event.aggregate_id : typeof context.dealId === 'string' ? context.dealId : null;
+  if (dealId) await assertRecordAvailable(env,event.portal_id,dealId);
   const payload = JSON.parse(event.payload_json) as Record<string, unknown>;
   const envelope = {
     id: event.id,

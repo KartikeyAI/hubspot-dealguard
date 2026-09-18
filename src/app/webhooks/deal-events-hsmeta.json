@@ -8,12 +8,51 @@
     },
     "subscriptions": {
       "crmObjects": [
-        { "subscriptionType": "object.creation", "objectType": "deal", "active": true },
-        { "subscriptionType": "object.propertyChange", "objectType": "deal", "propertyName": "dealstage", "active": true },
-        { "subscriptionType": "object.propertyChange", "objectType": "deal", "propertyName": "hubspot_owner_id", "active": true },
-        { "subscriptionType": "object.propertyChange", "objectType": "deal", "propertyName": "amount", "active": true },
-        { "subscriptionType": "object.propertyChange", "objectType": "deal", "propertyName": "closedate", "active": true },
-        { "subscriptionType": "object.propertyChange", "objectType": "deal", "propertyName": "hs_next_step", "active": true }
+        {
+          "subscriptionType": "object.creation",
+          "objectType": "deal",
+          "active": true
+        },
+        {
+          "subscriptionType": "object.propertyChange",
+          "objectType": "deal",
+          "propertyName": "dealstage",
+          "active": true
+        },
+        {
+          "subscriptionType": "object.propertyChange",
+          "objectType": "deal",
+          "propertyName": "hubspot_owner_id",
+          "active": true
+        },
+        {
+          "subscriptionType": "object.propertyChange",
+          "objectType": "deal",
+          "propertyName": "amount",
+          "active": true
+        },
+        {
+          "subscriptionType": "object.propertyChange",
+          "objectType": "deal",
+          "propertyName": "closedate",
+          "active": true
+        },
+        {
+          "subscriptionType": "object.propertyChange",
+          "objectType": "deal",
+          "propertyName": "hs_next_step",
+          "active": true
+        },
+        {
+          "subscriptionType": "object.deletion",
+          "objectType": "deal",
+          "active": true
+        },
+        {
+          "subscriptionType": "object.restore",
+          "objectType": "deal",
+          "active": true
+        }
       ],
       "legacyCrmObjects": [],
       "hubEvents": []

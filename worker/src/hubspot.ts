@@ -1,3 +1,4 @@
+import { assertRecordAvailable, verifyRecordState } from './record-lifecycle.js';
 import { CORE_DEAL_PROPERTIES, DEALGUARD_NATIVE_PROPERTY_NAMES } from './config.js';
 import { AppError } from './errors.js';
 import { Repository, type TenantCredentials } from './repository.js';
@@ -106,7 +107,7 @@ export class HubSpotClient {
       client_secret: this.env.HUBSPOT_CLIENT_SECRET,
       refresh_token: this.credentials.refreshToken,
     });
-    const signal = await this.requestBoundary('/oauth/v1/token', 'POST');
+    const signal = await this.requestBoundary('/oauth/v1/token', 'POST') ?? AbortSignal.timeout(15000);
     const response = await fetch(`${API_BASE}/oauth/v1/token`, {
       ...(signal ? { signal, redirect: 'error' as const } : {}),
       method: 'POST',
@@ -128,7 +129,7 @@ export class HubSpotClient {
 
   private async request<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
     await this.refreshIfNeeded();
-    const signal = await this.requestBoundary(path, init.method ?? 'GET');
+    const signal = await this.requestBoundary(path, init.method ?? 'GET') ?? AbortSignal.timeout(15000);
     const response = await fetch(`${API_BASE}${path}`, {
       ...init,
       ...(signal ? { signal, redirect: 'error' as const } : {}),
@@ -146,6 +147,7 @@ export class HubSpotClient {
       return this.request<T>(path, init, false);
     }
     if (response.status === 429) throw new AppError(429, 'hubspot_rate_limited', 'HubSpot rate limited the request. Retry later.');
+    if (response.status === 404) throw new AppError(404, 'hubspot_record_not_found', 'HubSpot could not find the requested record.');
     if (!response.ok) {
       const body = await response.text();
       throw new AppError(502, 'hubspot_api_error', `HubSpot API request failed with status ${response.status}.`, body.slice(0, 500));
@@ -206,6 +208,7 @@ export class HubSpotClient {
   }
 
   async updateDealProperties(dealId: string, properties: Record<string, string>): Promise<void> {
+    await assertRecordAvailable(this.env, this.portalId, dealId);
     this.assertAllowedNativeProperties(properties);
     await this.request<HubSpotObject>(`/crm/v3/objects/deals/${encodeURIComponent(dealId)}`, {
       method: 'PATCH',
@@ -214,7 +217,10 @@ export class HubSpotClient {
   }
 
   async batchUpdateDeals(updates: HubSpotDealUpdate[]): Promise<void> {
-    for (const update of updates) this.assertAllowedNativeProperties(update.properties);
+    for (const update of updates) {
+      await assertRecordAvailable(this.env, this.portalId, update.id);
+      this.assertAllowedNativeProperties(update.properties);
+    }
     for (let offset = 0; offset < updates.length; offset += 100) {
       const batch = updates.slice(offset, offset + 100);
       if (batch.length === 0) continue;
@@ -233,6 +239,7 @@ export class HubSpotClient {
     priority: 'LOW' | 'MEDIUM' | 'HIGH';
     ownerId?: string | null;
   }): Promise<string> {
+    await assertRecordAvailable(this.env, this.portalId, input.dealId);
     const labels = await this.request<AssociationLabelResponse>('/crm/v4/associations/tasks/deals/labels');
     const association = (labels.results ?? []).find((item) => item.category === 'HUBSPOT_DEFINED' && item.label === null)
       ?? (labels.results ?? []).find((item) => item.category === 'HUBSPOT_DEFINED');
@@ -282,6 +289,26 @@ export class HubSpotClient {
     return map;
   }
 
+  /** Independently verify availability; neither 404 nor a webhook timestamp invents a loss. */
+  async reconcileDealLifecycle(dealId: string, source: 'webhook' | 'background' = 'webhook'): Promise<'active' | 'archived'> {
+    const verifiedAt = new Date().toISOString();
+    let result: HubSpotObject;
+    try {
+      result = await this.request<HubSpotObject>(`/crm/v3/objects/deals/${encodeURIComponent(dealId)}?archived=false&properties=hs_object_id`);
+    } catch (error) {
+      if (!(error instanceof AppError) || error.code !== 'hubspot_record_not_found') throw error;
+      result = await this.request<HubSpotObject>(`/crm/v3/objects/deals/${encodeURIComponent(dealId)}?archived=true&properties=hs_object_id`);
+    }
+    if (String(result.id) !== dealId || typeof result.archived !== 'boolean') {
+      throw new AppError(502, 'record_state_unverified', 'HubSpot returned incomplete record availability evidence.');
+    }
+    const state = result.archived ? 'archived' : 'active';
+    if (!await verifyRecordState(this.env, this.portalId, dealId, state, verifiedAt, source)) {
+      throw new AppError(409, 'record_state_superseded', 'A newer record verification already exists.');
+    }
+    return state;
+  }
+
   async getDeal(
     dealId: string,
     stageMap?: Map<string, StageInfo>,
@@ -296,9 +323,13 @@ export class HubSpotClient {
       ...customProperties,
       ...extraProperties,
     ]).join(',');
+    const verifiedAt = new Date().toISOString();
     const result = await this.request<HubSpotObject>(
       `/crm/v3/objects/deals/${encodeURIComponent(dealId)}?properties=${encodeURIComponent(properties)}&associations=contacts,companies&archived=false`,
     );
+    if (String(result.id) !== dealId || result.archived === true) throw new AppError(410, 'deal_archived', 'This deal is unavailable.');
+    if (result.archived === false) await verifyRecordState(this.env, this.portalId, dealId, 'active', verifiedAt, 'record_read');
+    await assertRecordAvailable(this.env, this.portalId, dealId);
     const stage = map.get(result.properties.dealstage ?? '');
     return {
       id: result.id,

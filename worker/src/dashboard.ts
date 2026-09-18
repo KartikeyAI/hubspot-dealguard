@@ -20,12 +20,12 @@ export async function dashboardForPortal(env: Env, portalId: string): Promise<Da
      SUM(CASE WHEN a.is_won = 1 AND (h.status IS NULL OR h.status != 'confirmed') THEN 1 ELSE 0 END) AS incomplete_handoffs
      FROM deal_assessments a
      LEFT JOIN handoffs h ON h.portal_id = a.portal_id AND h.deal_id = a.deal_id
-     WHERE a.portal_id = ? AND a.assessed_at >= ?`
+     WHERE dealguard.record_is_available(a.portal_id,a.deal_id) AND a.portal_id = ? AND a.assessed_at >= ?`
   ).bind(portalId, snapshotStartedAt).first<Record<string, unknown>>();
 
   const issueRows = await env.DB.prepare(
     `SELECT issues_json FROM deal_assessments
-     WHERE portal_id = ? AND assessed_at >= ? AND (is_closed = 0 OR is_won = 1)
+     WHERE dealguard.record_is_available(portal_id,deal_id) AND portal_id = ? AND assessed_at >= ? AND (is_closed = 0 OR is_won = 1)
      ORDER BY assessed_at DESC LIMIT 5000`
   ).bind(portalId, snapshotStartedAt).all<{ issues_json: string }>();
   const issueMap = new Map<string, { label: string; count: number }>();
@@ -41,7 +41,7 @@ export async function dashboardForPortal(env: Env, portalId: string): Promise<Da
   const problemRows = await env.DB.prepare(
     `SELECT deal_id, deal_name, pipeline_label, stage_label, score, status, readiness_summary, assessed_at
      FROM deal_assessments
-     WHERE portal_id = ? AND assessed_at >= ? AND status IN ('critical', 'at_risk') AND (is_closed = 0 OR is_won = 1)
+     WHERE dealguard.record_is_available(portal_id,deal_id) AND portal_id = ? AND assessed_at >= ? AND status IN ('critical', 'at_risk') AND (is_closed = 0 OR is_won = 1)
      ORDER BY CASE status WHEN 'critical' THEN 0 ELSE 1 END, score ASC, assessed_at DESC
      LIMIT 12`
   ).bind(portalId, snapshotStartedAt).all<Record<string, unknown>>();

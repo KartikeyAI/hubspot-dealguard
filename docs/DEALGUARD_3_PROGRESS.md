@@ -299,3 +299,22 @@ and matching snapshot. Rejected insertion cannot emit a presentation event.
 Two real PostgreSQL sessions test both snapshot/closure race directions and
 rollback consistency. See `DECISION_LIFECYCLE_FENCES.md`. This does not claim that
 all downstream CRM/remediation/notification operations are one transaction.
+
+## Consecutive development — slice 12: verified archive/restore lifecycle
+
+Migration 0027 adds tenant-bound availability state and timeline evidence. Verified
+archives suppress current briefs/actions without inventing a lost sale, erasing
+assessment history or renewing source clocks. Restore, late-work fences, handoff
+termination, scoped current reporting and archive-aware provider admissions are
+implemented. Real PostgreSQL and client-boundary tests accompany this work.
+See `RECORD_ARCHIVE_LIFECYCLE.md` for incomplete-provider and concurrency boundaries.
+
+## Consecutive development — slice 13: durable webhook receipt and retries
+
+Migration 0028 adds an at-least-once durable inbox: signature before persistence,
+persistence before acknowledgment, atomic claims, expiring leases, bounded retries,
+visible dead letters and signed administrator controls. Added project deletion and
+restore subscriptions without increasing OAuth grants. Polling recovers a failed
+queue wakeup. Earlier unavailable payloads are not retroactively reconstructed.
+See `DURABLE_WEBHOOK_INBOX.md`. Exact-tree CI evidence is recorded on PR #46 after
+execution, not inferred here. No live deployment or phase exit is claimed.

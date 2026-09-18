@@ -1,3 +1,4 @@
+import { webhookInboxStatus, retryWebhookInbox } from './hubspot-events.js';
 import { backgroundIntelligenceStatus, saveBackgroundIntelligenceSettings, retryBackgroundIntelligence } from './background-intelligence.js';
 import { recordedPortfolioHistory } from './portfolio-snapshots.js';
 import { requireCommercialTier } from './billing.js';
@@ -27,6 +28,14 @@ export async function route(
   ctx: { waitUntil(promise: Promise<unknown>): void },
 ): Promise<Response> {
   const url = new URL(request.url);
+  if (url.pathname === '/api/v1/enterprise/webhook-inbox') {
+    if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    return json({ statuses: await webhookInboxStatus(env, await validateHubSpotRequest(request, env)) });
+  }
+  if (url.pathname === '/api/v1/enterprise/webhook-inbox/retry') {
+    if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    return json(await retryWebhookInbox(env, await validateHubSpotRequest(request, env)));
+  }
   if (url.pathname === '/api/v1/enterprise/background-intelligence') {
     if (!['GET', 'PUT'].includes(request.method)) return methodNotAllowed(['GET','PUT']);
     const identity = await validateHubSpotRequest(request, env);

@@ -16,7 +16,7 @@ export function portfolioCaptureQuery(portalId: string, capturedAt: string, runI
         deal_amount_in_company_currency,
         CASE WHEN assessed_at ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T.*(Z|[+-][0-9]{2}:[0-9]{2})$'
           AND pg_input_is_valid(assessed_at, 'timestamp with time zone') THEN assessed_at::timestamptz END AS observed_at
-      FROM assessment_history WHERE portal_id = ?
+      FROM assessment_history WHERE portal_id = ? AND dealguard.record_is_available(assessment_history.portal_id,deal_id)
       ORDER BY deal_id, observed_at DESC NULLS FIRST, id DESC
     ), bounded AS MATERIALIZED (SELECT * FROM candidates ORDER BY deal_id LIMIT ?),
     quality AS (

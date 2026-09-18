@@ -1,3 +1,4 @@
+import { assertRecordAvailable } from './record-lifecycle.js';
 import { decryptSecret, encryptSecret, randomToken, sha256Hex } from './crypto.js';
 import { AppError } from './errors.js';
 import { Repository } from './repository.js';
@@ -148,6 +149,7 @@ export async function notifyAssessmentTransition(env: Env, portalId: string, pre
   else if (slack.alertOnHandoffRequired && assessment.isWon && previous?.handoffStatus !== 'confirmed') kind = 'handoff_required';
   else if (slack.alertOnCritical && assessment.status === 'critical') kind = 'critical_deal';
   if (!kind) return;
+  await assertRecordAvailable(env, portalId, assessment.dealId);
   const timeKey = force ? assessment.assessedAt : assessment.assessedAt.slice(0, 13);
   const fingerprint = `${kind}:${assessment.dealId}:${assessment.status}:${assessment.score}:${trigger}:${timeKey}`;
   await deliverSlackAssessment(env, portalId, assessment, kind, fingerprint, force ? 0 : slack.cooldownMinutes);

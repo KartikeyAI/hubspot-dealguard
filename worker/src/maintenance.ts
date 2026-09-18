@@ -10,7 +10,8 @@ export async function runMaintenance(env: Env): Promise<void> {
   await env.DB.batch([
     env.DB.prepare(`DELETE FROM oauth_states WHERE expires_at < ?`).bind(now.toISOString()),
     env.DB.prepare(`DELETE FROM integration_oauth_states WHERE expires_at < ?`).bind(now.toISOString()),
-    env.DB.prepare(`DELETE FROM inbound_events WHERE created_at < ?`).bind(inboundCutoff),
+    env.DB.prepare(`DELETE FROM inbound_events WHERE created_at < ? AND status = 'processed'`).bind(inboundCutoff),
+    env.DB.prepare(`DELETE FROM hubspot_webhook_inbox WHERE created_at < ?::timestamptz AND status = 'processed'`).bind(inboundCutoff),
     env.DB.prepare(`DELETE FROM notification_events WHERE created_at < ?`).bind(notificationCutoff),
   ]);
   await evaluateRecommendationRoutingPolicies(env);

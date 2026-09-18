@@ -1,3 +1,4 @@
+import { assertRecordAvailable } from './record-lifecycle.js';
 import { assessmentFreshness } from './evidence-freshness.js';
 import { saveAssessmentContext } from './assessment-context.js';
 import { recordUsageAtomic } from './billing-usage.js';
@@ -245,6 +246,7 @@ export async function enrichStoredAssessmentForPortal(
   portalId: string,
   dealId: string,
 ): Promise<Record<string, unknown> | null> {
+  await assertRecordAvailable(env, portalId, dealId);
   const key = cacheKey(portalId, dealId);
   const cachedResult = enrichmentCache.get(key);
   if (cachedResult && cachedResult.expiresAt > Date.now()) return cachedResult.value;

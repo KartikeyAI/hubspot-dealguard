@@ -1,3 +1,4 @@
+import { assertRecordAvailable } from './record-lifecycle.js';
 import { PLAN_LIMITS } from './config.js';
 import { AppError } from './errors.js';
 import { HubSpotClient } from './hubspot.js';
@@ -148,6 +149,7 @@ export async function createRemediationCase(
   const input = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const dealId = typeof input.dealId === 'string' && /^\d+$/.test(input.dealId) ? input.dealId : null;
   if (!dealId) throw new AppError(400, 'remediation_deal_required', 'A valid HubSpot deal ID is required.');
+  await assertRecordAvailable(env, identity.portalId, dealId);
   const issueCode = safeText(input.issueCode, 'manual_follow_up', 128).replace(/[^a-zA-Z0-9_.-]/g, '_');
   const existing = await env.DB.prepare(`SELECT * FROM remediation_cases WHERE portal_id = ? AND deal_id = ? AND issue_code = ? AND status IN ('open', 'acknowledged', 'in_progress', 'overdue') LIMIT 1`)
     .bind(identity.portalId, dealId, issueCode).first<CaseRow>();
@@ -273,6 +275,7 @@ export async function transitionRemediationCase(env: Env, identity: RequestIdent
 export async function syncAssessmentRemediations(env: Env, portalId: string, assessment: DealAssessment): Promise<void> {
   const tenant = await new Repository(env).getTenant(portalId);
   if (!PLAN_LIMITS[tenant.plan].remediationAutomation) return;
+  await assertRecordAvailable(env, portalId, assessment.dealId);
   const activeCodes = new Set(assessment.issues.map((issue) => issue.code));
   for (const issue of assessment.issues.filter((item) => item.severity === 'critical')) {
     const identity: RequestIdentity = { portalId, userId: null, userEmail: null, appId: null };
@@ -301,7 +304,7 @@ export async function syncAssessmentRemediations(env: Env, portalId: string, ass
 }
 
 export async function escalateOverdueRemediations(env: Env, limit = 100): Promise<void> {
-  const rows = await env.DB.prepare(`SELECT * FROM remediation_cases WHERE status IN ('open', 'acknowledged', 'in_progress') AND due_at IS NOT NULL AND due_at < ? ORDER BY due_at ASC LIMIT ?`)
+  const rows = await env.DB.prepare(`SELECT * FROM remediation_cases WHERE dealguard.record_is_available(portal_id,deal_id) AND status IN ('open', 'acknowledged', 'in_progress') AND due_at IS NOT NULL AND due_at < ? ORDER BY due_at ASC LIMIT ?`)
     .bind(new Date().toISOString(), limit).all<CaseRow>();
   for (const row of rows.results ?? []) {
     const now = new Date().toISOString();

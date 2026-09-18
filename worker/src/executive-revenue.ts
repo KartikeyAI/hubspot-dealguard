@@ -455,7 +455,8 @@ export async function executiveRevenueView(
   const period = parsePeriod(url);
   const filters = requestedFilters(url, access);
   const candidateLimit = Math.min(50, Math.max(1, Number(url.searchParams.get('candidateLimit') ?? 20) || 20));
-  const key = cacheKey(identity, access, filters, period, candidateLimit);
+  const lifecycle = await env.DB.prepare('SELECT COALESCE(SUM(version),0)::text AS revision FROM deal_record_lifecycle WHERE portal_id = ?').bind(identity.portalId).first<{revision:string}>();
+  const key = `${cacheKey(identity, access, filters, period, candidateLimit)}:${lifecycle?.revision ?? '0'}`;
   const force = url.searchParams.get('refresh') === 'true';
 
   if (!force) {
@@ -472,7 +473,10 @@ export async function executiveRevenueView(
   const snapshotDate = fetchedAt.slice(0, 10);
   const evidencePromise = loadDatabaseEvidence(env, identity.portalId, snapshotDate);
   const dealsPromise = client.listDeals(maxDeals, ['hs_forecast_category']);
-  const [rawDeals, evidence] = await Promise.all([dealsPromise, evidencePromise]);
+  const [sourceDeals, evidence, removed] = await Promise.all([dealsPromise, evidencePromise,
+    env.DB.prepare("SELECT deal_id FROM deal_record_lifecycle WHERE portal_id = ? AND state = 'archived'").bind(identity.portalId).all<{deal_id:string}>()]);
+  const archived = new Set((removed.results ?? []).map(row=>row.deal_id));
+  const rawDeals = sourceDeals.filter(deal=>!archived.has(deal.id));
   const now = Date.parse(fetchedAt);
   const allCurrentDeals = rawDeals.map((deal) => mapCurrentDeal(
     identity.portalId,
@@ -500,7 +504,7 @@ export async function executiveRevenueView(
     fetchedAt,
     maxDeals,
     loadedDeals: rawDeals.length,
-    sourceTruncated: rawDeals.length >= maxDeals,
+    sourceTruncated: sourceDeals.length >= maxDeals,
     candidateLimit,
   });
   putCache(key, response);

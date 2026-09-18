@@ -243,7 +243,7 @@ export class Repository {
        FROM deal_assessments a
        LEFT JOIN deal_reviews r ON r.portal_id = a.portal_id AND r.deal_id = a.deal_id
        LEFT JOIN handoffs h ON h.portal_id = a.portal_id AND h.deal_id = a.deal_id
-       WHERE a.portal_id = ? AND a.deal_id = ?`
+       WHERE a.portal_id = ? AND a.deal_id = ? AND dealguard.record_is_available(a.portal_id,a.deal_id)`
     ).bind(portalId, dealId).first<Record<string, unknown>>();
     if (!row) return null;
     return {

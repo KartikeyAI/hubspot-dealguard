@@ -692,7 +692,7 @@ export async function managerDecisionQueue(
       ON snapshot.portal_id = ? AND snapshot.deal_id = latest.deal_id
     LEFT JOIN remediation_counts remediation ON remediation.deal_id = latest.deal_id
     LEFT JOIN next_remediation ON next_remediation.deal_id = latest.deal_id
-    WHERE latest.is_closed = 0 ${where}
+    WHERE latest.is_closed = 0 AND dealguard.record_is_available(latest.portal_id,latest.deal_id) ${where}
     ORDER BY latest.assessed_at DESC
     LIMIT 10001`,
   ).bind(

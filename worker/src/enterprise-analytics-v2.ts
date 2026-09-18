@@ -113,7 +113,7 @@ function latestAssessmentCte(): string {
 }
 
 function currentStateWhere(alias: string, filters: AnalyticsFilters): string {
-  return `${alias}.is_closed = 0 AND ${filterSql(alias, filters)}`;
+  return `${alias}.is_closed = 0 AND dealguard.record_is_available(${alias}.portal_id,${alias}.deal_id) AND ${filterSql(alias, filters)}`;
 }
 
 function safeCompanyCurrencyAmount(

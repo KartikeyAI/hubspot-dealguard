@@ -16,7 +16,7 @@ test('current analytics use one latest open assessment per deal', () => {
   assert.match(analytics, /SELECT DISTINCT ON \(deal_id\) \*/);
   assert.match(analytics, /ORDER BY deal_id, assessed_at DESC, id DESC/);
   assert.doesNotMatch(functionSource('latestAssessmentCte'), /assessed_at >=/, 'current state must not disappear outside the trend window');
-  assert.match(analytics, /return `\$\{alias\}\.is_closed = 0 AND \$\{filterSql\(alias, filters\)\}`/);
+  assert.match(functionSource('currentStateWhere'), /is_closed = 0 AND dealguard\.record_is_available\(\$\{alias\}\.portal_id,\$\{alias\}\.deal_id\) AND \$\{filterSql\(alias, filters\)\}/);
   assert.match(analytics, /FROM latest_assessments latest\s+WHERE \$\{currentStateWhere\('latest', filters\)\}/);
 });
 

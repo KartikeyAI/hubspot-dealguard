@@ -41,7 +41,7 @@ export function buildPortfolioHistoryQuery(
     sql: `WITH bounds AS (
       SELECT ?::timestamptz AS as_of, ?::timestamptz AS start_at, ?::integer AS days
     ), history AS MATERIALIZED (
-      SELECT id, deal_id, pipeline_id, stage_id, owner_id, team_id, region_code,
+      SELECT id, portal_id, deal_id, pipeline_id, stage_id, owner_id, team_id, region_code,
         score, status, is_closed, deal_amount, deal_currency_code, deal_amount_in_company_currency,
         CASE WHEN assessed_at ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]{1,6}){0,1}(Z|[+-][0-9]{2}:[0-9]{2})$'
           AND pg_input_is_valid(assessed_at, 'timestamp with time zone')
@@ -80,6 +80,7 @@ export function buildPortfolioHistoryQuery(
       LEFT JOIN states state ON state.observed_at <= days.snapshot_at
         AND (state.next_at IS NULL OR state.next_at > days.snapshot_at)
         AND (${observationScope.sql})
+        AND dealguard.record_was_available(state.portal_id,state.deal_id,days.snapshot_at)
     )
     SELECT day::text AS date,
       to_char(snapshot_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS snapshot_at,

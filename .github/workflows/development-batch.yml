@@ -41,7 +41,7 @@ jobs:
           from pathlib import Path
           def git(*args): return subprocess.check_output(['git',*args],text=True).strip()
           base='c0e00ee39545962a20b616d549b840630ba231dd'
-          target='1246a84c225c5c59394f78285d59c3559d81c397'
+          target='7a54607d8af2f418de621ec4ad34deff1f7dfc7b'
           parts=[f'.development/archive-patch-{i}.part' for i in range(5)]
           helpers=parts+['.github/workflows/development-batch.yml']
           assert git('rev-parse','HEAD')==os.environ['INPUT_SHA']
@@ -65,7 +65,7 @@ jobs:
           p.write_text(p.read_text().replace('migrationNumbers.at(-1) === 26','migrationNumbers.at(-1) === 28'))
           p=Path('test/trustworthy-intelligence.test.mjs')
           old=r"  assert.match(analytics, /return `\$\{alias\}\.is_closed = 0 AND \$\{filterSql\(alias, filters\)\}`/);"
-          new=r"  assert.match(functionSource('currentStateWhere'), /is_closed = 0 AND \$\{filterSql\(alias, filters\)\} AND dealguard\.record_is_available/);"
+          new=r"  assert.match(functionSource('currentStateWhere'), /is_closed = 0 AND dealguard\.record_is_available\(\$\{alias\}\.portal_id,\$\{alias\}\.deal_id\) AND \$\{filterSql\(alias, filters\)\}/);"
           assert old in p.read_text()
           p.write_text(p.read_text().replace(old,new))
           subprocess.run(['git','add','scripts/release-convergence.mjs','scripts/release-preflight.mjs','test/trustworthy-intelligence.test.mjs'],check=True)
@@ -83,6 +83,14 @@ jobs:
           npm install --ignore-scripts --silent --prefix src/app/cards
           npm install --ignore-scripts --silent --prefix src/app/settings
           npm install --ignore-scripts --silent --prefix src/app/pages
+      - name: Preserve public build dependencies for local validation
+        run: tar -czf "$RUNNER_TEMP/build-dependencies.tar.gz" node_modules/aws4fetch node_modules/@neondatabase node_modules/@types node_modules/pg node_modules/pg-* node_modules/postgres-* node_modules/packet-reader node_modules/pgpass node_modules/split2 node_modules/xtend node_modules/undici-types src/app/cards/node_modules src/app/settings/node_modules src/app/pages/node_modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-dependencies-${{ github.run_id }}
+          path: ${{ runner.temp }}/build-dependencies.tar.gz
+          if-no-files-found: error
+          retention-days: 1
       - name: Validate build contracts and additive migrations
         run: |
           npm run release:convergence
@@ -148,7 +156,7 @@ jobs:
           subprocess.run(['git','fetch',str(p/'source.bundle'),'HEAD:refs/heads/validated-candidate'],check=True)
           assert git('rev-parse','validated-candidate')==sha
           assert git('rev-parse',sha+'^')==os.environ['INPUT_SHA']
-          assert git('rev-parse',sha+'^{tree}')=='1246a84c225c5c59394f78285d59c3559d81c397'
+          assert git('rev-parse',sha+'^{tree}')=='7a54607d8af2f418de621ec4ad34deff1f7dfc7b'
           assert git('rev-list','--count',os.environ['INPUT_SHA']+'..'+sha)=='1'
           env=os.environ.copy()
           env['GIT_CONFIG_COUNT']='1'

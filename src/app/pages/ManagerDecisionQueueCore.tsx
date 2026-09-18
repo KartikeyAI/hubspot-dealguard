@@ -70,6 +70,8 @@ type DecisionQueueItem = {
   evidenceCoveragePercent: number;
   evidenceConfidence: 'high' | 'medium' | 'low';
   snapshotGeneratedAt: string | null;
+  assessmentFreshness?: { status: 'fresh' | 'aging' | 'stale' | 'unavailable'; ageHours: number | null };
+  snapshotFreshness?: { status: 'fresh' | 'aging' | 'stale' | 'unavailable'; reason: string | null };
   dealBriefStatus: 'on_track' | 'watch' | 'intervention_required' | 'insufficient_evidence' | null;
   amount: {
     value: number | null;
@@ -327,7 +329,7 @@ export function ManagerDecisionQueuePanel({ enabled }: { enabled: boolean }) {
       </Flex>
 
       {(queue.summary.readinessOnlyDeals > 0 || queue.summary.staleDealBriefDeals > 0) && <Alert title="Some deals have limited portfolio evidence" variant="warning">
-        {queue.summary.readinessOnlyDeals} deals are readiness-only and {queue.summary.staleDealBriefDeals} have stale Deal Brief evidence. Opening or refreshing a deal record captures a current bounded snapshot; missing evidence is not proof that a deal will be lost.
+        {queue.summary.readinessOnlyDeals} deals are readiness-only and {queue.summary.staleDealBriefDeals} have stale Deal Brief evidence. Regenerating a brief does not renew its source observation time; missing evidence is not proof that a deal will be lost.
       </Alert>}
 
       {queue.amountCohorts.length > 0 && <Card>
@@ -397,7 +399,11 @@ export function ManagerDecisionQueuePanel({ enabled }: { enabled: boolean }) {
                 </>}
 
                 <Flex direction="row" justify="between" align="center" gap="small">
-                  <Text variant="microcopy">Assessment: {formatDate(item.assessedAt)} · {item.openRemediationCount} open remediations</Text>
+                  <Flex direction="column" gap="extra-small">
+                    <Text variant="microcopy">Assessment: {formatDate(item.assessedAt)} · Brief generated: {formatDate(item.snapshotGeneratedAt)}</Text>
+                    <Text variant="microcopy">Observation age: {item.assessmentFreshness?.status ?? 'unavailable'}{typeof item.assessmentFreshness?.ageHours === 'number' ? ` (${Math.ceil(item.assessmentFreshness.ageHours)} hours)` : ''} · {item.openRemediationCount} open remediations</Text>
+                    <Text variant="microcopy">Readiness fallback deadlines run from the recorded assessment, not this page refresh; they are advisory, not a committed SLA.</Text>
+                  </Flex>
                   <Link href={{ url: item.recordUrl, external: true }}>Open deal record</Link>
                 </Flex>
               </Flex>

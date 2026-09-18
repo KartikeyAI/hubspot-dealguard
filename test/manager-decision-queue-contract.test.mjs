@@ -33,7 +33,9 @@ test('decision snapshots retain only bounded derived evidence', () => {
   assert.match(source, /safeRisks/);
   assert.match(source, /dimensions/);
   assert.doesNotMatch(source, /contacts_json|emails_json|meetings_json|calls_json|quotes_json|line_items_json/);
-  assert.match(source, /WHERE excluded\.assessment_at::timestamptz >= deal_decision_snapshots\.assessment_at::timestamptz/);
+  assert.match(source, /RETURNING deal_id/);
+  assert.match(source, /if \(!written\) return false/);
+  assert.match(source, /WHERE excluded\.assessment_at::timestamptz > deal_decision_snapshots\.assessment_at::timestamptz/);
 });
 
 test('migration and validator establish the snapshot table and indexes', () => {

@@ -205,3 +205,29 @@ M1.1 live gates remain open. M1.2 is not complete: durable snapshot provenance,
 archive/deletion ingestion, handoff timing, other freshness work, and live acceptance
 remain distinct tasks. Validation results belong to the exact PR head and are
 recorded in its discussion; the existence of this code is not production acceptance.
+
+
+## M1.2 slice 4: observation freshness and accepted snapshot writes
+
+Built on PR #46 head `0915dec9956ca3cbe9bdced1363b9c550cfcc280`.
+
+- Shared source-age policy for the Deal Brief, manager queue and executive reader;
+  generation cannot renew observation age. Exact 24/72-hour boundaries are applied
+  before display rounding. Invalid/future clocks and mismatched assessments fail closed.
+- Manager responses/UI distinguish observation and generation times. Aging evidence
+  caps confidence; stale/invalid snapshots cannot supply current brief actions or scores.
+- Readiness fallback deadlines are anchored to the recorded assessment rather than
+  page refresh; existing remediation deadlines remain unchanged.
+- Snapshot extraction rejects missing essential numbers, false zero coercions,
+  misaddressed payloads and invented generation clocks. Optional missing scores stay absent.
+- Snapshot upserts require a matching recorded-open assessment and advance only on
+  newer source/generation pairs. Ignored writes and stale evidence do not drive new
+  recommendation observations. This is not full lifecycle transaction serialization.
+- Added executed reader/policy tests and migrated-PostgreSQL snapshot-write scenarios.
+  Exact validation results are recorded on the final PR head, separately from deployment.
+
+See `EVIDENCE_FRESHNESS.md` for limits, source-clock semantics and retry behavior.
+No migration, OAuth grant, provider call, publication, billing action or customer
+notification is performed by this slice. M1.1 live gates and M1.2 remain open:
+durable snapshot provenance, archive/deletion reconciliation, durable handoff
+clocks, per-source enrichment provenance and real-account acceptance are pending.

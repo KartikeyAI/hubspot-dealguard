@@ -62,15 +62,20 @@ It does not retain associated contact details, email metadata, meeting metadata,
 
 A snapshot is used as current evidence only when:
 
-- its `assessment_at` matches the latest assessment; and
-- it was generated no more than 72 hours ago.
+- its `assessment_at` matches the latest assessment at the exact instant;
+- the source assessment is no more than 72 hours old; and
+- its generation timestamp is valid, not in the future or before the assessment,
+  and its recorded freshness does not declare stale/unavailable evidence.
+
+Generation does not renew source age. See `EVIDENCE_FRESHNESS.md` for snapshot
+acceptance, confidence caps, invalid-clock behavior and non-sliding fallback deadlines.
 
 Evidence modes are:
 
 - `full_deal_brief`: current and no more than 24 hours old;
 - `aging_deal_brief`: current and 24–72 hours old;
 - `stale_deal_brief`: older than 72 hours;
-- `readiness_only`: no matching snapshot exists.
+- `readiness_only`: no usable matching snapshot exists (missing or invalid evidence).
 
 Stale or mismatched snapshots do not override current readiness evidence.
 

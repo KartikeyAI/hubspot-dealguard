@@ -1,3 +1,4 @@
+import { assessmentFreshness } from './evidence-freshness.js';
 import { saveAssessmentContext } from './assessment-context.js';
 import { recordUsageAtomic } from './billing-usage.js';
 import { loadBuyerCommitteeData } from './buyer-committee-data.js';
@@ -216,8 +217,8 @@ async function buildStoredAssessmentEnrichment(
   const repository = new Repository(env);
   const stored = await repository.getAssessment(portalId, dealId);
   if (!stored) return null;
-  const assessedAt = Date.parse(stored.assessedAt);
-  if (!Number.isFinite(assessedAt) || Date.now() - assessedAt >= 15 * 60_000) return null;
+  const freshness = assessmentFreshness(stored.assessedAt, Date.now());
+  if (freshness.status === 'unavailable' || freshness.ageHours === null || freshness.ageHours >= 0.25) return null;
 
   const client = await HubSpotClient.forPortal(env, portalId);
   const dimensionProperties = await policyDimensionPropertyNames(env, portalId);

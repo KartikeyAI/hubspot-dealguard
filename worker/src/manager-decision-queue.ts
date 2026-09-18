@@ -1,3 +1,4 @@
+import { assessmentFreshness, assessmentActionDueAt, snapshotFreshness, freshnessConfidence, type EvidenceFreshness, type SnapshotFreshness } from './evidence-freshness.js';
 import { AppError } from './errors.js';
 import { requireEnterprisePermission, type EnterpriseAccessContext } from './enterprise-access.js';
 import type {
@@ -84,6 +85,8 @@ interface WorkingItem {
   evidenceCoveragePercent: number;
   evidenceConfidence: 'high' | 'medium' | 'low';
   snapshotGeneratedAt: string | null;
+  assessmentFreshness: EvidenceFreshness;
+  snapshotFreshness: SnapshotFreshness;
   dealBriefStatus: DecisionQueueItem['dealBriefStatus'];
   snapshotUsable: boolean;
   nextAction: DecisionQueueAction | null;
@@ -145,24 +148,16 @@ function normalizeCurrency(value: unknown): string | null {
   return code && /^[A-Z]{3}$/.test(code) ? code : null;
 }
 
-function sameInstant(left: unknown, right: unknown): boolean {
-  const leftTime = left ? Date.parse(String(left)) : Number.NaN;
-  const rightTime = right ? Date.parse(String(right)) : Number.NaN;
-  return Number.isFinite(leftTime) && Number.isFinite(rightTime) && Math.abs(leftTime - rightTime) < 1000;
-}
-
 function snapshotMode(row: ManagerDecisionSourceRow, now: number): {
-  mode: DecisionEvidenceMode;
-  usable: boolean;
-  generatedAt: string | null;
+  mode: DecisionEvidenceMode; usable: boolean; generatedAt: string | null; freshness: SnapshotFreshness;
 } {
-  const generatedAt = iso(row.snapshot_generated_at);
-  const current = sameInstant(row.snapshot_assessment_at, row.assessed_at);
-  if (!generatedAt || !current) return { mode: 'readiness_only', usable: false, generatedAt };
-  const ageHours = Math.max(0, now - Date.parse(generatedAt)) / 3_600_000;
-  if (ageHours <= 24) return { mode: 'full_deal_brief', usable: true, generatedAt };
-  if (ageHours <= 72) return { mode: 'aging_deal_brief', usable: true, generatedAt };
-  return { mode: 'stale_deal_brief', usable: false, generatedAt };
+  const freshness = snapshotFreshness({ assessmentAt: row.assessed_at,
+    snapshotAssessmentAt: row.snapshot_assessment_at, generatedAt: row.snapshot_generated_at,
+    recordedStatus: row.snapshot_freshness_status }, now);
+  const mode: DecisionEvidenceMode = freshness.status === 'fresh' ? 'full_deal_brief'
+    : freshness.status === 'aging' ? 'aging_deal_brief'
+    : freshness.status === 'stale' ? 'stale_deal_brief' : 'readiness_only';
+  return { mode, usable: freshness.usable, generatedAt: freshness.generatedAt, freshness };
 }
 
 function readinessAttention(score: number, stageAgeDays: number | null, issueCount: number): number {
@@ -191,17 +186,18 @@ function issueAction(row: ManagerDecisionSourceRow, now: number): DecisionQueueA
   if (!issue || !issue.code || !issue.label) return null;
   const priority = issue.severity === 'critical' ? 'high' : issue.severity === 'warning' ? 'medium' : 'low';
   const dueHours = issue.severity === 'critical' ? 24 : issue.severity === 'warning' ? 72 : 168;
+  const dueAt = assessmentActionDueAt(row.assessed_at, dueHours, now);
   return {
     code: `readiness_${issue.code}`,
     label: issue.label,
     action: issue.description ?? `Resolve the ${issue.label.toLowerCase()} readiness issue.`,
     priority,
     owner: 'deal_owner',
-    dueAt: new Date(now + dueHours * 3_600_000).toISOString(),
+    dueAt,
     rationale: `This is the highest-priority current readiness issue and carries ${issue.weight} readiness points.`,
     evidenceCodes: [issue.code],
     source: 'readiness',
-    overdue: false,
+    overdue: dueAt !== null && Date.parse(dueAt) < now,
   };
 }
 
@@ -366,6 +362,7 @@ function workingItem(row: ManagerDecisionSourceRow, portalId: string, now: numbe
   const confidence = snapshot.usable && ['high', 'medium', 'low'].includes(String(row.snapshot_confidence))
     ? row.snapshot_confidence as WorkingItem['evidenceConfidence']
     : 'low';
+  const sourceFreshness = assessmentFreshness(row.assessed_at, now);
   const action = chooseAction(row, snapshot.usable, now);
   const amount = amountContext(row);
   return {
@@ -381,14 +378,20 @@ function workingItem(row: ManagerDecisionSourceRow, portalId: string, now: numbe
     deterministicAttentionScore,
     evidenceMode: snapshot.mode,
     evidenceCoveragePercent: coverage,
-    evidenceConfidence: confidence,
+    evidenceConfidence: freshnessConfidence(confidence, snapshot.freshness.status),
+    assessmentFreshness: sourceFreshness,
+    snapshotFreshness: snapshot.freshness,
     snapshotGeneratedAt: snapshot.generatedAt,
     dealBriefStatus: snapshot.usable && ['on_track', 'watch', 'intervention_required', 'insufficient_evidence'].includes(String(row.brief_status))
       ? row.brief_status as WorkingItem['dealBriefStatus']
       : null,
     snapshotUsable: snapshot.usable,
     nextAction: action,
-    reasons: initialReasons(row, snapshot.mode, snapshot.usable),
+    reasons: [
+      ...(sourceFreshness.status === 'stale' || sourceFreshness.status === 'unavailable'
+        ? [reason('assessment_freshness_review', 'Recorded assessment is stale or its observation time is unavailable', 'warning', 'evidence')] : []),
+      ...initialReasons(row, snapshot.mode, snapshot.usable),
+    ].slice(0, 5),
     dimensionStates: snapshot.usable ? parseJson<Record<string, unknown>>(row.dimensions_json, {}) : {},
     ...amount,
     commercialImportanceScore: 0,
@@ -484,6 +487,8 @@ function toResponseItem(item: WorkingItem): DecisionQueueItem {
     evidenceCoveragePercent: item.evidenceCoveragePercent,
     evidenceConfidence: item.evidenceConfidence,
     snapshotGeneratedAt: item.snapshotGeneratedAt,
+    assessmentFreshness: item.assessmentFreshness,
+    snapshotFreshness: item.snapshotFreshness,
     dealBriefStatus: item.dealBriefStatus,
     amount: {
       value: item.amountValue,

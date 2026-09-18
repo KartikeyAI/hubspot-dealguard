@@ -1,6 +1,6 @@
 # DealGuard 3.0 delivery progress
 
-Updated: 2026-09-14. Programme: the agreed three-phase production roadmap.
+Updated: 2026-09-18. Programme: the agreed three-phase production roadmap.
 This file records development progress, not a production-release declaration.
 
 ## M1.1 slice 1: release baseline and staging controls
@@ -31,8 +31,7 @@ Cloudflare Queues and Dodo Payments. Hyperdrive is not the runtime database path
   environment variables, not substituted directly into executable shell source.
 - Hidden baseline/deployment evidence is uploaded through explicit path lists;
   neither `.env` nor rendered `.release/wrangler.toml` is uploaded.
-- Dependency-free tests exercise Git repositories, CLI behavior, preflight
-  integration and actual shell validation, not only source-string contracts.
+- Dependency-free tests exercise Git repositories, CLI, preflight and shell execution.
 
 ### Use
 
@@ -181,3 +180,28 @@ materialized snapshot retention/provenance, handoff timing, production load and
 real-account UI acceptance remain pending. M1.1 live/admin gates are unchanged.
 No new migration, OAuth grant, provider request, notification or deployment is
 performed by this slice. Version remains 2.1.0; M1.2 is not declared complete.
+
+## M1.2 slice 3: current-episode outcome evidence
+
+Built on `0e7eb6c5a0319bc425dc79dfd58b5fe40efe4b2e`; 2026-09-18.
+
+- Win/loss evidence now follows the currently closed episode. Recorded reopening
+  removes an earlier outcome; reclosing uses its new pre-close assessment.
+- The first observed closure anchors the reporting window. A closed-record refresh
+  cannot shift an old outcome into a newer window. Conflicting closed labels,
+  missing pre-close observations and inaccessible historical dimensions are excluded.
+- Per-group metric coverage is explicit. Empty samples, absent outcome classes and
+  incomplete numeric evidence produce null statistics, not zero-value claims.
+- App Home explains inclusion, exclusions, sample win rate and unavailable evidence;
+  sample strength is explicitly not forecast confidence.
+- Added read-only PostgreSQL regression tests for lifecycle, time ordering, scope,
+  tenant isolation, invalid evidence and processing limits. See `OUTCOME_EVIDENCE.md`.
+- CI now preserves the exact committed source as a seven-day review artifact before
+  dependency installation or environment-file creation, alongside the release baseline.
+
+No schema migration, live-provider action, deployment, OAuth change, billing action
+or customer notification is performed. Runtime/package version remains `2.1.0`.
+M1.1 live gates remain open. M1.2 is not complete: durable snapshot provenance,
+archive/deletion ingestion, handoff timing, other freshness work, and live acceptance
+remain distinct tasks. Validation results belong to the exact PR head and are
+recorded in its discussion; the existence of this code is not production acceptance.

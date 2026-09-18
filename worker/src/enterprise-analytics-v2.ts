@@ -1,4 +1,5 @@
 import { AppError } from './errors.js';
+import { loadOutcomeEvidence, OUTCOME_EVIDENCE_METHOD } from './outcome-evidence.js';
 import { activePolicy } from './governance.js';
 import type { DealAssessment, Env, RequestIdentity } from './types.js';
 import { analyticsFilters, analyticsPredicate, analyticsViewOwner, analyticsCsvCell,
@@ -47,7 +48,7 @@ interface MonetarySummary {
 export const TRUSTWORTHY_INTELLIGENCE_SEMANTICS = {
   currentState: 'latest_open_assessment_per_deal',
   trend: 'latest_open_assessment_per_deal_per_day',
-  outcomeEvidence: 'latest_open_assessment_before_latest_close_per_deal',
+  outcomeEvidence: OUTCOME_EVIDENCE_METHOD,
   failurePatterns: 'latest_open_assessment_per_deal',
   amountAtRisk: 'recorded_deal_amount_with_readiness_gaps_not_expected_loss',
   currency: 'company_currency_when_fully_covered_else_single_source_currency_else_not_aggregated',
@@ -256,6 +257,7 @@ async function aggregate(
   since: string,
   filters: AnalyticsFilters,
   authorization: AnalyticsFilters,
+  asOf: string,
 ): Promise<Record<string, unknown>> {
   const scopedParams = filterParams(filters);
   const authorizationParams = filterParams(authorization);
@@ -450,58 +452,10 @@ async function aggregate(
     .sort((left, right) => right.attentionScore - left.attentionScore)
     .slice(0, 25);
 
-  const outcomeFilter = filterSql('pre', filters);
-  const outcomes = await env.DB.prepare(
-    `WITH ${latestAssessmentCte()}, closed_outcomes AS (
-      SELECT DISTINCT ON (deal_id)
-        deal_id,
-        is_won,
-        assessed_at AS outcome_at
-      FROM assessment_history
-      WHERE portal_id = ? AND assessed_at >= ? AND is_closed = 1
-      ORDER BY deal_id, assessed_at DESC, id DESC
-    ),
-    pre_outcome AS (
-      SELECT DISTINCT ON (history.deal_id)
-        history.deal_id,
-        history.score,
-        history.issue_count,
-        history.stage_age_days,
-        history.deal_amount,
-        history.pipeline_id,
-        history.stage_id,
-        history.owner_id,
-        history.team_id,
-        history.region_code,
-        history.assessed_at,
-        outcome.is_won
-      FROM assessment_history history
-      JOIN closed_outcomes outcome ON outcome.deal_id = history.deal_id
-      WHERE history.portal_id = ?
-        AND history.is_closed = 0
-        AND history.assessed_at < outcome.outcome_at
-      ORDER BY history.deal_id, history.assessed_at DESC, history.id DESC
-    )
-    SELECT
-      pre.deal_id,
-      pre.score,
-      pre.issue_count,
-      pre.stage_age_days,
-      pre.is_won,
-      pre.deal_amount,
-      pre.assessed_at
-    FROM pre_outcome pre
-    WHERE ${outcomeFilter} AND ${authorizedDeal('pre')}
-    ORDER BY pre.assessed_at DESC
-    LIMIT 10000`,
-  ).bind(portalId, portalId, since, portalId, ...scopedParams, ...authorizationParams).all<AnalyticsRow>();
-
-  const closed = outcomes.results ?? [];
-  const won = closed.filter((row) => Boolean(row.is_won));
-  const lost = closed.filter((row) => !Boolean(row.is_won));
-  const average = (rows: AnalyticsRow[], key: string) => rows.length > 0
-    ? round(rows.reduce((sum, row) => sum + number(row[key]), 0) / rows.length)
-    : 0;
+  const outcomeCorrelation = await loadOutcomeEvidence(
+    env, portalId, analyticsPredicate('latest', authorization),
+    analyticsPredicate('closure', filters), analyticsPredicate('pre', filters), { since, asOf },
+  );
 
   const issueRows = await env.DB.prepare(
     `WITH ${latestAssessmentCte()}
@@ -606,7 +560,7 @@ async function aggregate(
 
   return {
     semantics: TRUSTWORTHY_INTELLIGENCE_SEMANTICS,
-    generatedAt: new Date().toISOString(),
+    generatedAt: asOf,
     monetary,
     current: {
       totalDeals,
@@ -730,21 +684,7 @@ async function aggregate(
       highRiskDeals: attentionPriority.highPriorityDeals,
       deprecated: true,
     },
-    outcomeCorrelation: {
-      methodology: TRUSTWORTHY_INTELLIGENCE_SEMANTICS.outcomeEvidence,
-      sampleSize: closed.length,
-      won: won.length,
-      lost: lost.length,
-      winRate: closed.length > 0 ? round((won.length / closed.length) * 100) : 0,
-      wonAverageScore: average(won, 'score'),
-      lostAverageScore: average(lost, 'score'),
-      scoreDelta: round(average(won, 'score') - average(lost, 'score')),
-      wonAverageIssues: average(won, 'issue_count'),
-      lostAverageIssues: average(lost, 'issue_count'),
-      wonAverageStageAgeDays: average(won, 'stage_age_days'),
-      lostAverageStageAgeDays: average(lost, 'stage_age_days'),
-      confidence: closed.length >= 100 ? 'strong' : closed.length >= 30 ? 'directional' : 'limited',
-    },
+    outcomeCorrelation,
   };
 }
 
@@ -755,7 +695,9 @@ export async function enterpriseAnalyticsV2(
 ): Promise<Record<string, unknown>> {
   const access = await requireAnalyticsCollectionAccess(env, identity, 'analytics.view');
   const days = Math.min(730, Math.max(1, Math.floor(Number(url.searchParams.get('days') ?? 90) || 90)));
-  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  const now = Date.now();
+  const asOf = new Date(now).toISOString();
+  const since = new Date(now - days * 86_400_000).toISOString();
   const filters = selectedAnalyticsFilters(url.searchParams);
   const { effective, authorization } = analyticsFilters(access.scope, filters);
 
@@ -763,7 +705,7 @@ export async function enterpriseAnalyticsV2(
     audience: url.searchParams.get('audience') ?? 'executive',
     days,
     filters,
-    ...await aggregate(env, identity.portalId, since, effective, authorization),
+    ...await aggregate(env, identity.portalId, since, effective, authorization, asOf),
   };
 }
 

@@ -125,15 +125,18 @@ type Analytics = {
     sampleSize: number;
     won: number;
     lost: number;
-    winRate: number;
-    wonAverageScore: number;
-    lostAverageScore: number;
-    scoreDelta: number;
-    wonAverageIssues: number;
-    lostAverageIssues: number;
-    wonAverageStageAgeDays: number;
-    lostAverageStageAgeDays: number;
+    winRate: number | null;
+    wonAverageScore: number | null;
+    lostAverageScore: number | null;
+    scoreDelta: number | null;
+    wonAverageIssues: number | null;
+    lostAverageIssues: number | null;
+    wonAverageStageAgeDays: number | null;
+    lostAverageStageAgeDays: number | null;
     confidence: string;
+    status?: 'available' | 'insufficient_evidence' | 'unavailable';
+    coverage?: { closedDealsInWindow: number; includedDeals: number; withoutPrecloseEvidence: number;
+      precloseOutsideScope: number; conflictingOutcomes: number } | null;
   };
 };
 
@@ -476,10 +479,19 @@ const DealGuardHome = () => {
         </Card>
         <Card>
           <Text variant="microcopy">WIN / LOSS EVIDENCE</Text>
-          <Heading>{outcomes?.sampleSize ?? 0}</Heading>
-          <Text>Deals with a usable pre-close assessment and one recorded outcome</Text>
-          {outcomes && outcomes.sampleSize > 0 && <Text variant="microcopy">Won deals scored {signed(outcomes.scoreDelta)} pts versus lost · {outcomes.winRate}% observed win rate</Text>}
-          <StatusTag variant={outcomes?.confidence === 'strong' ? 'success' : outcomes?.confidence === 'directional' ? 'warning' : 'default'}>{outcomes?.confidence === 'strong' ? 'Strong sample' : outcomes?.confidence === 'directional' ? 'Directional' : 'Limited sample'}</StatusTag>
+          <Heading>{!outcomes || outcomes.status === 'unavailable' ? '—' : outcomes.sampleSize}</Heading>
+          <Text>Currently closed deals with pre-close evidence from their latest closure episode</Text>
+          {outcomes && outcomes.status !== 'unavailable' && outcomes.sampleSize > 0 && <Flex direction="column" gap="extra-small">
+            {outcomes.winRate !== null && <Text variant="microcopy">{outcomes.winRate}% observed sample win rate · {outcomes.won} won / {outcomes.lost} lost</Text>}
+            <Text variant="microcopy">{outcomes.scoreDelta !== null
+              ? `Won deals scored ${signed(outcomes.scoreDelta)} pts versus lost`
+              : 'Complete pre-close scores in both outcome groups are required for comparison.'}</Text>
+          </Flex>}
+          {outcomes?.status === 'unavailable' && <Text>Outcome evidence is unavailable. Review source-data validity or the supported portfolio limits.</Text>}
+          {outcomes?.status === 'insufficient_evidence' && <Text>No eligible current closure episodes were observed in this window.</Text>}
+          {outcomes?.coverage && <Text variant="microcopy">{outcomes.coverage.includedDeals} of {outcomes.coverage.closedDealsInWindow} scoped closure episodes included · {outcomes.coverage.withoutPrecloseEvidence} without pre-close evidence · {outcomes.coverage.precloseOutsideScope} outside historical access · {outcomes.coverage.conflictingOutcomes} with conflicting labels</Text>}
+          <StatusTag variant={outcomes?.confidence === 'strong' ? 'success' : outcomes?.confidence === 'directional' ? 'warning' : 'default'}>{outcomes?.status === 'unavailable' ? 'Not available' : outcomes?.confidence === 'strong' ? 'Strong sample' : outcomes?.confidence === 'directional' ? 'Directional' : 'Limited sample'}</StatusTag>
+          <Text variant="microcopy">Sample strength is not forecast confidence. Reopening removes prior outcomes; refreshing a closed record does not create a new closure.</Text>
         </Card>
       </Flex>
       <Alert title="How to read attention priority" variant="info">

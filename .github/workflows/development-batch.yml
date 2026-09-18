@@ -41,7 +41,7 @@ jobs:
           from pathlib import Path
           def git(*args): return subprocess.check_output(['git',*args],text=True).strip()
           base='c0e00ee39545962a20b616d549b840630ba231dd'
-          target='faaec49f2152747826a933b0adced3a9f90f0552'
+          target='1246a84c225c5c59394f78285d59c3559d81c397'
           parts=[f'.development/archive-patch-{i}.part' for i in range(5)]
           helpers=parts+['.github/workflows/development-batch.yml']
           assert git('rev-parse','HEAD')==os.environ['INPUT_SHA']
@@ -61,7 +61,14 @@ jobs:
           subprocess.run(['git','apply','--index','-'],input=patch,check=True)
           p=Path('scripts/release-convergence.mjs')
           p.write_text(p.read_text().replace('length: 26','length: 28').replace('0026','0028'))
-          subprocess.run(['git','add','scripts/release-convergence.mjs'],check=True)
+          p=Path('scripts/release-preflight.mjs')
+          p.write_text(p.read_text().replace('migrationNumbers.at(-1) === 26','migrationNumbers.at(-1) === 28'))
+          p=Path('test/trustworthy-intelligence.test.mjs')
+          old=r"  assert.match(analytics, /return `\$\{alias\}\.is_closed = 0 AND \$\{filterSql\(alias, filters\)\}`/);"
+          new=r"  assert.match(functionSource('currentStateWhere'), /is_closed = 0 AND \$\{filterSql\(alias, filters\)\} AND dealguard\.record_is_available/);"
+          assert old in p.read_text()
+          p.write_text(p.read_text().replace(old,new))
+          subprocess.run(['git','add','scripts/release-convergence.mjs','scripts/release-preflight.mjs','test/trustworthy-intelligence.test.mjs'],check=True)
           subprocess.run(['git','rm','--',*helpers],check=True)
           assert git('write-tree')==target
           subprocess.run(['git','-c','user.name=DealGuard development automation','-c','user.email=development@users.noreply.github.com','commit','-m','feat: verified record archive lifecycle and durable webhook receipt'],check=True)
@@ -141,7 +148,7 @@ jobs:
           subprocess.run(['git','fetch',str(p/'source.bundle'),'HEAD:refs/heads/validated-candidate'],check=True)
           assert git('rev-parse','validated-candidate')==sha
           assert git('rev-parse',sha+'^')==os.environ['INPUT_SHA']
-          assert git('rev-parse',sha+'^{tree}')=='faaec49f2152747826a933b0adced3a9f90f0552'
+          assert git('rev-parse',sha+'^{tree}')=='1246a84c225c5c59394f78285d59c3559d81c397'
           assert git('rev-list','--count',os.environ['INPUT_SHA']+'..'+sha)=='1'
           env=os.environ.copy()
           env['GIT_CONFIG_COUNT']='1'

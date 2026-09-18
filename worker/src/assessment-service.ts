@@ -337,3 +337,17 @@ export async function assessDealForPortal(
   putCache(cacheKey(portalId, dealId), value);
   return value;
 }
+
+/** Reuse the record evidence builders without notification, write-back or billing side effects. */
+export async function buildBackgroundAssessmentEvidence(
+  env: Env, portalId: string, deal: NormalizedDeal, assessment: DealAssessment,
+  rules: RuleSettings, client: HubSpotClient,
+): Promise<Record<string, unknown>> {
+  const readiness = await readinessIntelligence(env, portalId, deal.id, deal, rules, assessment);
+  const [momentum, relationship, engagement] = await Promise.all([
+    optionalMomentumIntelligence(env, portalId, deal.id, client, deal, rules, assessment),
+    optionalBuyerCommitteeIntelligence(env, portalId, deal.id, client),
+    optionalEngagementIntelligence(env, portalId, deal.id, client, deal),
+  ]);
+  return { ...assessment, intelligence: completeIntelligence(assessment, readiness, momentum, relationship, engagement) };
+}

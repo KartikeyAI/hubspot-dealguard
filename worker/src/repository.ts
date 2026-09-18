@@ -410,6 +410,8 @@ export class Repository {
   async softDeletePortal(identity: RequestIdentity): Promise<void> {
     await this.audit(identity.portalId, identity.userId, identity.userEmail, 'data.deleted', {});
     await this.env.DB.batch([
+      this.env.DB.prepare(`DELETE FROM background_intelligence_settings WHERE portal_id = ?`).bind(identity.portalId),
+      this.env.DB.prepare(`DELETE FROM background_intelligence_usage WHERE portal_id = ?`).bind(identity.portalId),
       this.env.DB.prepare(`DELETE FROM portfolio_snapshot_runs WHERE portal_id = ?`).bind(identity.portalId),
       this.env.DB.prepare(`DELETE FROM portfolio_snapshot_schedule WHERE portal_id = ?`).bind(identity.portalId),
       this.env.DB.prepare(`DELETE FROM deal_assessments WHERE portal_id = ?`).bind(identity.portalId),

@@ -270,3 +270,32 @@ These slices remain development candidates until exact-tree canonical CI and liv
 acceptance succeed. No feature version, public release, production deployment or
 third-party approval is implied. M1.3/M1.4 completion, remaining security review,
 M2 AI/model qualification and the Phase 3 customer/recovery gates are still open.
+
+## Consecutive development — slice 10: opt-in background intelligence
+
+Built over the validated slices 7–9 tree. Adds migration 0025 and signed,
+portal-wide administrator controls. Disabled by default. Persisted jobs,
+per-portal leases, atomic per-day request reservations, strict read-only provider
+admission, pacing, deadlines, retry/backoff and cancellation are implemented.
+The worker reuses deterministic evidence builders and optional commercial reads;
+never-opened recorded deals can acquire useful persisted briefs without CRM
+write-back, notifications or billable-event orchestration. App Home exposes real
+status, configuration, budget consumption and retries. Full provider/queue load
+and live-account validation remain gates, not claims based on fixtures.
+
+M1.4 remains in progress: initial bounded throughput is not a portfolio freshness
+SLA, and close-date-aware priority, larger-scale scheduling and real-account
+acceptance require further work. Source retention, archive ingestion, full atomic
+lifecycle reconciliation and all phase-exit gates remain separately tracked.
+See `BACKGROUND_INTELLIGENCE.md` for exact behavior and limitations.
+
+## Consecutive development — slice 11: decision lifecycle transaction fences
+
+Migration 0026 serializes application snapshot upserts with their parent
+assessment, invalidates superseded briefs and atomically records closure-driven
+recommendation terminal events. Late closed payloads cannot remove reopened
+briefs; late active recommendation insertion requires the current open source
+and matching snapshot. Rejected insertion cannot emit a presentation event.
+Two real PostgreSQL sessions test both snapshot/closure race directions and
+rollback consistency. See `DECISION_LIFECYCLE_FENCES.md`. This does not claim that
+all downstream CRM/remediation/notification operations are one transaction.

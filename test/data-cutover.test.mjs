@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -92,8 +92,27 @@ test('package exposes explicit snapshot, import and verification commands', asyn
 
 test('fixture snapshot imports tenant and self-referential policy history', {
   skip: !process.env.DEALGUARD_CUTOVER_TEST_DATABASE_URL,
-}, async () => {
-  const databaseUrl = process.env.DEALGUARD_CUTOVER_TEST_DATABASE_URL;
+}, async (t) => {
+  // Cutover intentionally refuses any pre-existing application rows. Give this
+  // suite its own database rather than weakening that gate for concurrent tests.
+  const admin = new Client({ connectionString: process.env.DEALGUARD_CUTOVER_TEST_DATABASE_URL });
+  await admin.connect();
+  const databaseName = `dealguard_cutover_fixture_${randomUUID().replaceAll('-', '')}`;
+  let created = false;
+  t.after(async () => {
+    try { if (created) await admin.query(`DROP DATABASE "${databaseName}"`); }
+    finally { await admin.end(); }
+  });
+  await admin.query(`CREATE DATABASE "${databaseName}"`);
+  created = true;
+  const isolatedUrl = new URL(process.env.DEALGUARD_CUTOVER_TEST_DATABASE_URL);
+  isolatedUrl.pathname = `/${databaseName}`;
+  const databaseUrl = isolatedUrl.toString();
+  const migrated = spawnSync(process.execPath, ['scripts/postgres-migrate.mjs'], {
+    cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, DATABASE_URL: databaseUrl },
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  assert.equal(migrated.status, 0, `${migrated.stdout}\n${migrated.stderr}`);
   const root = await mkdtemp(join(tmpdir(), 'dealguard-cutover-'));
   const snapshotPath = join(root, 'snapshot.json');
   const importReportPath = join(root, 'import-report.json');

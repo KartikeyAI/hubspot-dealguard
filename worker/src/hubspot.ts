@@ -35,17 +35,24 @@ function validatedReadProperties(properties: string[]): string[] {
   return [...new Set(properties)].slice(0, 500);
 }
 
+export interface HubSpotRequestPolicy {
+  beforeRequest(path: string, method: string): Promise<void>;
+  afterResponse?(status: number): void;
+  deadlineAt: number;
+  disableAuthRetry?: boolean;
+}
+
 export class HubSpotClient {
   private credentials: TenantCredentials;
   private readonly repository: Repository;
 
-  private constructor(private readonly env: Env, credentials: TenantCredentials) {
+  private constructor(private readonly env: Env, credentials: TenantCredentials, private readonly requestPolicy?: HubSpotRequestPolicy) {
     this.credentials = credentials;
     this.repository = new Repository(env);
   }
 
-  static async forPortal(env: Env, portalId: string): Promise<HubSpotClient> {
-    return new HubSpotClient(env, await new Repository(env).getCredentials(portalId));
+  static async forPortal(env: Env, portalId: string, policy?: HubSpotRequestPolicy): Promise<HubSpotClient> {
+    return new HubSpotClient(env, await new Repository(env).getCredentials(portalId), policy);
   }
 
   static async exchangeCode(env: Env, code: string): Promise<HubSpotTokenResponse> {
@@ -83,6 +90,14 @@ export class HubSpotClient {
     return this.credentials.tenant.plan;
   }
 
+  private async requestBoundary(path: string, method: string): Promise<AbortSignal | undefined> {
+    if (!this.requestPolicy) return undefined;
+    await this.requestPolicy.beforeRequest(path, method);
+    const remaining = this.requestPolicy.deadlineAt - Date.now();
+    if (remaining <= 0) throw new AppError(408, 'background_deadline', 'The enrichment request deadline was reached.');
+    return AbortSignal.timeout(Math.min(15000, Math.floor(remaining)));
+  }
+
   private async refreshIfNeeded(): Promise<void> {
     if (Date.parse(this.credentials.tenant.token_expires_at) > Date.now() + 60_000) return;
     const body = new URLSearchParams({
@@ -91,11 +106,17 @@ export class HubSpotClient {
       client_secret: this.env.HUBSPOT_CLIENT_SECRET,
       refresh_token: this.credentials.refreshToken,
     });
+    const signal = await this.requestBoundary('/oauth/v1/token', 'POST');
     const response = await fetch(`${API_BASE}/oauth/v1/token`, {
+      ...(signal ? { signal, redirect: 'error' as const } : {}),
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded;charset=utf-8' },
       body,
     });
+    this.requestPolicy?.afterResponse?.(response.status);
+    if (this.requestPolicy && (response.status === 429 || response.status >= 500)) {
+      throw new AppError(response.status === 429 ? 429 : 503, 'hubspot_rate_limited', 'HubSpot token service is temporarily unavailable.');
+    }
     if (!response.ok) {
       await this.repository.markDisconnected(this.portalId, `refresh_failed_${response.status}`);
       throw new AppError(401, 'hubspot_reauthorization_required', 'HubSpot authorization has expired. Reconnect DealGuard.');
@@ -107,8 +128,10 @@ export class HubSpotClient {
 
   private async request<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
     await this.refreshIfNeeded();
+    const signal = await this.requestBoundary(path, init.method ?? 'GET');
     const response = await fetch(`${API_BASE}${path}`, {
       ...init,
+      ...(signal ? { signal, redirect: 'error' as const } : {}),
       headers: {
         accept: 'application/json',
         authorization: `Bearer ${this.credentials.accessToken}`,
@@ -116,7 +139,8 @@ export class HubSpotClient {
         ...(init.headers ?? {}),
       },
     });
-    if (response.status === 401 && retry) {
+    this.requestPolicy?.afterResponse?.(response.status);
+    if (response.status === 401 && retry && !this.requestPolicy?.disableAuthRetry) {
       this.credentials.tenant.token_expires_at = new Date(0).toISOString();
       await this.refreshIfNeeded();
       return this.request<T>(path, init, false);

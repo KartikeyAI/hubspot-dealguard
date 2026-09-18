@@ -99,7 +99,7 @@ export interface WorkerBindings extends Omit<Env, 'DB'> {
 export type DealGuardQueueMessage =
   | { version: 1; kind: 'scan'; portalId: string; trigger: 'manual' | 'scheduled' | 'install'; scanId: string; requestedAt: string }
   | { version: 1; kind: 'delivery'; task: 'enterprise_alerts' | 'outbox' | 'siem' | 'billing_usage' | 'digests' | 'data_export'; resourceId?: string; portalId?: string; requestedAt: string }
-  | { version: 1; kind: 'maintenance'; task: 'portfolio_snapshots' | 'remediation_escalation' | 'alert_escalation' | 'synthetics' | 'billing_schedule' | 'policy_exceptions' | 'retention' | 'audit_promotion' | 'secure_download_cleanup' | 'maintenance'; requestedAt: string };
+  | { version: 1; kind: 'maintenance'; task: 'background_intelligence' | 'portfolio_snapshots' | 'remediation_escalation' | 'alert_escalation' | 'synthetics' | 'billing_schedule' | 'policy_exceptions' | 'retention' | 'audit_promotion' | 'secure_download_cleanup' | 'maintenance'; requestedAt: string };
 
 export type PlanId = 'free' | 'growth' | 'beta_growth';
 export type AssessmentStatus = 'ready' | 'at_risk' | 'critical';

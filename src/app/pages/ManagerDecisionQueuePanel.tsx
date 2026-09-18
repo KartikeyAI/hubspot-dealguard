@@ -1,3 +1,4 @@
+import { BackgroundIntelligencePanel } from './BackgroundIntelligencePanel';
 import React from 'react';
 import { Flex } from '@hubspot/ui-extensions';
 import { PortfolioHistoryPanel } from './PortfolioHistoryPanel';
@@ -15,6 +16,7 @@ export function ManagerDecisionQueuePanel({ enabled }: { enabled: boolean }) {
     <ManagerDecisionQueueCore enabled={enabled} />
     <ExecutiveRevenuePanel enabled={enabled} />
     <PortfolioHistoryPanel enabled={enabled} />
+    <BackgroundIntelligencePanel enabled={enabled} />
     <RecommendationOutcomePanel enabled={enabled} />
     <RecommendationOperationsPanel enabled={enabled} />
     <RecommendationNotificationConfigurationPanel enabled={enabled} />

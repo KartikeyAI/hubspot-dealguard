@@ -246,7 +246,7 @@ async function completeExportPayload(env: Env, portalId: string, scope: string):
     result.configuration = configuration;
   }
   if (scope === 'operational' || scope === 'complete') {
-    const tables = ['deal_assessments', 'assessment_history', 'portfolio_snapshot_runs', 'portfolio_snapshot_items', 'handoff_cycles', 'remediation_cases', 'remediation_events', 'outbox_events', 'outbox_deliveries', 'service_health', 'operational_metrics', 'incidents'];
+    const tables = ['background_intelligence_jobs', 'background_intelligence_settings', 'background_intelligence_usage', 'deal_assessments', 'assessment_history', 'portfolio_snapshot_runs', 'portfolio_snapshot_items', 'handoff_cycles', 'remediation_cases', 'remediation_events', 'outbox_events', 'outbox_deliveries', 'service_health', 'operational_metrics', 'incidents'];
     const operational: Record<string, unknown> = {};
     for (const table of tables) operational[table] = (await env.DB.prepare(`SELECT * FROM ${table} WHERE portal_id = ?`).bind(portalId).all<Record<string, unknown>>()).results ?? [];
     result.operational = operational;
@@ -352,6 +352,9 @@ export async function applyComplianceRetention(env: Env): Promise<void> {
     await env.DB.batch([
       env.DB.prepare(`DELETE FROM audit_events_v2 WHERE portal_id = ? AND created_at < ?`).bind(portalId, auditCutoff),
       env.DB.prepare(`DELETE FROM assessment_history WHERE portal_id = ? AND assessed_at < ?`).bind(portalId, operationalCutoff),
+      env.DB.prepare(`DELETE FROM background_intelligence_usage WHERE portal_id = ? AND usage_date < ?::date
+        AND NOT EXISTS (SELECT 1 FROM legal_holds WHERE portal_id = ? AND status = 'active')`)
+        .bind(portalId, operationalCutoff, portalId),
       env.DB.prepare(`DELETE FROM portfolio_snapshot_runs WHERE portal_id = ? AND captured_at < ?::timestamptz
         AND NOT EXISTS (SELECT 1 FROM legal_holds WHERE portal_id = ? AND status = 'active')`)
         .bind(portalId, operationalCutoff, portalId),

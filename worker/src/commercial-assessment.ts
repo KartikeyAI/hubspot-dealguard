@@ -92,16 +92,17 @@ async function recordMetric(
   }).catch(() => undefined);
 }
 
-async function buildCommercialAssessment(
+export async function buildCommercialAssessment(
   env: Env,
   portalId: string,
   dealId: string,
   baseAssessment: Record<string, unknown>,
+  suppliedClient?: HubSpotClient,
 ): Promise<Record<string, unknown>> {
   const startedAt = Date.now();
   const tenant = await new Repository(env).getTenant(portalId);
   const grantedScopes = parsedScopes(tenant.scopes_json);
-  const client = await HubSpotClient.forPortal(env, portalId);
+  const client = suppliedClient ?? await HubSpotClient.forPortal(env, portalId);
   try {
     const data = await loadCommercialIntegrityData(client, dealId, grantedScopes);
     const commercial = buildCommercialIntegrity(data);

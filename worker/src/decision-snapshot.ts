@@ -221,10 +221,9 @@ export async function persistDecisionSnapshot(
   const assessment = record(payload);
   if (!validIdentity(portalId) || !validIdentity(dealId) || assessment?.dealId !== dealId) return false;
   if (assessment?.isClosed === true) {
-    await env.DB.prepare(`DELETE FROM deal_decision_snapshots WHERE portal_id = ? AND deal_id = ?`)
-      .bind(portalId, dealId)
-      .run();
-    await closeRecommendationsForDeal(env, portalId, dealId).catch((error) => {
+    const assessedAt = evidenceInstant(assessment.assessedAt);
+    if (!assessedAt) return false;
+    await closeRecommendationsForDeal(env, portalId, dealId, assessedAt).catch((error) => {
       logRecommendationObservation('recommendation_close_observation', portalId, dealId, error);
     });
     return false;

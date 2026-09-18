@@ -1,3 +1,4 @@
+import { runBackgroundIntelligence } from './background-intelligence.js';
 import { captureDuePortfolioSnapshots } from './portfolio-snapshots.js';
 import { promoteLegacyAuditEvents } from './audit-chain.js';
 import { dispatchEnterpriseAlerts, escalateUnacknowledgedAlerts } from './alerting-enterprise.js';
@@ -52,7 +53,8 @@ async function processMessage(env: Env, message: DealGuardQueueMessage): Promise
     }
     return;
   }
-  if (message.task === 'portfolio_snapshots') await captureDuePortfolioSnapshots(env);
+  if (message.task === 'background_intelligence') await runBackgroundIntelligence(env);
+  else if (message.task === 'portfolio_snapshots') await captureDuePortfolioSnapshots(env);
   else if (message.task === 'remediation_escalation') await escalateOverdueRemediations(env);
   else if (message.task === 'alert_escalation') await escalateUnacknowledgedAlerts(env);
   else if (message.task === 'synthetics') await runDueSyntheticChecks(env);

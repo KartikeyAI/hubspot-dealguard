@@ -47,6 +47,16 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 90
+      - name: Archive exact tracked source for review
+        run: git archive --format=tar.gz --output=.release/review-source.tar.gz HEAD
+      - name: Upload review source
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-source-${{ github.sha }}
+          path: .release/review-source.tar.gz
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
       - name: Create non-secret CI environment file
         run: touch .env
       - run: npm install --ignore-scripts --silent

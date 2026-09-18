@@ -1,0 +1,170 @@
+name: Development batch validation
+
+on:
+  push:
+    branches: [feat/dealguard-3-phase1-release-baseline]
+    paths: ['.development/**', '.github/workflows/development-batch.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.repository == 'KartikeyAI/hubspot-dealguard'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: dealguard
+          POSTGRES_PASSWORD: dealguard-test-password
+          POSTGRES_DB: dealguard_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U dealguard -d dealguard_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      INPUT_SHA: ${{ github.sha }}
+      DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
+      DEALGUARD_CUTOVER_TEST_DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
+      DEALGUARD_ANALYTICS_TEST_DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Assemble exact reviewed source without executing change data
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, re, hashlib, subprocess
+          from pathlib import Path
+          def git(*args): return subprocess.check_output(['git', *args], text=True).strip()
+          m=json.loads(Path('.development/batch-manifest.json').read_text())
+          helpers=m['parts']+['.development/batch-manifest.json','.github/workflows/development-batch.yml']
+          assert re.fullmatch('[0-9a-f]{40}',m['base']) and re.fullmatch('[0-9a-f]{40}',m['expectedTree'])
+          subprocess.run(['git','merge-base','--is-ancestor',m['base'],os.environ['INPUT_SHA']],check=True)
+          assert set(git('diff','--name-only',m['base'],os.environ['INPUT_SHA']).splitlines()) == set(helpers)
+          entries=[]
+          for f in m['parts']:
+            assert re.fullmatch(r'\.development/batch-part-[0-9]+\.json',f)
+            entries.extend(json.loads(Path(f).read_text()))
+          assert [e['path'] for e in entries] == m['paths']
+          assert len(set(m['paths'])) == len(m['paths'])
+          for e in entries:
+            f=e['path']; p=Path(f)
+            assert re.fullmatch(r'(database|docs|scripts|src|test|worker)/[A-Za-z0-9_./-]+',f) and '..' not in p.parts
+            assert not p.is_symlink() and all(not a.is_symlink() for a in p.parents)
+            old=p.read_bytes() if p.exists() else b''
+            digest=hashlib.sha1(b'blob '+str(len(old)).encode()+b'\0'+old).hexdigest() if p.exists() else None
+            assert digest == e['before'], 'Base blob mismatch: '+f
+            lines=old.decode().splitlines(keepends=True); changes=e['changes']
+            last=len(lines)
+            for c in reversed(changes):
+              assert type(c['start']) is int and type(c['end']) is int and 0 <= c['start'] <= c['end'] <= last
+              lines[c['start']:c['end']]=c['text'].splitlines(keepends=True); last=c['start']
+            p.parent.mkdir(parents=True,exist_ok=True); p.write_text(''.join(lines))
+          subprocess.run(['git','add','--',*m['paths']],check=True)
+          subprocess.run(['git','update-index','--force-remove','--',*helpers],check=True)
+          tree=git('write-tree')
+          if tree != m['expectedTree']:
+            print('Source mismatch:',tree,m['expectedTree'])
+            print(git('ls-files','-s')); raise SystemExit(1)
+          subprocess.run(['git','add','--',*helpers],check=True)
+          subprocess.run(['git','-c','user.name=DealGuard development automation','-c','user.email=development@users.noreply.github.com','commit','-m','feat: durable handoff cycles, portfolio snapshots and scoped manager workflows'],check=True)
+          print('Exact reviewed source tree:',tree)
+          PY
+      - name: Record repository baseline
+        run: node scripts/release-baseline.mjs --target staging
+      - name: Install build and UI dependencies
+        run: |
+          touch .env
+          npm install --ignore-scripts --silent
+          npm install --ignore-scripts --silent --prefix src/app/cards
+          npm install --ignore-scripts --silent --prefix src/app/settings
+          npm install --ignore-scripts --silent --prefix src/app/pages
+      - name: Validate all build contracts
+        run: |
+          npm run release:convergence
+          npm run typecheck
+          npm run typecheck --prefix src/app/cards
+          npm run typecheck --prefix src/app/settings
+          npm run typecheck --prefix src/app/pages
+      - name: Apply and verify additive migrations on disposable PostgreSQL
+        run: |
+          npm run db:migrate
+          npm run db:migrate:check
+          npm run db:validate
+      - name: Execute full regression suite
+        shell: bash
+        run: npm test 2>&1 | tee .release/batch-tests.log
+      - name: Preserve test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: batch-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .release/batch-tests.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Package validated commit for isolated publication
+        shell: bash
+        run: |
+          git diff --exit-code
+          git update-ref refs/heads/batch-candidate HEAD
+          git bundle create .release/candidate.bundle refs/heads/batch-candidate "^${INPUT_SHA}"
+          git rev-parse HEAD > .release/candidate-sha.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: batch-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .release/candidate.bundle
+            .release/candidate-sha.txt
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-candidate:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      INPUT_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: actions/download-artifact@v4
+        with:
+          name: batch-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/dealguard-candidate
+      - name: Verify candidate without running repository code
+        shell: bash
+        run: |
+          git bundle verify /tmp/dealguard-candidate/candidate.bundle
+          git fetch /tmp/dealguard-candidate/candidate.bundle refs/heads/batch-candidate
+          python3 - <<'PY'
+          import json,os,re,subprocess
+          from pathlib import Path
+          def git(*args): return subprocess.check_output(['git',*args],text=True).strip()
+          m=json.loads(Path('.development/batch-manifest.json').read_text())
+          sha=Path('/tmp/dealguard-candidate/candidate-sha.txt').read_text().strip()
+          assert re.fullmatch('[0-9a-f]{40}',sha) and sha == git('rev-parse','FETCH_HEAD')
+          assert git('show','-s','--format=%P',sha) == os.environ['INPUT_SHA']
+          assert set(git('diff','--name-only',os.environ['INPUT_SHA'],sha).splitlines()) == set(m['paths'])
+          subprocess.run(['git','read-tree',sha],check=True)
+          helpers=m['parts']+['.development/batch-manifest.json','.github/workflows/development-batch.yml']
+          subprocess.run(['git','update-index','--force-remove','--',*helpers],check=True)
+          assert git('write-tree') == m['expectedTree']
+          print('Validated candidate:',sha,'reviewed tree:',m['expectedTree'])
+          PY
+      - name: Publish only a non-production candidate branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          candidate="$(cat /tmp/dealguard-candidate/candidate-sha.txt)"
+          header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=$header" push origin "${candidate}:refs/heads/work/dealguard-phase1-batch-20260919"

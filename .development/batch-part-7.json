@@ -1,1 +1,0 @@
-[{"path":"scripts/release-preflight.mjs","before":"d95bdfdd34a67ac442777433926351fa44cf49e5","changes":[{"start":304,"end":306,"text":"    migrationNumbers.at(-1) === 24\n      && migrationFiles.at(-1) === '0024_portfolio_snapshot_ledger.sql',\n"}]}]

@@ -8,7 +8,7 @@ import type { DealGuardQueueMessage, ExecutionContext, QueueBatch, ScheduledEven
 import { DEALGUARD_VERSION } from './version.js';
 
 const deliveryTasks = ['enterprise_alerts', 'outbox', 'siem', 'billing_usage', 'digests'] as const;
-const maintenanceTasks = ['remediation_escalation', 'alert_escalation', 'synthetics', 'billing_schedule', 'policy_exceptions', 'retention', 'audit_promotion', 'secure_download_cleanup', 'maintenance'] as const;
+const maintenanceTasks = ['portfolio_snapshots', 'remediation_escalation', 'alert_escalation', 'synthetics', 'billing_schedule', 'policy_exceptions', 'retention', 'audit_promotion', 'secure_download_cleanup', 'maintenance'] as const;
 
 export default {
   async fetch(request: Request, bindings: WorkerBindings, ctx: ExecutionContext): Promise<Response> {

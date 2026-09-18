@@ -23,7 +23,7 @@ test('loader uses bounded deal reads, existing permissions and no communication 
   const config = read('worker/src/config.ts');
   assert.match(source, /PLAN_LIMITS\[client\.plan\]\.maxDealsPerScan/);
   assert.match(source, /client\.listDeals\(maxDeals, \['hs_forecast_category'\]\)/);
-  assert.match(source, /requireEnterprisePermission\(env, identity, 'analytics\.view'\)/);
+  assert.match(source, /requireAnalyticsCollectionAccess\(env, identity, 'analytics\.view'\)/);
   assert.match(source, /CACHE_TTL_MS = 120_000/);
   assert.match(source, /SNAPSHOT_RETENTION_DAYS = 730/);
   assert.doesNotMatch(source, /hs_email|hs_meeting|hs_call|recording_url|transcript|line_items|quotes/i);

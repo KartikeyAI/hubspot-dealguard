@@ -494,9 +494,14 @@ async function aggregate(
       COUNT(*) AS total,
       SUM(CASE WHEN handoff.status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed,
       SUM(CASE WHEN handoff.status = 'confirmed' AND handoff.confirmed_at >= ?
-        THEN 1 ELSE 0 END) AS confirmations_in_period
+        THEN 1 ELSE 0 END) AS confirmations_in_period,
+      COUNT(*) FILTER (WHERE handoff.status = 'confirmed' AND handoff.started_at IS NOT NULL
+        AND handoff.confirmed_at::timestamptz >= handoff.started_at::timestamptz) AS measured_durations,
+      AVG(CASE WHEN handoff.status = 'confirmed' AND handoff.started_at IS NOT NULL
+        AND handoff.confirmed_at::timestamptz >= handoff.started_at::timestamptz
+        THEN EXTRACT(EPOCH FROM (handoff.confirmed_at::timestamptz - handoff.started_at::timestamptz)) / 3600.0 END) AS average_hours
     FROM handoffs handoff
-    WHERE handoff.portal_id = ? AND EXISTS (
+    WHERE handoff.portal_id = ? AND (COALESCE(handoff.cycle_number, 0) = 0 OR handoff.active = 1) AND EXISTS (
       SELECT 1 FROM latest_assessments latest
       WHERE latest.deal_id = handoff.deal_id AND ${filterSql('latest', filters)}
     )`,
@@ -638,10 +643,12 @@ async function aggregate(
       completionRate: number(handoff?.total)
         ? round((number(handoff?.confirmed) / number(handoff?.total)) * 100)
         : 0,
-      // The canonical handoffs table has no creation/start timestamp. Do not invent SLA duration.
-      averageHours: null,
-      durationStatus: 'unavailable',
-      durationReason: 'Handoff start timestamps are not recorded; elapsed duration cannot be calculated.',
+      averageHours: optionalNumber(handoff?.average_hours),
+      measuredDurations: number(handoff?.measured_durations),
+      durationCoveragePercent: percentage(number(handoff?.measured_durations), number(handoff?.confirmed)),
+      durationStatus: number(handoff?.measured_durations) === 0 ? 'unavailable'
+        : number(handoff?.measured_durations) === number(handoff?.confirmed) ? 'complete' : 'partial',
+      durationReason: 'Duration starts at first observed closed-won state. Legacy starts remain unknown; this is not an SLA compliance measurement.',
       periodBasis: 'current_scoped_handoffs',
       confirmationsInPeriod: number(handoff?.confirmations_in_period),
     },

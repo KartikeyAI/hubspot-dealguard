@@ -276,7 +276,9 @@ export async function assessDealForPortal(
   const deal = await client.getDeal(dealId, undefined, dimensionProperties);
   const policy = await resolveSegmentedRulesForDeal(env, portalId, client.settings.rules, deal);
   const assessment = assessDeal(deal, policy.rules);
-  await repository.saveAssessment(portalId, assessment);
+  if (!await repository.saveAssessment(portalId, assessment)) {
+    return await repository.getAssessment(portalId, dealId) as unknown as Record<string, unknown> | null;
+  }
   await saveAssessmentContext(env, portalId, assessment);
   await recordAssessmentHistory(env, portalId, assessment, {
     trigger,

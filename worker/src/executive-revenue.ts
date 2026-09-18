@@ -9,7 +9,8 @@ import type {
   ExecutiveRevenueResponse,
   ExecutiveRevenueSnapshot,
 } from './executive-revenue-types.js';
-import { requireEnterprisePermission, type EnterpriseAccessContext } from './enterprise-access.js';
+import type { EnterpriseAccessContext } from './enterprise-access.js';
+import { requireAnalyticsCollectionAccess, selectedAnalyticsFilters, analyticsFilters } from './analytics-scope.js';
 import { HubSpotClient } from './hubspot.js';
 import type { Env, NormalizedDeal, RequestIdentity } from './types.js';
 
@@ -131,7 +132,9 @@ function parsePeriod(url: URL, now = new Date()): ExecutiveRevenuePeriod {
   }
   const start = rawStart ? new Date(`${rawStart}T00:00:00.000Z`) : defaults.start;
   const end = rawEnd ? new Date(`${rawEnd}T23:59:59.999Z`) : defaults.end;
-  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) {
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())
+    || (rawStart && start.toISOString().slice(0,10) !== rawStart)
+    || (rawEnd && end.toISOString().slice(0,10) !== rawEnd)) {
     throw new AppError(400, 'executive_period_invalid', 'Executive period dates must use YYYY-MM-DD.');
   }
   if (start.getTime() > end.getTime()) {
@@ -156,8 +159,11 @@ function requestedFilters(url: URL, access: EnterpriseAccessContext): ScopeFilte
     ['ownerId', 'ownerIds'],
     ['regionCode', 'regionCodes'],
   ] as const;
+  const selected = selectedAnalyticsFilters(url.searchParams);
+  analyticsFilters(access.scope, selected);
+  if (selected.stageId) throw new AppError(400, 'executive_filter_invalid', 'Stage filtering is not supported in this executive view.');
   for (const [queryKey, scopeKey] of definitions) {
-    const requested = text(url.searchParams.get(queryKey), 128);
+    const requested = selected[queryKey] ?? null;
     const allowed = access.scope[scopeKey];
     if (requested && allowed.length > 0 && !allowed.includes(requested)) {
       throw new AppError(403, 'executive_scope_denied', `The selected ${queryKey} is outside your assigned scope.`);
@@ -438,7 +444,14 @@ export async function executiveRevenueView(
   identity: RequestIdentity,
   url: URL,
 ): Promise<ExecutiveRevenueResult> {
-  const access = await requireEnterprisePermission(env, identity, 'analytics.view');
+  const access = await requireAnalyticsCollectionAccess(env, identity, 'analytics.view');
+  for (const key of ['periodStart', 'periodEnd', 'candidateLimit', 'refresh']) {
+    if (url.searchParams.getAll(key).length > 1) throw new AppError(400, 'executive_filter_invalid', 'Executive filters must be single values.');
+  }
+  const candidate = url.searchParams.get('candidateLimit') ?? '20';
+  if (!/^[1-9][0-9]*$/.test(candidate) || Number(candidate) > 50) {
+    throw new AppError(400, 'executive_filter_invalid', 'Candidate limit must be between 1 and 50.');
+  }
   const period = parsePeriod(url);
   const filters = requestedFilters(url, access);
   const candidateLimit = Math.min(50, Math.max(1, Number(url.searchParams.get('candidateLimit') ?? 20) || 20));
@@ -476,7 +489,12 @@ export async function executiveRevenueView(
     now,
   ));
 
-  const response = buildExecutiveRevenueView(scopedDeals, evidence.snapshots, {
+  const permittedSnapshots = evidence.snapshots.filter(snapshot => {
+    const dimensions = [['pipelineId','pipelineIds'], ['ownerId','ownerIds'], ['teamId','teamIds'], ['regionCode','regionCodes']] as const;
+    return dimensions.every(([key, scopeKey]) => (!filters[key] || snapshot[key] === filters[key])
+      && (access.scope[scopeKey].length === 0 || (snapshot[key] !== null && access.scope[scopeKey].includes(snapshot[key]!))));
+  });
+  const response = buildExecutiveRevenueView(scopedDeals, permittedSnapshots, {
     period,
     generatedAt: fetchedAt,
     fetchedAt,

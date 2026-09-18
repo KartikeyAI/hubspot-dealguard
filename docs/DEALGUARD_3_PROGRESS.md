@@ -231,3 +231,42 @@ No migration, OAuth grant, provider call, publication, billing action or custome
 notification is performed by this slice. M1.1 live gates and M1.2 remain open:
 durable snapshot provenance, archive/deletion reconciliation, durable handoff
 clocks, per-source enrichment provenance and real-account acceptance are pending.
+
+## Consecutive development — slice 7: durable handoff cycles
+
+Built on `1b7502f50c9453d1dd62804aea0b7ec8f3aaf1af`. Adds migration 0023 without
+rewriting earlier migrations. Observed closed-won starts, confirmation timestamps,
+reopening/cancellation and reclosed cycles are retained with explicit provenance.
+Legacy starts remain unknown. Confirmation and lifecycle changes share assessment-
+first row locking; retries preserve the committed timestamp and suppress duplicate
+route notifications. New duration counts and coverage distinguish legacy gaps.
+
+Core assessment writes now reject old/equal timestamps, including via a database
+guard. Rejected scanner/event work stops before notification, sync or remediation.
+The remaining integration lifecycle is not represented as one atomic transaction.
+Unit and migrated PostgreSQL scenarios accompany the implementation; exact CI
+results are recorded on PR #46. See `HANDOFF_LIFECYCLE.md` for rollout and limits.
+M1.1 live gates and the complete M1.2/M1.6 milestones remain open.
+
+## Consecutive development — slice 8: durable portfolio snapshots
+
+Adds migration 0024: tenant/day manifests, frozen per-deal observations and leased,
+bounded maintenance capture. Empty, invalid and oversized cohorts do not publish
+partial history. GET readers recheck current plus captured scope and expose missing
+captures; App Home switches between reconstructed history and recorded snapshots.
+Configured retention, legal holds and portal deletion cover the new ledger.
+Real PostgreSQL tests cover atomicity, duplicate capture, sealed updates, source
+retention independence and integrity withholding. See `DURABLE_PORTFOLIO_SNAPSHOTS.md`.
+
+## Consecutive development — slice 9: usable scoped manager workflows
+
+Manager/executive collections now use the shared collection access boundary.
+Manager search, ranked pagination, capacity detection, strict filters and stale-
+response protection are implemented. Executive historical evidence respects
+captured scope; invalid dates and duplicated controls are rejected. Local helper,
+service and contract tests accompany the changes. See `MANAGER_COLLECTION_WORKFLOWS.md`.
+
+These slices remain development candidates until exact-tree canonical CI and live
+acceptance succeed. No feature version, public release, production deployment or
+third-party approval is implied. M1.3/M1.4 completion, remaining security review,
+M2 AI/model qualification and the Phase 3 customer/recovery gates are still open.

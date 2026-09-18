@@ -6,7 +6,7 @@ import { safeProductError } from './product-ui';
 const API_BASE = 'https://dealguard-api.rokad.co/api/v1';
 const PAGE_SIZE = 7;
 type Point = {
-  date: string; snapshotAt: string; evidenceStatus: string; openDeals: number;
+  date: string; snapshotAt: string | null; evidenceStatus: string; openDeals: number;
   averageScore: number | null; assessedDeals: number; carriedForwardDeals: number;
   freshness: { freshDeals: number; agingDeals: number; staleDeals: number; oldestObservedAt: string | null };
   monetary: { mode: string; currencyCode: string | null; pipelineAmount: number | null };
@@ -23,6 +23,7 @@ function money(point: Point): string {
 /** On-demand history has no additional request cost until explicitly loaded. */
 export function PortfolioHistoryPanel({ enabled }: { enabled: boolean }) {
   const [days, setDays] = useState(30);
+  const [source, setSource] = useState<'reconstructed' | 'recorded'>('reconstructed');
   const [history, setHistory] = useState<History | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +41,7 @@ export function PortfolioHistoryPanel({ enabled }: { enabled: boolean }) {
     const id = ++requestId.current;
     setBusy(true); setError(null); setHistory(null); setPage(0);
     try {
-      const response = await hubspot.fetch(`${API_BASE}/enterprise/portfolio-history?days=${days}`, {
+      const response = await hubspot.fetch(`${API_BASE}/enterprise/${source === 'recorded' ? 'portfolio-snapshots' : 'portfolio-history'}?days=${days}`, {
         method: 'GET', timeout: 20_000,
       });
       const data = await response.json();
@@ -62,7 +63,13 @@ export function PortfolioHistoryPanel({ enabled }: { enabled: boolean }) {
   const displayed = points.slice(Math.max(0, end - PAGE_SIZE), end).reverse();
   return <Card><Flex direction="column" gap="medium">
     <Heading>Portfolio history and evidence age</Heading>
-    <Text>Daily portfolio states reconstructed from retained assessments, within your current access. This is separate from the same-day assessment trend.</Text>
+    <Text>{source === 'recorded' ? 'First successful capture each UTC day. Captured evidence survives source-assessment retention; missing captures are not backfilled.' : 'Daily portfolio states reconstructed from retained assessments, within your current access. This is separate from the same-day assessment trend.'}</Text>
+    <Flex direction="row" gap="small">
+      {(['reconstructed', 'recorded'] as const).map(value => <Button key={value} disabled={busy || source === value}
+        onClick={() => { requestId.current += 1; setSource(value); setHistory(null); setError(null); setPage(0); }}>
+        {value === 'recorded' ? 'Recorded snapshots' : 'Reconstructed history'}
+      </Button>)}
+    </Flex>
     <Flex direction="row" gap="small" align="end">
       {busy ? <Text>Window: {days} calendar days (UTC)</Text> : <Select name="portfolio-history-days" label="Calendar days (UTC)" value={days}
         options={[7, 30, 90].map((value) => ({ label: `${value} days`, value }))}
@@ -79,7 +86,7 @@ export function PortfolioHistoryPanel({ enabled }: { enabled: boolean }) {
           : 'The history result is incomplete. No partial totals are shown.'}
     </Alert> : null}
     {history?.status === 'available' ? <>
-      <Text>Generated {history.generatedAt}. Today is partial. Carrying a prior observation forward does not make its evidence fresh.</Text>
+      <Text>Generated {history.generatedAt}. {source === 'recorded' ? 'Capture time is not an end-of-day cutoff or a new CRM observation.' : 'Today is partial. Carrying a prior observation forward does not make its evidence fresh.'}</Text>
       <Text>Fresh: up to 24 hours; aging: over 24 to 72 hours; stale: over 72 hours, measured at each daily cutoff.</Text>
       <Table><TableHead><TableRow>
         <TableHeader>UTC day</TableHeader><TableHeader>Open deals</TableHeader><TableHeader>Readiness</TableHeader>
@@ -87,11 +94,11 @@ export function PortfolioHistoryPanel({ enabled }: { enabled: boolean }) {
         <TableHeader>Recorded amount</TableHeader><TableHeader>Oldest open evidence</TableHeader>
       </TableRow></TableHead><TableBody>
         {displayed.map((point) => <TableRow key={point.date}>
-          <TableCell><Text>{point.date}</Text></TableCell>
-          <TableCell><Text>{point.evidenceStatus === 'no_observations' ? 'No retained observation' : String(point.openDeals)}</Text></TableCell>
+          <TableCell><Text>{point.date}</Text>{source === 'recorded' ? <Text variant="microcopy">{point.snapshotAt ?? 'Not captured'}</Text> : null}</TableCell>
+          <TableCell><Text>{point.evidenceStatus !== 'recorded' ? (point.evidenceStatus === 'not_captured' ? 'Not captured' : point.evidenceStatus === 'no_observations' ? 'No retained observation' : 'No permitted observation') : String(point.openDeals)}</Text></TableCell>
           <TableCell><Text>{point.averageScore === null ? 'Unavailable' : `${point.averageScore}/100`}</Text></TableCell>
-          <TableCell><Text>{point.evidenceStatus === 'no_observations' ? 'Unavailable' : `${point.assessedDeals} / ${point.carriedForwardDeals}`}</Text></TableCell>
-          <TableCell><Text>{point.evidenceStatus === 'no_observations' ? 'Unavailable' : `${point.freshness.freshDeals} / ${point.freshness.agingDeals} / ${point.freshness.staleDeals}`}</Text></TableCell>
+          <TableCell><Text>{point.evidenceStatus !== 'recorded' ? 'Unavailable' : `${point.assessedDeals} / ${point.carriedForwardDeals}`}</Text></TableCell>
+          <TableCell><Text>{point.evidenceStatus !== 'recorded' ? 'Unavailable' : `${point.freshness.freshDeals} / ${point.freshness.agingDeals} / ${point.freshness.staleDeals}`}</Text></TableCell>
           <TableCell><Text>{money(point)}</Text></TableCell>
           <TableCell><Text>{point.freshness.oldestObservedAt ?? 'Unavailable'}</Text></TableCell>
         </TableRow>)}

@@ -9,7 +9,8 @@ export async function saveAssessmentContext(env: Env, portalId: string, assessme
        owner_id = excluded.owner_id,
        pipeline_id = excluded.pipeline_id,
        stage_id = excluded.stage_id,
-       updated_at = excluded.updated_at`
+       updated_at = excluded.updated_at
+     WHERE excluded.updated_at::timestamptz > assessment_context.updated_at::timestamptz`
   ).bind(
     portalId,
     assessment.dealId,

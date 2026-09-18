@@ -89,6 +89,7 @@ export interface DecisionQueueAmountCohort {
 }
 
 export interface ManagerDecisionQueueResponse {
+  pagination: { offset: number; limit: number; matchedDeals: number; nextOffset: number | null };
   generatedAt: string;
   methodology: 'deterministic_manager_decision_queue_v1';
   filters: Record<string, string | number | null>;

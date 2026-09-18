@@ -1,3 +1,4 @@
+import { captureDuePortfolioSnapshots } from './portfolio-snapshots.js';
 import { promoteLegacyAuditEvents } from './audit-chain.js';
 import { dispatchEnterpriseAlerts, escalateUnacknowledgedAlerts } from './alerting-enterprise.js';
 import { applyManualScheduledPlanChanges } from './billing-scheduler.js';
@@ -51,7 +52,8 @@ async function processMessage(env: Env, message: DealGuardQueueMessage): Promise
     }
     return;
   }
-  if (message.task === 'remediation_escalation') await escalateOverdueRemediations(env);
+  if (message.task === 'portfolio_snapshots') await captureDuePortfolioSnapshots(env);
+  else if (message.task === 'remediation_escalation') await escalateOverdueRemediations(env);
   else if (message.task === 'alert_escalation') await escalateUnacknowledgedAlerts(env);
   else if (message.task === 'synthetics') await runDueSyntheticChecks(env);
   else if (message.task === 'billing_schedule') await applyManualScheduledPlanChanges(env);

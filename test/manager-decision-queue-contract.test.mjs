@@ -11,7 +11,8 @@ test('manager queue uses latest-per-deal state and does not call HubSpot', () =>
   assert.doesNotMatch(source, /HubSpotClient|api\.hubapi\.com|\/crm\//);
   assert.match(source, /deterministic_management_priority_not_win_probability/);
   assert.match(source, /percentile_within_company_currency_or_same_deal_currency_cohort/);
-  assert.match(source, /LIMIT 10000/);
+  assert.match(source, /LIMIT 10001/);
+  assert.match(source, /decision_queue_capacity_exceeded/);
 });
 
 

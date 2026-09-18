@@ -1,3 +1,4 @@
+import { evidenceInstant } from './evidence-freshness.js';
 import { appendAuditChainEvent } from './audit-chain.js';
 import { DEFAULT_SETTINGS, PLAN_LIMITS } from './config.js';
 import { decryptSecret, encryptSecret } from './crypto.js';
@@ -192,8 +193,12 @@ export class Repository {
     ]);
   }
 
-  async saveAssessment(portalId: string, assessment: DealAssessment): Promise<void> {
-    await this.env.DB.prepare(
+  async saveAssessment(portalId: string, assessment: DealAssessment): Promise<boolean> {
+    const observed = evidenceInstant(assessment.assessedAt);
+    if (!observed || Date.parse(observed) > Date.now()) {
+      throw new AppError(400, 'invalid_assessment_time', 'A valid observation timestamp is required.');
+    }
+    const written = await this.env.DB.prepare(
       `INSERT INTO deal_assessments (
         portal_id, deal_id, deal_name, pipeline_label, stage_label, score, grade, status, issues_json, readiness_summary,
         is_closed, is_won, handoff_eligible, assessed_at
@@ -210,7 +215,9 @@ export class Repository {
         is_closed = excluded.is_closed,
         is_won = excluded.is_won,
         handoff_eligible = excluded.handoff_eligible,
-        assessed_at = excluded.assessed_at`
+        assessed_at = excluded.assessed_at
+      WHERE excluded.assessed_at::timestamptz > deal_assessments.assessed_at::timestamptz
+      RETURNING deal_id`
     ).bind(
       portalId,
       assessment.dealId,
@@ -225,8 +232,9 @@ export class Repository {
       assessment.isClosed ? 1 : 0,
       assessment.isWon ? 1 : 0,
       assessment.handoffEligible ? 1 : 0,
-      assessment.assessedAt,
-    ).run();
+      observed,
+    ).first<{ deal_id: string }>();
+    return written !== null;
   }
 
   async getAssessment(portalId: string, dealId: string): Promise<(DealAssessment & { reviewedAt: string | null; handoffStatus: string | null }) | null> {
@@ -268,22 +276,24 @@ export class Repository {
     await this.audit(identity.portalId, identity.userId, identity.userEmail, 'deal.reviewed', { dealId });
   }
 
-  async confirmHandoff(identity: RequestIdentity, dealId: string, assessment: DealAssessment): Promise<void> {
-    if (!assessment.isWon) throw new AppError(409, 'handoff_not_eligible', 'Only closed-won deals can be confirmed for handoff.');
-    if (assessment.status === 'critical') {
-      throw new AppError(409, 'handoff_blocked', 'Resolve critical readiness issues before confirming handoff.', {
-        issues: assessment.issues.filter((item) => item.severity === 'critical'),
-      });
+  async confirmHandoff(identity: RequestIdentity, dealId: string, assessment: DealAssessment): Promise<{
+    changed: boolean; confirmedAt: string; cycle: number;
+  }> {
+    if (assessment.dealId !== dealId || !evidenceInstant(assessment.assessedAt)) {
+      throw new AppError(409, 'handoff_assessment_mismatch', 'Refresh this deal before confirming handoff.');
     }
-    const now = new Date().toISOString();
-    await this.env.DB.prepare(
-      `INSERT INTO handoffs (portal_id, deal_id, status, confirmed_at, confirmed_by_user_id, confirmed_by_email, summary)
-       VALUES (?, ?, 'confirmed', ?, ?, ?, ?)
-       ON CONFLICT(portal_id, deal_id) DO UPDATE SET status = 'confirmed', confirmed_at = excluded.confirmed_at,
-       confirmed_by_user_id = excluded.confirmed_by_user_id, confirmed_by_email = excluded.confirmed_by_email,
-       summary = excluded.summary`
-    ).bind(identity.portalId, dealId, now, identity.userId, identity.userEmail, assessment.readinessSummary).run();
-    await this.audit(identity.portalId, identity.userId, identity.userEmail, 'handoff.confirmed', { dealId, score: assessment.score });
+    const row = await this.env.DB.prepare(
+      `SELECT * FROM dealguard.confirm_handoff_cycle(?, ?, ?, ?, ?)`
+    ).bind(identity.portalId, dealId, assessment.assessedAt, identity.userId, identity.userEmail)
+      .first<{ result: string; confirmation_time: string | null; cycle: number | null }>();
+    if (!row || !['confirmed', 'already_confirmed'].includes(row.result) || !row.confirmation_time || !row.cycle) {
+      throw new AppError(row?.result === 'identity_required' ? 403 : 409, 'handoff_not_confirmable',
+        'Handoff requires your current, non-critical closed-won assessment. Refresh the deal and try again.');
+    }
+    const changed = row.result === 'confirmed';
+    if (changed) await this.audit(identity.portalId, identity.userId, identity.userEmail, 'handoff.confirmed',
+      { dealId, score: assessment.score, cycle: row.cycle, confirmedAt: row.confirmation_time });
+    return { changed, confirmedAt: row.confirmation_time, cycle: row.cycle };
   }
 
   async dashboard(portalId: string): Promise<DashboardSummary> {
@@ -400,6 +410,8 @@ export class Repository {
   async softDeletePortal(identity: RequestIdentity): Promise<void> {
     await this.audit(identity.portalId, identity.userId, identity.userEmail, 'data.deleted', {});
     await this.env.DB.batch([
+      this.env.DB.prepare(`DELETE FROM portfolio_snapshot_runs WHERE portal_id = ?`).bind(identity.portalId),
+      this.env.DB.prepare(`DELETE FROM portfolio_snapshot_schedule WHERE portal_id = ?`).bind(identity.portalId),
       this.env.DB.prepare(`DELETE FROM deal_assessments WHERE portal_id = ?`).bind(identity.portalId),
       this.env.DB.prepare(`DELETE FROM deal_reviews WHERE portal_id = ?`).bind(identity.portalId),
       this.env.DB.prepare(`DELETE FROM handoffs WHERE portal_id = ?`).bind(identity.portalId),

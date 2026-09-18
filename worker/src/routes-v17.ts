@@ -1,3 +1,4 @@
+import { recordedPortfolioHistory } from './portfolio-snapshots.js';
 import { requireCommercialTier } from './billing.js';
 import { portfolioHistory } from './portfolio-history.js';
 import { json, methodNotAllowed, readJson } from './http.js';
@@ -25,6 +26,12 @@ export async function route(
   ctx: { waitUntil(promise: Promise<unknown>): void },
 ): Promise<Response> {
   const url = new URL(request.url);
+  if (url.pathname === '/api/v1/enterprise/portfolio-snapshots') {
+    if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    const identity = await validateHubSpotRequest(request, env);
+    await requireCommercialTier(env, identity.portalId, 'enterprise');
+    return json(await recordedPortfolioHistory(env, identity, url));
+  }
 
   if (url.pathname === '/api/v1/enterprise/portfolio-history') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);

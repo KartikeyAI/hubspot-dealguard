@@ -84,7 +84,7 @@ export type Intelligence = {
 };
 export type Assessment = {
   dealId: string; score: number; grade: string; status: 'ready' | 'at_risk' | 'critical'; issues: Issue[]; readinessSummary: string;
-  isWon: boolean; assessedAt: string; reviewedAt: string | null; handoffStatus: string | null; intelligence?: Intelligence;
+  isWon: boolean; assessedAt: string; reviewedAt: string | null; handoffStatus: string | null; recordCapabilities?: {canReview: boolean; canConfirmHandoff: boolean}; intelligence?: Intelligence;
 };
 
 export function statusVariant(status: Assessment['status']): 'success' | 'warning' | 'danger' {

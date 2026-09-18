@@ -55,7 +55,7 @@ async function processMessage(env: Env, message: DealGuardQueueMessage): Promise
     return;
   }
   if (message.task === 'webhook_events') await runHubSpotWebhookInbox(env);
-  else if (message.task === 'background_intelligence') await runBackgroundIntelligence(env);
+  else if (message.task === 'background_intelligence') await runBackgroundIntelligence(env, message.portalId);
   else if (message.task === 'portfolio_snapshots') await captureDuePortfolioSnapshots(env);
   else if (message.task === 'remediation_escalation') await escalateOverdueRemediations(env);
   else if (message.task === 'alert_escalation') await escalateUnacknowledgedAlerts(env);

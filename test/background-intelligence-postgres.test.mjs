@@ -77,7 +77,7 @@ test('background budgets, cancellation, concurrency and actual worker compositio
     return new Response(JSON.stringify(body),{status:200,headers:{'content-type':'application/json'}});
   };
   await t.test('a never-opened deal receives a real composed assessment and snapshot via guarded fixture HTTP',async()=>{
-    await runBackgroundIntelligence(env);
+    await runBackgroundIntelligence(env,portal);
     const job=(await first.query('SELECT * FROM background_intelligence_jobs WHERE portal_id=$1',[portal])).rows[0];
     assert.equal(job.status,'completed');assert.ok(job.request_count>0&&job.request_count<=40);
     assert.ok(calls>0);assert.ok((await first.query('SELECT * FROM deal_decision_snapshots WHERE portal_id=$1',[portal])).rows.length===1);
@@ -85,12 +85,12 @@ test('background budgets, cancellation, concurrency and actual worker compositio
     assert.equal((await first.query('SELECT count(*) FROM outbox_events WHERE portal_id=$1',[portal])).rows[0].count,'0');
   });
   await t.test('an immediate duplicate maintenance message does not re-enrich or spend budget',async()=>{
-    const before=calls;await runBackgroundIntelligence(env);assert.equal(calls,before);
+    const before=calls;await runBackgroundIntelligence(env,portal);assert.equal(calls,before);
   });
   await t.test('pause cancels pending work and prevents provider calls',async()=>{
     await first.query("UPDATE background_intelligence_jobs SET status='queued',available_at=NOW() WHERE portal_id=$1",[portal]);
     await saveBackgroundIntelligenceSettings(env,actor,{enabled:false,refreshHours:24,dailyRequestLimit:1000});
-    const before=calls;await runBackgroundIntelligence(env);assert.equal(calls,before);
+    const before=calls;await runBackgroundIntelligence(env,portal);assert.equal(calls,before);
     assert.equal((await first.query('SELECT status FROM background_intelligence_jobs WHERE portal_id=$1',[portal])).rows[0].status,'cancelled');
   });
 });

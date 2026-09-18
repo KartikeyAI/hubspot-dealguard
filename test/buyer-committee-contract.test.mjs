@@ -44,7 +44,7 @@ test('relationship enrichment is record-only, optional, cached, and gracefully d
   assert.match(service, /return null;/);
   assert.match(service, /ENRICHMENT_CACHE_TTL_MS = 60_000/);
   assert.match(service, /enrichmentInFlight/);
-  assert.match(service, /putCache\(cacheKey\(portalId, dealId\), value\)/);
+  assert.match(service, /putCache\(cacheKey\(portalId, dealId\), value, resource\)/);
   assert.match(service, /combineDecisionActions/);
 });
 

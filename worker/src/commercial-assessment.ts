@@ -1,3 +1,4 @@
+import { sha256Hex } from './crypto.js';
 import { buildCommercialIntegrity } from './commercial-integrity.js';
 import { loadCommercialIntegrityData } from './commercial-integrity-data.js';
 import {
@@ -150,7 +151,9 @@ export async function augmentAssessmentWithCommercialIntegrity(
   baseAssessment: Record<string, unknown>,
   force = false,
 ): Promise<Record<string, unknown>> {
-  const key = cacheKey(portalId, dealId);
+  // Scope-independent commercial results must never replace another base assessment.
+  const authorization = await commercialAuthorizationForPortal(env,portalId);
+  const key = `${cacheKey(portalId, dealId)}:${await sha256Hex(JSON.stringify(baseAssessment))}:${authorization.grantedScopes.join(',')}`;
   if (!force) {
     const cached = commercialCache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.value;

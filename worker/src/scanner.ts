@@ -105,7 +105,7 @@ export async function scanPortal(
         processedDealIds.add(deal.id);
         continue; // Superseded work must not notify, write back or create remediation.
       }
-      await saveAssessmentContext(env, portalId, assessment);
+      await saveAssessmentContext(env, portalId, assessment, deal.properties);
       await recordAssessmentHistory(env, portalId, assessment, {
         trigger,
         properties: deal.properties,

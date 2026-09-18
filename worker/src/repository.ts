@@ -1,3 +1,4 @@
+import { authorizeRecordedDeal } from './record-access.js';
 import { evidenceInstant } from './evidence-freshness.js';
 import { appendAuditChainEvent } from './audit-chain.js';
 import { DEFAULT_SETTINGS, PLAN_LIMITS } from './config.js';
@@ -266,13 +267,19 @@ export class Repository {
   }
 
   async markReviewed(identity: RequestIdentity, dealId: string): Promise<void> {
+    const access = await authorizeRecordedDeal(this.env,identity,dealId,'deal.review');
+    if (!access.assessmentAt) throw new AppError(409,'assessment_required','Assess this record before marking it reviewed.');
     const now = new Date().toISOString();
-    await this.env.DB.prepare(
-      `INSERT INTO deal_reviews (portal_id, deal_id, reviewed_at, reviewed_by_user_id, reviewed_by_email)
-       VALUES (?, ?, ?, ?, ?)
+    const changed = await this.env.DB.prepare(
+      `WITH current AS (SELECT portal_id,deal_id FROM deal_assessments
+        WHERE portal_id=? AND deal_id=? AND assessed_at=? AND dealguard.record_is_available(portal_id,deal_id) FOR UPDATE)
+       INSERT INTO deal_reviews (portal_id, deal_id, reviewed_at, reviewed_by_user_id, reviewed_by_email)
+       SELECT portal_id,deal_id,?,?,? FROM current
        ON CONFLICT(portal_id, deal_id) DO UPDATE SET reviewed_at = excluded.reviewed_at,
-       reviewed_by_user_id = excluded.reviewed_by_user_id, reviewed_by_email = excluded.reviewed_by_email`
-    ).bind(identity.portalId, dealId, now, identity.userId, identity.userEmail).run();
+       reviewed_by_user_id = excluded.reviewed_by_user_id, reviewed_by_email = excluded.reviewed_by_email
+       RETURNING deal_id`
+    ).bind(identity.portalId, dealId, access.assessmentAt, now, identity.userId, identity.userEmail).first();
+    if (!changed) throw new AppError(409,'assessment_superseded','This record changed. Refresh before marking it reviewed.');
     await this.audit(identity.portalId, identity.userId, identity.userEmail, 'deal.reviewed', { dealId });
   }
 
@@ -307,11 +314,11 @@ export class Repository {
        SUM(CASE WHEN is_won = 1 AND (h.status IS NULL OR h.status != 'confirmed') THEN 1 ELSE 0 END) AS incomplete_handoffs
        FROM deal_assessments a
        LEFT JOIN handoffs h ON h.portal_id = a.portal_id AND h.deal_id = a.deal_id
-       WHERE a.portal_id = ?`
+       WHERE a.portal_id = ? AND dealguard.record_is_available(a.portal_id,a.deal_id)`
     ).bind(portalId).first<Record<string, unknown>>();
 
     const issueRows = await this.env.DB.prepare(
-      `SELECT issues_json FROM deal_assessments WHERE portal_id = ? ORDER BY assessed_at DESC LIMIT 5000`
+      `SELECT issues_json FROM deal_assessments WHERE portal_id = ? AND dealguard.record_is_available(portal_id,deal_id) ORDER BY assessed_at DESC LIMIT 5000`
     ).bind(portalId).all<{ issues_json: string }>();
     const issueMap = new Map<string, { label: string; count: number }>();
     for (const row of issueRows.results ?? []) {
@@ -326,7 +333,7 @@ export class Repository {
     const problemRows = await this.env.DB.prepare(
       `SELECT deal_id, deal_name, pipeline_label, stage_label, score, status, readiness_summary, assessed_at
        FROM deal_assessments
-       WHERE portal_id = ? AND status IN ('critical', 'at_risk')
+       WHERE portal_id = ? AND dealguard.record_is_available(portal_id,deal_id) AND status IN ('critical', 'at_risk')
        ORDER BY CASE status WHEN 'critical' THEN 0 ELSE 1 END, score ASC, assessed_at DESC
        LIMIT 12`
     ).bind(portalId).all<Record<string, unknown>>();

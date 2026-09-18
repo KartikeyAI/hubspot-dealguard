@@ -1,3 +1,4 @@
+import { backgroundCoverage, backgroundJobsQuery, backgroundPortal, dispatchBackgroundIntelligence, finishBackgroundRun } from './background-scheduler.js';
 import { AppError } from './errors.js';
 import { requireEnterprisePermission } from './enterprise-access.js';
 import { requireCommercialTier } from './billing.js';
@@ -40,19 +41,20 @@ async function requireControl(env: Env, identity: RequestIdentity) {
 
 export async function backgroundIntelligenceStatus(env: Env, identity: RequestIdentity) {
   await requireControl(env, identity);
-  const settings = await env.DB.prepare('SELECT enabled, refresh_hours, daily_request_limit, version, last_run_at, next_run_at FROM background_intelligence_settings WHERE portal_id = ?')
+  const settings = await env.DB.prepare('SELECT enabled, refresh_hours, daily_request_limit, version, last_run_at, next_run_at, last_run_error FROM background_intelligence_settings WHERE portal_id = ?')
     .bind(identity.portalId).first<Record<string, unknown>>();
   const usage = await env.DB.prepare(`SELECT request_count FROM background_intelligence_usage WHERE portal_id = ? AND usage_date = (NOW() AT TIME ZONE 'UTC')::date`)
     .bind(identity.portalId).first<{ request_count: number }>();
   const jobs = await env.DB.prepare(`SELECT status, COUNT(*)::integer AS count FROM background_intelligence_jobs WHERE portal_id = ? GROUP BY status`).bind(identity.portalId).all();
-  const coverage = await env.DB.prepare(`SELECT COUNT(*)::integer AS open_deals,
-    COUNT(*) FILTER (WHERE s.assessment_at = a.assessed_at AND s.generated_at::timestamptz >= NOW() - INTERVAL '24 hours')::integer AS recent_briefs
+  const coverageRows = await env.DB.prepare(`SELECT a.assessed_at, s.assessment_at, s.generated_at, s.freshness_status
     FROM deal_assessments a LEFT JOIN deal_decision_snapshots s ON s.portal_id = a.portal_id AND s.deal_id = a.deal_id
-    WHERE a.portal_id = ? AND a.is_closed = 0 AND dealguard.record_is_available(a.portal_id,a.deal_id)`).bind(identity.portalId).first();
+    WHERE a.portal_id = ? AND a.is_closed = 0 AND dealguard.record_is_available(a.portal_id,a.deal_id) LIMIT 10001`)
+    .bind(identity.portalId).all<Record<string, unknown>>();
+  const coverage = backgroundCoverage(coverageRows.results ?? [], Date.now());
   return { settings: { enabled: settings?.enabled === 1, refreshHours: Number(settings?.refresh_hours ?? 24),
     dailyRequestLimit: Number(settings?.daily_request_limit ?? 1000), version: Number(settings?.version ?? 0) },
     lastRunAt: settings?.last_run_at ?? null, nextRunAt: settings?.next_run_at ?? null,
-    requestsToday: Number(usage?.request_count ?? 0), jobs: jobs.results ?? [], coverage,
+    lastRunError: settings?.last_run_error ?? null, requestsToday: Number(usage?.request_count ?? 0), jobs: jobs.results ?? [], coverage,
     semantics: { optIn: true, noCrmMutation: true, noNotification: true, budgetDay: 'UTC',
       maxDealsPerRun: MAX_DEALS_PER_RUN, refreshIntervalIsTargetNotGuarantee: true } };
 }
@@ -65,7 +67,7 @@ export async function saveBackgroundIntelligenceSettings(env: Env, identity: Req
     VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (portal_id) DO UPDATE SET
       enabled = excluded.enabled, refresh_hours = excluded.refresh_hours,
       daily_request_limit = excluded.daily_request_limit, version = background_intelligence_settings.version + 1,
-      next_run_at = NOW(), lease_token = NULL, lease_expires_at = NULL, updated_at = NOW(),
+      next_run_at = NOW(), lease_token = NULL, lease_expires_at = NULL, dispatch_token = NULL, dispatch_expires_at = NULL, updated_at = NOW(),
       updated_by_user_id = excluded.updated_by_user_id, updated_by_email = excluded.updated_by_email`)
     .bind(identity.portalId, settings.enabled ? 1 : 0, settings.refreshHours, settings.dailyRequestLimit, identity.userId, identity.userEmail).run();
   if (!settings.enabled) await env.DB.prepare(`UPDATE background_intelligence_jobs SET status = 'cancelled', lease_token = NULL
@@ -166,7 +168,7 @@ async function enrichJob(env: Env, settings: Settings, lease: string, dealId: st
   if (!await repository.saveAssessment(settings.portal_id, assessment)) {
     throw new AppError(409, 'background_superseded', 'A newer assessment already exists.');
   }
-  await saveAssessmentContext(env, settings.portal_id, assessment);
+  await saveAssessmentContext(env, settings.portal_id, assessment, deal.properties);
   await recordAssessmentHistory(env, settings.portal_id, assessment, { trigger: 'background_intelligence', properties: deal.properties, policyId: policy.policyId });
   await currentLease(env, settings, lease);
   const snapshotAccepted = assessment.isClosed ? false : await persistDecisionSnapshot(env, settings.portal_id, dealId, payload);
@@ -175,41 +177,36 @@ async function enrichJob(env: Env, settings: Settings, lease: string, dealId: st
     requestCount: budget.requestCount() };
 }
 
-export async function runBackgroundIntelligence(env: Env): Promise<void> {
-  // One portal per message and one worker per portal; fairness uses the oldest due time.
-  const rows = await env.DB.prepare(`SELECT s.portal_id FROM background_intelligence_settings s JOIN tenants t ON t.portal_id = s.portal_id
-    WHERE s.enabled = 1 AND t.status = 'active' AND s.next_run_at <= NOW()
+export async function runBackgroundIntelligence(env: Env, portalId?: string): Promise<void> {
+  if (portalId === undefined) { await dispatchBackgroundIntelligence(env); return; }
+  const portal = backgroundPortal(portalId), lease = crypto.randomUUID();
+  const settings = await env.DB.prepare(`UPDATE background_intelligence_settings s SET lease_token = ?,
+    lease_expires_at = NOW() + INTERVAL '5 minutes', last_run_at = NOW(), next_run_at = NOW() + INTERVAL '15 minutes',
+    dispatch_token = NULL, dispatch_expires_at = NULL
+    WHERE s.portal_id = ? AND s.enabled = 1 AND s.next_run_at <= NOW()
       AND (s.lease_expires_at IS NULL OR s.lease_expires_at <= NOW())
-    ORDER BY s.next_run_at, s.portal_id LIMIT 5`).all<{ portal_id: string }>();
-  for (const candidate of rows.results ?? []) {
-    const lease = crypto.randomUUID();
-    const settings = await env.DB.prepare(`UPDATE background_intelligence_settings SET lease_token = ?,
-      lease_expires_at = NOW() + INTERVAL '5 minutes', last_run_at = NOW(), next_run_at = NOW() + INTERVAL '15 minutes'
-      WHERE portal_id = ? AND enabled = 1 AND next_run_at <= NOW()
-        AND (lease_expires_at IS NULL OR lease_expires_at <= NOW())
-      RETURNING portal_id, enabled, refresh_hours, daily_request_limit, version`).bind(lease, candidate.portal_id).first<Settings>();
-    if (!settings) continue;
+      AND EXISTS (SELECT 1 FROM tenants t WHERE t.portal_id = s.portal_id AND t.status = 'active')
+    RETURNING s.portal_id, s.enabled, s.refresh_hours, s.daily_request_limit, s.version`).bind(lease, portal).first<Settings>();
+  if (!settings) return;
+  let runError: string | null = null;
     try {
       await requireCommercialTier(env, settings.portal_id, 'enterprise');
       await env.DB.prepare(`INSERT INTO background_intelligence_jobs (portal_id, deal_id, status)
         SELECT a.portal_id, a.deal_id, 'queued' FROM deal_assessments a
         WHERE a.portal_id = ? AND a.is_closed = 0 AND dealguard.record_is_available(a.portal_id,a.deal_id)
         AND NOT EXISTS (SELECT 1 FROM background_intelligence_jobs j WHERE j.portal_id = a.portal_id AND j.deal_id = a.deal_id)
-        ORDER BY CASE WHEN a.status = 'critical' THEN 0 ELSE 1 END, a.assessed_at, a.deal_id LIMIT 50
+        ORDER BY a.assessed_at, a.deal_id LIMIT 100
         ON CONFLICT (portal_id, deal_id) DO NOTHING`).bind(settings.portal_id).run();
-      const jobs = await env.DB.prepare(`SELECT j.deal_id, j.status, j.attempts FROM background_intelligence_jobs j
-        JOIN deal_assessments a ON a.portal_id = j.portal_id AND a.deal_id = j.deal_id
-        WHERE j.portal_id = ? AND a.is_closed = 0 AND dealguard.record_is_available(a.portal_id,a.deal_id) AND j.available_at <= NOW()
-          AND (j.status IN ('queued','retry','cancelled')
-            OR (j.status = 'processing' AND j.started_at < NOW() - INTERVAL '5 minutes')
-            OR (j.status = 'completed' AND j.completed_at <= NOW() - (?::integer * INTERVAL '1 hour')))
-        ORDER BY j.completed_at NULLS FIRST, CASE WHEN a.status = 'critical' THEN 0 ELSE 1 END, j.available_at, j.deal_id LIMIT 3`)
-        .bind(settings.portal_id, settings.refresh_hours).all<Candidate>();
+      await env.DB.prepare(`UPDATE background_intelligence_jobs SET status = 'failed', lease_token = NULL,
+        last_error_code = 'background_attempts_exhausted' WHERE portal_id = ? AND status = 'processing'
+          AND attempts >= 5 AND started_at < NOW() - INTERVAL '5 minutes'`).bind(settings.portal_id).run();
+      const query = backgroundJobsQuery(settings.portal_id, settings.refresh_hours);
+      const jobs = await env.DB.prepare(query.sql).bind(...query.params).all<Candidate>();
       for (const job of jobs.results ?? []) {
         await currentLease(env, settings, lease);
         const attempts = ['completed','cancelled'].includes(job.status) ? 1 : Number(job.attempts) + 1;
         const claimed = await env.DB.prepare(`UPDATE background_intelligence_jobs SET status = 'processing', started_at = NOW(),
-          lease_token = ?, attempts = ? WHERE portal_id = ? AND deal_id = ? AND EXISTS (
+          lease_token = ?, attempts = ? WHERE portal_id = ? AND deal_id = ? AND dealguard.record_is_available(portal_id,deal_id) AND EXISTS (
             SELECT 1 FROM background_intelligence_settings WHERE portal_id = ? AND enabled = 1
               AND version = ? AND lease_token = ? AND lease_expires_at > clock_timestamp()) RETURNING deal_id`)
           .bind(lease, attempts, settings.portal_id, job.deal_id, settings.portal_id, settings.version, lease).first();
@@ -230,13 +227,13 @@ export async function runBackgroundIntelligence(env: Env): Promise<void> {
             WHERE portal_id = ? AND deal_id = ? AND lease_token = ?`)
             .bind(code === 'background_cancelled' ? 'cancelled' : budget || attempts < MAX_ATTEMPTS ? 'retry' : 'failed', code, budget,
               Math.min(3600, 120 * 2 ** Math.min(attempts, 5)), settings.portal_id, job.deal_id, lease).run();
-          if (budget || code === 'hubspot_rate_limited' || code === 'hubspot_reauthorization_required') break;
+          if (budget || code === 'hubspot_rate_limited' || code === 'hubspot_reauthorization_required') { runError = code; break; }
         }
       }
+    } catch (error) {
+      runError = error instanceof AppError ? error.code : 'background_run_failed';
+      throw error;
     } finally {
-      await env.DB.prepare(`UPDATE background_intelligence_settings SET lease_token = NULL, lease_expires_at = NULL
-        WHERE portal_id = ? AND lease_token = ?`).bind(settings.portal_id, lease).run();
+      await finishBackgroundRun(env, settings.portal_id, lease, runError);
     }
-    return;
-  }
 }

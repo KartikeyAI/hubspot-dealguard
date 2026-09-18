@@ -3,8 +3,8 @@ import { Alert, Button, Card, Flex, Heading, LoadingSpinner, Select, Text, hubsp
 import { safeProductError } from './product-ui';
 const ROOT = 'https://dealguard-api.rokad.co/api/v1/enterprise/background-intelligence';
 type Status = { settings: { enabled: boolean; refreshHours: number; dailyRequestLimit: number };
-  requestsToday: number; lastRunAt: string | null; jobs: Array<{status: string;count: number}>;
-  coverage: {open_deals: number; recent_briefs: number} | null };
+  requestsToday: number; lastRunAt: string | null; lastRunError?: string | null; nextRunAt?: string | null; jobs: Array<{status: string;count: number}>;
+  coverage: {open_deals: number; recent_briefs: number; aging_briefs: number; stale_briefs: number; unavailable_briefs: number} | null };
 export function BackgroundIntelligencePanel({ enabled }: {enabled: boolean}) {
   const [status,setStatus] = useState<Status|null>(null);
   const [hours,setHours] = useState(24), [budget,setBudget] = useState(1000);
@@ -40,7 +40,9 @@ export function BackgroundIntelligencePanel({ enabled }: {enabled: boolean}) {
     {error ? <Alert title="Background controls unavailable" variant="warning">{error}</Alert> : null}
     {status ? <>
       <Text>{status.settings.enabled ? 'Enabled' : 'Paused'} · {status.requestsToday} request reservations used this UTC day · last run {status.lastRunAt ?? 'Not run'}</Text>
-      <Text>{status.coverage?.recent_briefs ?? 0} recently generated matching briefs / {status.coverage?.open_deals ?? 0} recorded open deals. This is coverage, not a promise that every enrichment source is current.</Text>
+      {status.coverage ? <Text>{status.coverage.recent_briefs} fresh · {status.coverage.aging_briefs} aging · {status.coverage.stale_briefs} stale · {status.coverage.unavailable_briefs} unavailable briefs / {status.coverage.open_deals} recorded open deals. Freshness uses assessment time, not the time a brief was generated.</Text>
+        : <Text>Coverage is unavailable for this portfolio size; no partial percentage is shown.</Text>}
+      <Text>Next eligible run: {status.nextRunAt ?? 'Not scheduled'} · last run condition: {status.lastRunError ?? 'No recorded error'}</Text>
       <Text>{status.jobs.map(job=>`${job.status}: ${job.count}`).join(' · ') || 'No jobs yet'}</Text>
       {!busy ? <Flex direction="row" gap="small">
         <Select name="background-refresh" label="Refresh target (hours)" value={hours}

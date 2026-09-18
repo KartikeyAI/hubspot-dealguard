@@ -17,20 +17,13 @@ normal queue access but cannot authorize portal-wide background reads.
 
 ## Execution and safety
 
-The existing 15-minute maintenance schedule visits one due enabled portal per
-message, ordered by oldest due time. A five-minute portal lease prevents parallel
-workers from processing that portal. Up to 50 missing job definitions are
-introduced per visit; up to three due recorded-open deals are processed. Never-
-completed work is considered first, with critical state prioritized within the
-cohort. Completed jobs revisit after the target interval. Failed work uses bounded
-backoff and an explicit retry control after five attempts. Interrupted jobs become
-eligible again after the lease window. A budget-exhausted job waits until the next
-UTC budget day without being permanently failed.
-
-This is a bounded initial scheduler, not a guarantee that a 10,000-deal portfolio
-will be refreshed within its requested interval. Multi-portal throughput,
-close-date-aware prioritization and capacity tuning need representative load
-acceptance before a corresponding freshness SLA can be advertised.
+The maintenance schedule now dispatches separately addressed portal messages with
+reserved publication and execution leases. Each visit registers up to 100 missing
+jobs and processes up to three eligible deals. Oldest waiting work receives a fair
+slot alongside overdue, near-close and critical priority. Budget-aware delayed
+continuations drain remaining work without waiting for every maintenance tick.
+See `BACKGROUND_SCHEDULING.md` for migration 0029, exact bounds and retry semantics.
+No portfolio freshness or production throughput SLA is inferred from fixture tests.
 
 All HubSpot calls use a guarded real HubSpotClient. Each admission atomically
 reserves budget against the current tenant, enabled settings version and lease.
@@ -72,7 +65,7 @@ deadlines and the actual HubSpotClient request hook. PostgreSQL tests use isolat
 fixtures, two real concurrent database sessions for budget admission, revoked
 leases, administrator permissions and full worker composition with explicitly
 simulated HubSpot HTTP responses. They do not claim live HubSpot account or
-rendered App Home acceptance. Apply 0025 before deploying code; rollback can retain
+rendered App Home acceptance. Apply migrations through 0029 before deploying code; rollback can retain
 additive tables with background enrichment disabled. Product version remains 2.1.0.
 
 References: HubSpot API usage guidelines and limits (developer platform, March 30,

@@ -318,3 +318,26 @@ restore subscriptions without increasing OAuth grants. Polling recovers a failed
 queue wakeup. Earlier unavailable payloads are not retroactively reconstructed.
 See `DURABLE_WEBHOOK_INBOX.md`. Exact-tree CI evidence is recorded on PR #46 after
 execution, not inferred here. No live deployment or phase exit is claimed.
+
+## Consecutive development — slice 14: bounded multi-portal scheduling
+
+Migration 0029 adds dispatch reservations and observed close-date context.
+Independent portal jobs, fair/overdue/near-close selection, owned-lease continuation,
+budget-reset holds and source-age coverage are implemented. Existing request and
+read-only limits remain in force. Queue batch size is bounded to two; throughput
+and freshness targets remain unverified until representative live load acceptance.
+See `BACKGROUND_SCHEDULING.md`. Unit and real PostgreSQL tests accompany the slice.
+
+## Consecutive development — slice 15: request and record authorization
+
+URL identities cannot use body-only v1 authentication. URL-bound v2 compatibility
+is retained; malformed/partial v3 requests fail closed. Cached and fresh record
+reads enforce active tenant/user/role and all assigned dimensions. Review and
+handoff have explicit grants and server-derived UI capabilities. ID-bound role
+fallback and malformed scope handling fail closed. Review writes match their
+observed source; commercial cache keys include exact base evidence/scopes.
+Operational receipt cleanup respects active/configured holds. See
+`RECORD_AUTHORIZATION.md` for compatibility and remaining native-permission limits.
+All four actual dependency typechecks pass locally; local non-database test results
+are distinct from canonical CI and live acceptance. Exact executed CI results will
+be recorded on PR #46. No production readiness or completed phase is inferred.

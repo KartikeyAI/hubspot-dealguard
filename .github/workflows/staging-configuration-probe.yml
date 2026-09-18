@@ -1,0 +1,66 @@
+name: Protected staging configuration probe
+
+on:
+  push:
+    branches: [work/dealguard-staging-readiness-20260919]
+    paths: ['.github/workflows/staging-configuration-probe.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    if: github.repository == 'KartikeyAI/hubspot-dealguard'
+    runs-on: ubuntu-latest
+    environment: dealguard-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 61d99ae538e336f20f73370fdb615bdb9407c951
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Check configuration presence and format without rendering or contacting providers
+        run: node scripts/release-preflight.mjs --no-render --output .release/staging-configuration.json
+        env:
+          RELEASE_TARGET: staging
+          RELEASE_INCLUDE_HUBSPOT_UPLOAD: 'true'
+          APP_BASE_URL: ${{ vars.APP_BASE_URL }}
+          HUBSPOT_APP_ID: ${{ vars.HUBSPOT_APP_ID }}
+          HUBSPOT_CLIENT_ID: ${{ vars.HUBSPOT_CLIENT_ID }}
+          HUBSPOT_CLIENT_SECRET: ${{ secrets.HUBSPOT_CLIENT_SECRET }}
+          HUBSPOT_CLI_CONFIG_B64: ${{ secrets.HUBSPOT_CLI_CONFIG_B64 }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TIGRIS_ENDPOINT: ${{ vars.TIGRIS_ENDPOINT }}
+          TIGRIS_REGION: ${{ vars.TIGRIS_REGION }}
+          TIGRIS_BUCKET: ${{ vars.TIGRIS_BUCKET }}
+          TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
+          TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          SLACK_CLIENT_ID: ${{ vars.SLACK_CLIENT_ID }}
+          SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
+          DODO_API_KEY: ${{ secrets.DODO_API_KEY }}
+          DODO_WEBHOOK_SECRET: ${{ secrets.DODO_WEBHOOK_SECRET }}
+          DODO_ENVIRONMENT: ${{ vars.DODO_ENVIRONMENT }}
+          DODO_GROWTH_MONTHLY_PRODUCT_ID: ${{ vars.DODO_GROWTH_MONTHLY_PRODUCT_ID }}
+          DODO_GROWTH_YEARLY_PRODUCT_ID: ${{ vars.DODO_GROWTH_YEARLY_PRODUCT_ID }}
+          DODO_ENTERPRISE_MONTHLY_PRODUCT_ID: ${{ vars.DODO_ENTERPRISE_MONTHLY_PRODUCT_ID }}
+          DODO_ENTERPRISE_YEARLY_PRODUCT_ID: ${{ vars.DODO_ENTERPRISE_YEARLY_PRODUCT_ID }}
+          DODO_AI_CREDIT_EVENT_NAME: ${{ vars.DODO_AI_CREDIT_EVENT_NAME }}
+          DODO_ACTIVE_DEAL_EVENT_NAME: ${{ vars.DODO_ACTIVE_DEAL_EVENT_NAME }}
+          DODO_EVENT_OVERAGE_EVENT_NAME: ${{ vars.DODO_EVENT_OVERAGE_EVENT_NAME }}
+          DODO_RETENTION_EVENT_NAME: ${{ vars.DODO_RETENTION_EVENT_NAME }}
+      - name: Retain only non-sensitive check results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: protected-staging-configuration-${{ github.run_id }}
+          path: .release/staging-configuration.json
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14

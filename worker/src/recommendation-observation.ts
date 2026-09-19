@@ -153,7 +153,7 @@ async function syncPresentedRecommendation(
   if (duplicate) return;
 
   const id = crypto.randomUUID();
-  await env.DB.prepare(
+  const inserted = await env.DB.prepare(
     `INSERT INTO recommendation_instances (
       id, portal_id, deal_id, recommendation_fingerprint,
       recommendation_code, recommendation_label, recommendation_text, recommendation_dimension,
@@ -165,7 +165,7 @@ async function syncPresentedRecommendation(
       baseline_owner_id, baseline_team_id, baseline_region_code, baseline_close_date,
       baseline_attention_score, baseline_brief_status, baseline_dimensions_json,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'presented', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'presented', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
   ).bind(
     id, snapshot.portalId, snapshot.dealId, fingerprint,
     action.code, action.label, action.action, recommendationDimension(snapshot),
@@ -178,7 +178,8 @@ async function syncPresentedRecommendation(
     baseline.ownerId, baseline.teamId, baseline.regionCode, baseline.closeDate,
     baseline.attentionScore, baseline.briefStatus, JSON.stringify(baseline.dimensions),
     now, now,
-  ).run();
+  ).first<{ id: string }>();
+  if (!inserted) return;
   await addRecommendationEvent(env, snapshot.portalId, id, snapshot.dealId, 'presented', {
     userId: null,
     userEmail: null,
@@ -344,30 +345,8 @@ export async function observeRecommendationSnapshot(
 }
 
 export async function closeRecommendationsForDeal(
-  env: Env,
-  portalId: string,
-  dealId: string,
+  env: Env, portalId: string, dealId: string, assessedAt: string,
 ): Promise<void> {
-  const rows = await env.DB.prepare(
-    `SELECT id, status FROM recommendation_instances
-     WHERE portal_id = ? AND deal_id = ? AND status IN ('presented', 'accepted')`,
-  ).bind(portalId, dealId).all<{ id: string; status: RecommendationStatus }>();
-  const now = new Date().toISOString();
-  for (const row of rows.results ?? []) {
-    const status: RecommendationStatus = row.status === 'accepted' ? 'expired' : 'superseded';
-    const event: RecommendationEventType = status === 'expired' ? 'expired' : 'superseded';
-    const result = await env.DB.prepare(
-      `UPDATE recommendation_instances
-       SET status = ?, terminal_reason = 'deal_closed',
-           expired_at = CASE WHEN ? = 'expired' THEN ? ELSE expired_at END,
-           superseded_at = CASE WHEN ? = 'superseded' THEN ? ELSE superseded_at END,
-           updated_at = ?
-       WHERE portal_id = ? AND id = ? AND status IN ('presented', 'accepted')`,
-    ).bind(status, status, now, status, now, now, portalId, row.id).run();
-    if (Number(result.meta?.changes ?? 0) <= 0) continue;
-    await addRecommendationEvent(env, portalId, row.id, dealId, event, {
-      userId: null,
-      userEmail: null,
-    }, { reason: 'deal_closed' }, now);
-  }
+  await env.DB.prepare(`SELECT dealguard.reconcile_closed_deal_evidence(?, ?, ?) AS accepted`)
+    .bind(portalId, dealId, assessedAt).first();
 }

@@ -35,9 +35,9 @@ const migrationFiles = fs.readdirSync(migrationDir)
   .filter((name) => /^\d{4}_.+\.sql$/.test(name))
   .sort();
 const migrationNumbers = migrationFiles.map((name) => Number(name.slice(0, 4)));
-const expectedMigrationNumbers = Array.from({ length: 22 }, (_, index) => index + 1);
+const expectedMigrationNumbers = Array.from({ length: 30 }, (_, index) => index + 1);
 record(
-  'PostgreSQL migration sequence is contiguous through 0022',
+  'PostgreSQL migration sequence is contiguous through 0030',
   JSON.stringify(migrationNumbers) === JSON.stringify(expectedMigrationNumbers),
   `found ${migrationFiles.join(', ')}`,
 );
@@ -205,7 +205,7 @@ record('Invalid crm.objects.tasks.write scope is absent from release-critical so
 const result = {
   ok: failures.length === 0,
   generatedAt: new Date().toISOString(),
-  migrationRange: { first: '0001', last: '0022', releaseStart: '0015', releaseEnd: '0022' },
+  migrationRange: { first: '0001', last: '0030', releaseStart: '0015', releaseEnd: '0022' },
   checks: { total: checks.length, passed: checks.filter((item) => item.passed).length, failed: failures.length },
   failures,
 };

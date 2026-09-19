@@ -1,3 +1,5 @@
+import { permissionMatches } from './enterprise-access.js';
+import { authorizeRecordedDeal } from './record-access.js';
 import { requireOperationalPermission } from './authorization.js';
 import { requireCommercialTier } from './billing.js';
 import {
@@ -74,6 +76,8 @@ export async function route(
   const dealId = assessmentDealId(url.pathname);
   if (!dealId || !['GET', 'POST'].includes(request.method)) return routeV10(request, env, ctx);
 
+  const recordIdentity = await validateHubSpotRequest(request,env);
+  await authorizeRecordedDeal(env,recordIdentity,dealId);
   const baseResponse = await routeV10(request, env, ctx);
   if (!baseResponse.ok) return baseResponse;
   const contentType = baseResponse.headers.get('content-type') ?? '';
@@ -88,6 +92,7 @@ export async function route(
     payload,
     request.method === 'POST',
   );
+  const recordAccess = await authorizeRecordedDeal(env,identity,dealId);
   await persistDecisionSnapshot(env, identity.portalId, dealId, enriched).catch((error) => {
     console.error(JSON.stringify({
       level: 'warn',
@@ -97,5 +102,8 @@ export async function route(
       error: error instanceof Error ? error.message : String(error),
     }));
   });
-  return json(enriched, baseResponse.status);
+  return json({...enriched, recordCapabilities: {
+    canReview: permissionMatches(recordAccess.context.permissions,'deal.review'),
+    canConfirmHandoff: permissionMatches(recordAccess.context.permissions,'handoff.confirm'),
+  }}, baseResponse.status);
 }

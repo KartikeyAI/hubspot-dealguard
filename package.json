@@ -1,6 +1,6 @@
 {
   "name": "@rokadhq/hubspot-dealguard",
-  "version": "2.1.0",
+  "version": "3.0.0-alpha.1",
   "private": true,
   "type": "module",
   "description": "DealGuard by Rokad — enterprise HubSpot revenue governance on Neon PostgreSQL, Tigris object storage, Cloudflare Queues, and Dodo Payments.",
@@ -13,6 +13,7 @@
     "acceptance:intelligence": "node scripts/intelligence-acceptance.mjs",
     "production:smoke": "node scripts/production-smoke.mjs",
     "release:convergence": "node scripts/release-convergence.mjs",
+    "release:baseline": "node scripts/release-baseline.mjs",
     "release:preflight": "node scripts/release-preflight.mjs",
     "release:bundle": "node scripts/release-bundle.mjs",
     "release:record": "node scripts/deployment-record.mjs",

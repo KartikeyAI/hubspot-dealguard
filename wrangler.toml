@@ -50,7 +50,7 @@ max_retries = 8
 dead_letter_queue = "dealguard-dead-letter-staging"
 [[env.staging.queues.consumers]]
 queue = "dealguard-maintenance-staging"
-max_batch_size = 10
+max_batch_size = 2
 max_batch_timeout = 10
 max_retries = 8
 dead_letter_queue = "dealguard-dead-letter-staging"
@@ -110,7 +110,7 @@ max_retries = 8
 dead_letter_queue = "dealguard-dead-letter-production"
 [[env.production.queues.consumers]]
 queue = "dealguard-maintenance-production"
-max_batch_size = 10
+max_batch_size = 2
 max_batch_timeout = 10
 max_retries = 8
 dead_letter_queue = "dealguard-dead-letter-production"

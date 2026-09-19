@@ -34,7 +34,7 @@ test('both cached record opens and explicit record refreshes receive a Deal Brie
   assert.match(service, /completeIntelligence\(stored, readiness, momentum, relationship, engagement\)/);
   assert.match(service, /completeIntelligence\(assessment, readiness, momentum, relationship, engagement\)/);
   assert.match(service, /buildDealBrief\(\{/);
-  assert.match(service, /putCache\(cacheKey\(portalId, dealId\), value\)/);
+  assert.match(service, /putCache\(cacheKey\(portalId, dealId\), value, resource\)/);
 });
 
 test('the primary HubSpot card is now the unified Deal Brief surface', () => {

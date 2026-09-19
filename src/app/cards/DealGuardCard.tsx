@@ -149,8 +149,8 @@ const DealGuardBriefCard = ({ dealId }: { dealId: string }) => {
 
     <Flex direction="row" gap="small" wrap="wrap">
       <Button onClick={() => void load(true)} disabled={working}>Refresh Deal Brief</Button>
-      <Button variant="secondary" onClick={() => void postAction('review')} disabled={working}>Mark reviewed</Button>
-      {assessment.isWon && assessment.handoffStatus !== 'confirmed' && <Button variant="primary" onClick={() => void postAction('handoff')} disabled={working || assessment.status === 'critical'}>Confirm handoff</Button>}
+      {assessment.recordCapabilities?.canReview === true && <Button variant="secondary" onClick={() => void postAction('review')} disabled={working}>Mark reviewed</Button>}
+      {assessment.recordCapabilities?.canConfirmHandoff === true && assessment.isWon && assessment.handoffStatus !== 'confirmed' && <Button variant="primary" onClick={() => void postAction('handoff')} disabled={working || assessment.status === 'critical'}>Confirm handoff</Button>}
     </Flex>
     <Text variant="microcopy">Assessment: {formatDate(assessment.assessedAt)} · Deal Brief generated: {formatDate(brief?.generatedAt)}</Text>
   </Flex>;

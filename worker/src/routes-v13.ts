@@ -1,3 +1,4 @@
+import { createRecommendationRemediation } from './recommendation-remediation.js';
 import { requireCommercialTier } from './billing.js';
 import { json, methodNotAllowed, readJson } from './http.js';
 import {
@@ -40,6 +41,14 @@ export async function route(
     const identity = await validateHubSpotRequest(request, env);
     await requireCommercialTier(env, identity.portalId, 'enterprise');
     return json(await listDealRecommendations(env, identity, decodeURIComponent(dealId), url));
+  }
+
+  const linkMatch = url.pathname.match(/^\/api\/v1\/recommendations\/([^/]+)\/remediation$/);
+  if(linkMatch) {
+    if(request.method !== 'POST') return methodNotAllowed(['POST']);
+    const identity=await validateHubSpotRequest(request,env);
+    await requireCommercialTier(env,identity.portalId,'enterprise');
+    return json(await createRecommendationRemediation(env,identity,decodeURIComponent(linkMatch[1]!),await readJson<unknown>(request)));
   }
 
   const transition = recommendationTransitionPath(url.pathname);

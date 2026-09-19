@@ -1,5 +1,7 @@
+import { assessmentFreshness, assessmentActionDueAt, snapshotFreshness, freshnessConfidence, type EvidenceFreshness, type SnapshotFreshness } from './evidence-freshness.js';
 import { AppError } from './errors.js';
-import { requireEnterprisePermission, type EnterpriseAccessContext } from './enterprise-access.js';
+import type { EnterpriseAccessContext } from './enterprise-access.js';
+import { requireAnalyticsCollectionAccess, selectedAnalyticsFilters, analyticsFilters, analyticsPredicate } from './analytics-scope.js';
 import type {
   DecisionAmountBasis,
   DecisionEvidenceMode,
@@ -13,12 +15,6 @@ import type {
 import type { Env, IssueSeverity, RequestIdentity } from './types.js';
 
 const OPEN_REMEDIATION_STATUSES = ['open', 'acknowledged', 'in_progress', 'overdue'] as const;
-const FILTERS = [
-  ['pipelineId', 'pipeline_id', 'pipelineIds'],
-  ['teamId', 'team_id', 'teamIds'],
-  ['ownerId', 'owner_id', 'ownerIds'],
-  ['regionCode', 'region_code', 'regionCodes'],
-] as const;
 const ISSUE_ORDER: Record<IssueSeverity, number> = { critical: 0, warning: 1, info: 2 };
 const ACTION_ORDER = { high: 0, medium: 1, low: 2 } as const;
 
@@ -84,6 +80,8 @@ interface WorkingItem {
   evidenceCoveragePercent: number;
   evidenceConfidence: 'high' | 'medium' | 'low';
   snapshotGeneratedAt: string | null;
+  assessmentFreshness: EvidenceFreshness;
+  snapshotFreshness: SnapshotFreshness;
   dealBriefStatus: DecisionQueueItem['dealBriefStatus'];
   snapshotUsable: boolean;
   nextAction: DecisionQueueAction | null;
@@ -134,35 +132,31 @@ function iso(value: unknown): string | null {
 function parseJson<T>(value: unknown, fallback: T): T {
   if (typeof value !== 'string') return fallback;
   try {
-    return JSON.parse(value) as T;
+    const parsed: unknown = JSON.parse(value);
+    if (Array.isArray(fallback) && !Array.isArray(parsed)) return fallback;
+    if (fallback && typeof fallback === 'object' && !Array.isArray(fallback)
+      && (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))) return fallback;
+    return parsed as T;
   } catch {
     return fallback;
   }
 }
 
 function normalizeCurrency(value: unknown): string | null {
-  const code = normalizedText(value, 3)?.toUpperCase() ?? null;
+  const code = typeof value === 'string' ? value.trim().toUpperCase() : null;
   return code && /^[A-Z]{3}$/.test(code) ? code : null;
 }
 
-function sameInstant(left: unknown, right: unknown): boolean {
-  const leftTime = left ? Date.parse(String(left)) : Number.NaN;
-  const rightTime = right ? Date.parse(String(right)) : Number.NaN;
-  return Number.isFinite(leftTime) && Number.isFinite(rightTime) && Math.abs(leftTime - rightTime) < 1000;
-}
-
 function snapshotMode(row: ManagerDecisionSourceRow, now: number): {
-  mode: DecisionEvidenceMode;
-  usable: boolean;
-  generatedAt: string | null;
+  mode: DecisionEvidenceMode; usable: boolean; generatedAt: string | null; freshness: SnapshotFreshness;
 } {
-  const generatedAt = iso(row.snapshot_generated_at);
-  const current = sameInstant(row.snapshot_assessment_at, row.assessed_at);
-  if (!generatedAt || !current) return { mode: 'readiness_only', usable: false, generatedAt };
-  const ageHours = Math.max(0, now - Date.parse(generatedAt)) / 3_600_000;
-  if (ageHours <= 24) return { mode: 'full_deal_brief', usable: true, generatedAt };
-  if (ageHours <= 72) return { mode: 'aging_deal_brief', usable: true, generatedAt };
-  return { mode: 'stale_deal_brief', usable: false, generatedAt };
+  const freshness = snapshotFreshness({ assessmentAt: row.assessed_at,
+    snapshotAssessmentAt: row.snapshot_assessment_at, generatedAt: row.snapshot_generated_at,
+    recordedStatus: row.snapshot_freshness_status }, now);
+  const mode: DecisionEvidenceMode = freshness.status === 'fresh' ? 'full_deal_brief'
+    : freshness.status === 'aging' ? 'aging_deal_brief'
+    : freshness.status === 'stale' ? 'stale_deal_brief' : 'readiness_only';
+  return { mode, usable: freshness.usable, generatedAt: freshness.generatedAt, freshness };
 }
 
 function readinessAttention(score: number, stageAgeDays: number | null, issueCount: number): number {
@@ -191,17 +185,18 @@ function issueAction(row: ManagerDecisionSourceRow, now: number): DecisionQueueA
   if (!issue || !issue.code || !issue.label) return null;
   const priority = issue.severity === 'critical' ? 'high' : issue.severity === 'warning' ? 'medium' : 'low';
   const dueHours = issue.severity === 'critical' ? 24 : issue.severity === 'warning' ? 72 : 168;
+  const dueAt = assessmentActionDueAt(row.assessed_at, dueHours, now);
   return {
     code: `readiness_${issue.code}`,
     label: issue.label,
     action: issue.description ?? `Resolve the ${issue.label.toLowerCase()} readiness issue.`,
     priority,
     owner: 'deal_owner',
-    dueAt: new Date(now + dueHours * 3_600_000).toISOString(),
+    dueAt,
     rationale: `This is the highest-priority current readiness issue and carries ${issue.weight} readiness points.`,
     evidenceCodes: [issue.code],
     source: 'readiness',
-    overdue: false,
+    overdue: dueAt !== null && Date.parse(dueAt) < now,
   };
 }
 
@@ -366,6 +361,7 @@ function workingItem(row: ManagerDecisionSourceRow, portalId: string, now: numbe
   const confidence = snapshot.usable && ['high', 'medium', 'low'].includes(String(row.snapshot_confidence))
     ? row.snapshot_confidence as WorkingItem['evidenceConfidence']
     : 'low';
+  const sourceFreshness = assessmentFreshness(row.assessed_at, now);
   const action = chooseAction(row, snapshot.usable, now);
   const amount = amountContext(row);
   return {
@@ -381,14 +377,20 @@ function workingItem(row: ManagerDecisionSourceRow, portalId: string, now: numbe
     deterministicAttentionScore,
     evidenceMode: snapshot.mode,
     evidenceCoveragePercent: coverage,
-    evidenceConfidence: confidence,
+    evidenceConfidence: freshnessConfidence(confidence, snapshot.freshness.status),
+    assessmentFreshness: sourceFreshness,
+    snapshotFreshness: snapshot.freshness,
     snapshotGeneratedAt: snapshot.generatedAt,
     dealBriefStatus: snapshot.usable && ['on_track', 'watch', 'intervention_required', 'insufficient_evidence'].includes(String(row.brief_status))
       ? row.brief_status as WorkingItem['dealBriefStatus']
       : null,
     snapshotUsable: snapshot.usable,
     nextAction: action,
-    reasons: initialReasons(row, snapshot.mode, snapshot.usable),
+    reasons: [
+      ...(sourceFreshness.status === 'stale' || sourceFreshness.status === 'unavailable'
+        ? [reason('assessment_freshness_review', 'Recorded assessment is stale or its observation time is unavailable', 'warning', 'evidence')] : []),
+      ...initialReasons(row, snapshot.mode, snapshot.usable),
+    ].slice(0, 5),
     dimensionStates: snapshot.usable ? parseJson<Record<string, unknown>>(row.dimensions_json, {}) : {},
     ...amount,
     commercialImportanceScore: 0,
@@ -484,6 +486,8 @@ function toResponseItem(item: WorkingItem): DecisionQueueItem {
     evidenceCoveragePercent: item.evidenceCoveragePercent,
     evidenceConfidence: item.evidenceConfidence,
     snapshotGeneratedAt: item.snapshotGeneratedAt,
+    assessmentFreshness: item.assessmentFreshness,
+    snapshotFreshness: item.snapshotFreshness,
     dealBriefStatus: item.dealBriefStatus,
     amount: {
       value: item.amountValue,
@@ -509,10 +513,12 @@ function toResponseItem(item: WorkingItem): DecisionQueueItem {
 export function buildManagerDecisionQueue(
   portalId: string,
   rows: ManagerDecisionSourceRow[],
-  options: { now?: number; limit?: number; band?: ManagerDecisionBand | null; evidenceMode?: DecisionEvidenceMode | null } = {},
+  options: { now?: number; limit?: number; offset?: number; query?: string; band?: ManagerDecisionBand | null; evidenceMode?: DecisionEvidenceMode | null } = {},
 ): ManagerDecisionQueueResponse {
   const now = options.now ?? Date.now();
   const limit = Math.min(100, Math.max(1, Math.round(options.limit ?? 25)));
+  const offset = Math.min(10000, Math.max(0, Math.floor(options.offset ?? 0)));
+  const query = (options.query ?? '').toLowerCase();
   const working = rows.map((row) => workingItem(row, portalId, now));
   const amountCohorts = applyAmountPercentiles(working);
   for (const item of working) finalize(item);
@@ -520,11 +526,13 @@ export function buildManagerDecisionQueue(
     right.priorityScore - left.priorityScore
     || right.actionUrgencyScore - left.actionUrgencyScore
     || right.commercialImportanceScore - left.commercialImportanceScore
-    || Date.parse(right.assessedAt) - Date.parse(left.assessedAt));
+    || Date.parse(right.assessedAt) - Date.parse(left.assessedAt)
+    || left.dealId.localeCompare(right.dealId));
   const filtered = all.filter((item) =>
     (!options.band || item.band === options.band)
-    && (!options.evidenceMode || item.evidenceMode === options.evidenceMode));
-  const items = filtered.slice(0, limit).map(toResponseItem);
+    && (!options.evidenceMode || item.evidenceMode === options.evidenceMode)
+    && (!query || item.dealName.toLowerCase().includes(query) || item.dealId.toLowerCase().includes(query)));
+  const items = filtered.slice(offset, offset + limit).map(toResponseItem);
   const fullDealBriefDeals = all.filter((item) => item.evidenceMode === 'full_deal_brief' || item.evidenceMode === 'aging_deal_brief').length;
   return {
     generatedAt: new Date(now).toISOString(),
@@ -547,6 +555,8 @@ export function buildManagerDecisionQueue(
       fullDealBriefCoveragePercent: all.length > 0 ? Math.round(fullDealBriefDeals / all.length * 100) : 0,
       amountComparableDeals: all.filter((item) => item.amountCohortKey !== null).length,
     },
+    pagination: { offset, limit, matchedDeals: filtered.length,
+      nextOffset: offset + items.length < filtered.length ? offset + limit : null },
     amountCohorts,
     items,
     semantics: {
@@ -559,29 +569,34 @@ export function buildManagerDecisionQueue(
   };
 }
 
-function queryFilter(
-  url: URL,
-  access: EnterpriseAccessContext,
-): { clauses: string[]; params: unknown[]; filters: Record<string, string> } {
-  const clauses: string[] = [];
-  const params: unknown[] = [];
-  const filters: Record<string, string> = {};
-  for (const [queryKey, column, scopeKey] of FILTERS) {
-    const requested = normalizedText(url.searchParams.get(queryKey), 128);
-    const allowed = access.scope[scopeKey];
-    if (requested && allowed.length > 0 && !allowed.includes(requested)) {
-      throw new AppError(403, 'decision_queue_scope_denied', `The selected ${queryKey} is outside your assigned scope.`);
+export function managerQueueOptions(params: URLSearchParams) {
+  const single = (key: string, fallback: string): string => {
+    const values = params.getAll(key);
+    if (values.length > 1) throw new AppError(400, 'decision_queue_filter_invalid', 'Queue filters must be single values.');
+    return values[0] ?? fallback;
+  };
+  const bounded = (key: string, fallback: string, min: number, max: number) => {
+    const text = single(key, fallback);
+    if (!/^(0|[1-9][0-9]*)$/.test(text) || Number(text) < min || Number(text) > max) {
+      throw new AppError(400, 'decision_queue_filter_invalid', 'Queue page values must be bounded whole numbers.');
     }
-    if (requested) {
-      clauses.push(`latest.${column} = ?`);
-      params.push(requested);
-      filters[queryKey] = requested;
-    } else if (allowed.length > 0) {
-      clauses.push(`latest.${column} IN (${allowed.map(() => '?').join(', ')})`);
-      params.push(...allowed);
-    }
+    return Number(text);
+  };
+  const band = single('band', ''), evidenceMode = single('evidenceMode', ''), query = single('q', '');
+  if ((band && !['act_now','review','monitor'].includes(band))
+    || (evidenceMode && !['full_deal_brief','aging_deal_brief','stale_deal_brief','readiness_only'].includes(evidenceMode))
+    || query.length > 120 || query !== query.trim()) {
+    throw new AppError(400, 'decision_queue_filter_invalid', 'The queue filter is invalid.');
   }
-  return { clauses, params, filters };
+  return { limit: bounded('limit', '25', 1, 100), offset: bounded('offset', '0', 0, 10000), query,
+    band: band as ManagerDecisionBand || null, evidenceMode: evidenceMode as DecisionEvidenceMode || null };
+}
+
+function queryFilter(url: URL, access: EnterpriseAccessContext) {
+  const filters = selectedAnalyticsFilters(url.searchParams);
+  const effective = analyticsFilters(access.scope, filters).effective;
+  const predicate = analyticsPredicate('latest', effective);
+  return { clauses: [predicate.sql], params: predicate.params, filters };
 }
 
 export async function managerDecisionQueue(
@@ -589,7 +604,8 @@ export async function managerDecisionQueue(
   identity: RequestIdentity,
   url: URL,
 ): Promise<ManagerDecisionQueueResponse> {
-  const access = await requireEnterprisePermission(env, identity, 'analytics.view');
+  const access = await requireAnalyticsCollectionAccess(env, identity, 'analytics.view');
+  const options = managerQueueOptions(url.searchParams);
   const scoped = queryFilter(url, access);
   const where = scoped.clauses.length > 0 ? `AND ${scoped.clauses.join(' AND ')}` : '';
   const rows = await env.DB.prepare(
@@ -676,9 +692,9 @@ export async function managerDecisionQueue(
       ON snapshot.portal_id = ? AND snapshot.deal_id = latest.deal_id
     LEFT JOIN remediation_counts remediation ON remediation.deal_id = latest.deal_id
     LEFT JOIN next_remediation ON next_remediation.deal_id = latest.deal_id
-    WHERE latest.is_closed = 0 ${where}
+    WHERE latest.is_closed = 0 AND dealguard.record_is_available(latest.portal_id,latest.deal_id) ${where}
     ORDER BY latest.assessed_at DESC
-    LIMIT 10000`,
+    LIMIT 10001`,
   ).bind(
     identity.portalId,
     identity.portalId,
@@ -688,16 +704,10 @@ export async function managerDecisionQueue(
     ...scoped.params,
   ).all<ManagerDecisionSourceRow>();
 
-  const bandValue = normalizedText(url.searchParams.get('band'), 40);
-  const band = ['act_now', 'review', 'monitor'].includes(String(bandValue))
-    ? bandValue as ManagerDecisionBand
-    : null;
-  const evidenceValue = normalizedText(url.searchParams.get('evidenceMode'), 40);
-  const evidenceMode = ['full_deal_brief', 'aging_deal_brief', 'stale_deal_brief', 'readiness_only'].includes(String(evidenceValue))
-    ? evidenceValue as DecisionEvidenceMode
-    : null;
-  const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') ?? 25) || 25));
-  const response = buildManagerDecisionQueue(identity.portalId, rows.results ?? [], { limit, band, evidenceMode });
+  if ((rows.results?.length ?? 0) > 10000) {
+    throw new AppError(413, 'decision_queue_capacity_exceeded', 'The permitted queue exceeds 10,000 deals. Narrow the filters; no partial priorities are shown.');
+  }
+  const response = buildManagerDecisionQueue(identity.portalId, rows.results ?? [], options);
   response.filters = { ...response.filters, ...scoped.filters };
   return response;
 }

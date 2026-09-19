@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 const analytics = fs.readFileSync(new URL('../worker/src/enterprise-analytics-v2.ts', import.meta.url), 'utf8');
+const outcomes = fs.readFileSync(new URL('../worker/src/outcome-evidence.ts', import.meta.url), 'utf8');
 const home = fs.readFileSync(new URL('../src/app/pages/EnterpriseHomeV4.tsx', import.meta.url), 'utf8');
 
 test('P2 analytics exposes the decision-intelligence and compatibility contracts', () => {
@@ -14,7 +15,6 @@ test('P2 analytics exposes the decision-intelligence and compatibility contracts
     'workspaceAverageScore',
     'highPriorityDeals',
     'highRiskDeals',
-    'confidence',
   ]) assert.match(analytics, new RegExp(`\\b${key}\\b`), `missing analytics contract: ${key}`);
 });
 
@@ -28,7 +28,10 @@ test('attention priority is deterministic and is not represented as a win probab
 });
 
 test('outcome evidence carries sample-size confidence guards', () => {
-  assert.match(analytics, /closed\.length >= 100 \? 'strong' : closed\.length >= 30 \? 'directional' : 'limited'/);
+  assert.match(outcomes, /hasScoreComparison && samples >= 100 && Math\.min\(won, lost\) >= 30/);
+  assert.match(outcomes, /hasScoreComparison && samples >= 30 && Math\.min\(won, lost\) >= 10/);
+  assert.match(outcomes, /confidenceBasis: 'sample_size_and_group_coverage_not_predictive_confidence'/);
+  assert.match(home, /outcomes\.scoreDelta !== null/);
   assert.match(home, /Strong sample/);
   assert.match(home, /Directional/);
   assert.match(home, /Limited sample/);

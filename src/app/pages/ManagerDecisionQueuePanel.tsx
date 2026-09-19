@@ -1,5 +1,9 @@
+import { RemediationWorkPanel } from './RemediationWorkPanel';
+import { WebhookHealthPanel } from './WebhookHealthPanel';
+import { BackgroundIntelligencePanel } from './BackgroundIntelligencePanel';
 import React from 'react';
 import { Flex } from '@hubspot/ui-extensions';
+import { PortfolioHistoryPanel } from './PortfolioHistoryPanel';
 import { ExecutiveRevenuePanel } from './ExecutiveRevenuePanel';
 import { ManagerDecisionQueuePanel as ManagerDecisionQueueCore } from './ManagerDecisionQueueCore';
 import { RecommendationDeliveryAnalyticsPanel } from './RecommendationDeliveryAnalyticsPanel';
@@ -12,7 +16,11 @@ import { RecommendationRoutingPoliciesPanel } from './RecommendationRoutingPolic
 export function ManagerDecisionQueuePanel({ enabled }: { enabled: boolean }) {
   return <Flex direction="column" gap="large">
     <ManagerDecisionQueueCore enabled={enabled} />
+    <RemediationWorkPanel enabled={enabled} />
     <ExecutiveRevenuePanel enabled={enabled} />
+    <PortfolioHistoryPanel enabled={enabled} />
+    <BackgroundIntelligencePanel enabled={enabled} />
+    <WebhookHealthPanel enabled={enabled} />
     <RecommendationOutcomePanel enabled={enabled} />
     <RecommendationOperationsPanel enabled={enabled} />
     <RecommendationNotificationConfigurationPanel enabled={enabled} />

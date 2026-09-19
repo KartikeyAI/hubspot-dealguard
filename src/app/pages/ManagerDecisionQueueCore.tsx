@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Button,
@@ -8,6 +8,7 @@ import {
   Heading,
   Link,
   LoadingSpinner,
+  Input,
   StatusTag,
   Text,
   hubspot,
@@ -70,6 +71,8 @@ type DecisionQueueItem = {
   evidenceCoveragePercent: number;
   evidenceConfidence: 'high' | 'medium' | 'low';
   snapshotGeneratedAt: string | null;
+  assessmentFreshness?: { status: 'fresh' | 'aging' | 'stale' | 'unavailable'; ageHours: number | null };
+  snapshotFreshness?: { status: 'fresh' | 'aging' | 'stale' | 'unavailable'; reason: string | null };
   dealBriefStatus: 'on_track' | 'watch' | 'intervention_required' | 'insufficient_evidence' | null;
   amount: {
     value: number | null;
@@ -86,6 +89,7 @@ type DecisionQueueItem = {
 };
 
 type ManagerDecisionQueue = {
+  pagination?: { offset: number; limit: number; matchedDeals: number; nextOffset: number | null };
   generatedAt: string;
   summary: {
     totalOpenDeals: number;
@@ -198,8 +202,9 @@ function formatAmount(item: DecisionQueueItem): string {
   return `${compactNumber(value)} ${item.amount.label}`;
 }
 
-function buildQueuePath(band: QueueBandFilter, evidence: QueueEvidenceFilter): string {
-  const params = new URLSearchParams({ limit: String(QUEUE_LIMIT) });
+function buildQueuePath(band: QueueBandFilter, evidence: QueueEvidenceFilter, offset = 0, query = ''): string {
+  const params = new URLSearchParams({ limit: String(QUEUE_LIMIT), offset: String(offset) });
+  if (query) params.set('q', query);
   if (band !== 'all') params.set('band', band);
   if (evidence !== 'all') params.set('evidenceMode', evidence);
   return `/enterprise/decision-queue?${params.toString()}`;
@@ -212,14 +217,20 @@ export function ManagerDecisionQueuePanel({ enabled }: { enabled: boolean }) {
   const [loading, setLoading] = useState(enabled);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [offset, setOffset] = useState(0);
+  const [search, setSearch] = useState('');
+  const [query, setQuery] = useState('');
+  const requestVersion = useRef(0);
 
   const load = useCallback(async (manual = false) => {
     if (!enabled) return;
+    const version = ++requestVersion.current;
+    setQueue(null);
     if (manual) setRefreshing(true);
     else setLoading(true);
     setError(null);
     try {
-      const response = await hubspot.fetch(`${API_BASE}${buildQueuePath(band, evidence)}`, {
+      const response = await hubspot.fetch(`${API_BASE}${buildQueuePath(band, evidence, offset, query)}`, {
         method: 'GET',
         timeout: 20_000,
       });
@@ -227,25 +238,27 @@ export function ManagerDecisionQueuePanel({ enabled }: { enabled: boolean }) {
       if (!response.ok) {
         throw new Error(safeProductError(data?.error?.message, 'The Manager Decision Queue could not be loaded.'));
       }
-      setQueue(data as ManagerDecisionQueue);
+      if (version === requestVersion.current) setQueue(data as ManagerDecisionQueue);
     } catch (caught) {
+      if (version !== requestVersion.current) return;
       setError(safeProductError(
         caught instanceof Error ? caught.message : null,
         'The Manager Decision Queue could not be loaded. Please try again.',
       ));
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (version === requestVersion.current) { setLoading(false); setRefreshing(false); }
     }
-  }, [band, enabled, evidence]);
+  }, [band, enabled, evidence, offset, query]);
 
   useEffect(() => {
     if (!enabled) {
-      setQueue(null);
+      requestVersion.current += 1;
+      setQueue(null); setOffset(0); setRefreshing(false);
       setLoading(false);
       return;
     }
     void load(false);
+    return () => { requestVersion.current += 1; };
   }, [enabled, load]);
 
   if (!enabled) {
@@ -282,7 +295,7 @@ export function ManagerDecisionQueuePanel({ enabled }: { enabled: boolean }) {
           key={option.value}
           variant={band === option.value ? 'primary' : 'secondary'}
           disabled={loading || refreshing}
-          onClick={() => setBand(option.value)}
+          onClick={() => { setBand(option.value); setOffset(0); }}
         >{option.label}</Button>)}
       </Flex>
     </Flex>
@@ -294,11 +307,21 @@ export function ManagerDecisionQueuePanel({ enabled }: { enabled: boolean }) {
           key={option.value}
           variant={evidence === option.value ? 'primary' : 'secondary'}
           disabled={loading || refreshing}
-          onClick={() => setEvidence(option.value)}
+          onClick={() => { setEvidence(option.value); setOffset(0); }}
         >{option.label}</Button>)}
       </Flex>
     </Flex>
 
+    <Flex direction="row" gap="small" align="end">
+      <Input name="decision-queue-search" label="Deal name or ID" value={search} onChange={value => setSearch(value.slice(0,120))} />
+      <Button disabled={loading || refreshing} onClick={() => { setQuery(search.trim()); setOffset(0); }}>Search queue</Button>
+    </Flex>
+    {queue?.pagination ? <Flex direction="row" gap="small" align="center">
+      <Button disabled={loading || refreshing || offset === 0} onClick={() => setOffset(Math.max(0,offset-QUEUE_LIMIT))}>Previous deals</Button>
+      <Text>{queue.pagination.matchedDeals} matching deals · page {Math.floor(offset/QUEUE_LIMIT)+1}</Text>
+      <Button disabled={loading || refreshing || queue.pagination.nextOffset === null}
+        onClick={() => { if (queue.pagination?.nextOffset !== null && queue.pagination?.nextOffset !== undefined) setOffset(queue.pagination.nextOffset); }}>Next deals</Button>
+    </Flex> : null}
     {error && <Alert title="Manager Decision Queue unavailable" variant="danger">{error}</Alert>}
     {loading && <LoadingSpinner label="Loading Manager Decision Queue" />}
 
@@ -327,7 +350,7 @@ export function ManagerDecisionQueuePanel({ enabled }: { enabled: boolean }) {
       </Flex>
 
       {(queue.summary.readinessOnlyDeals > 0 || queue.summary.staleDealBriefDeals > 0) && <Alert title="Some deals have limited portfolio evidence" variant="warning">
-        {queue.summary.readinessOnlyDeals} deals are readiness-only and {queue.summary.staleDealBriefDeals} have stale Deal Brief evidence. Opening or refreshing a deal record captures a current bounded snapshot; missing evidence is not proof that a deal will be lost.
+        {queue.summary.readinessOnlyDeals} deals are readiness-only and {queue.summary.staleDealBriefDeals} have stale Deal Brief evidence. Regenerating a brief does not renew its source observation time; missing evidence is not proof that a deal will be lost.
       </Alert>}
 
       {queue.amountCohorts.length > 0 && <Card>
@@ -397,7 +420,11 @@ export function ManagerDecisionQueuePanel({ enabled }: { enabled: boolean }) {
                 </>}
 
                 <Flex direction="row" justify="between" align="center" gap="small">
-                  <Text variant="microcopy">Assessment: {formatDate(item.assessedAt)} · {item.openRemediationCount} open remediations</Text>
+                  <Flex direction="column" gap="extra-small">
+                    <Text variant="microcopy">Assessment: {formatDate(item.assessedAt)} · Brief generated: {formatDate(item.snapshotGeneratedAt)}</Text>
+                    <Text variant="microcopy">Observation age: {item.assessmentFreshness?.status ?? 'unavailable'}{typeof item.assessmentFreshness?.ageHours === 'number' ? ` (${Math.ceil(item.assessmentFreshness.ageHours)} hours)` : ''} · {item.openRemediationCount} open remediations</Text>
+                    <Text variant="microcopy">Readiness fallback deadlines run from the recorded assessment, not this page refresh; they are advisory, not a committed SLA.</Text>
+                  </Flex>
                   <Link href={{ url: item.recordUrl, external: true }}>Open deal record</Link>
                 </Flex>
               </Flex>

@@ -1,3 +1,4 @@
+import type { EvidenceFreshness, SnapshotFreshness } from './evidence-freshness.js';
 import type { IssueSeverity } from './types.js';
 
 export type ManagerDecisionBand = 'act_now' | 'review' | 'monitor';
@@ -63,6 +64,8 @@ export interface DecisionQueueItem {
   evidenceCoveragePercent: number;
   evidenceConfidence: 'high' | 'medium' | 'low';
   snapshotGeneratedAt: string | null;
+  assessmentFreshness: EvidenceFreshness;
+  snapshotFreshness: SnapshotFreshness;
   dealBriefStatus: 'on_track' | 'watch' | 'intervention_required' | 'insufficient_evidence' | null;
   amount: DecisionQueueAmount;
   nextAction: DecisionQueueAction | null;
@@ -86,6 +89,7 @@ export interface DecisionQueueAmountCohort {
 }
 
 export interface ManagerDecisionQueueResponse {
+  pagination: { offset: number; limit: number; matchedDeals: number; nextOffset: number | null };
   generatedAt: string;
   methodology: 'deterministic_manager_decision_queue_v1';
   filters: Record<string, string | number | null>;

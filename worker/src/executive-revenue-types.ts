@@ -1,3 +1,4 @@
+import type { SnapshotFreshness } from './evidence-freshness.js';
 export type ExecutiveConfidence = 'high' | 'medium' | 'low';
 export type MovementConfidence = 'established' | 'directional' | 'baseline_only';
 export type ForecastCategory = 'commit' | 'best_case' | 'pipeline' | 'not_forecasted' | 'closed_won' | 'custom' | 'unavailable';
@@ -11,6 +12,7 @@ export interface ExecutiveRevenuePeriod {
 }
 
 export interface ExecutiveDecisionEvidence {
+  freshness?: SnapshotFreshness;
   status: 'on_track' | 'watch' | 'intervention_required' | 'insufficient_evidence' | null;
   attentionScore: number | null;
   confidence: ExecutiveConfidence | null;

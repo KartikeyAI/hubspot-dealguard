@@ -50,20 +50,24 @@ const ROLE_PERMISSIONS: Record<EnterpriseRole, string[]> = {
     'reliability.view',
   ],
   revops_manager: [
+    'deal.review', 'handoff.confirm',
     'policy.view', 'policy.simulate', 'exception.request', 'exception.manage',
     'analytics.view', 'analytics.export', 'remediation.view', 'remediation.manage',
     'alert.view', 'alert.manage', 'scan.run', 'audit.view',
     'reliability.view', 'reliability.manage',
   ],
   sales_manager: [
+    'deal.review', 'handoff.confirm',
     'policy.view', 'exception.request', 'analytics.view', 'remediation.view', 'remediation.manage',
     'alert.view', 'alert.acknowledge', 'scan.run',
   ],
   reviewer: [
+    'deal.review', 'handoff.confirm',
     'policy.view', 'policy.approve', 'exception.manage', 'analytics.view', 'remediation.view',
     'remediation.review', 'audit.view',
   ],
   remediation_manager: [
+    'deal.review',
     'analytics.view', 'remediation.view', 'remediation.manage', 'remediation.bulk',
     'remediation.evidence', 'alert.view', 'alert.acknowledge', 'reliability.view',
   ],
@@ -94,15 +98,24 @@ function uniqueStrings(value: unknown, max = 500): string[] {
 }
 
 function mapRow(row: RoleRow): EnterpriseAccessContext {
+  if (!Object.hasOwn(ROLE_PERMISSIONS,row.role)) throw new AppError(403, 'enterprise_role_invalid', 'The assigned role cannot be validated.');
+  const scopeArray = (value: string): string[] => {
+    let parsed: unknown;
+    try { parsed = JSON.parse(value); } catch { throw new AppError(403, 'enterprise_scope_invalid', 'The assigned data scope cannot be validated.'); }
+    if (!Array.isArray(parsed) || parsed.length > 500 || parsed.some(item => typeof item !== 'string' || !item || item.trim() !== item || item.length > 128)) {
+      throw new AppError(403, 'enterprise_scope_invalid', 'The assigned data scope cannot be validated.');
+    }
+    return parsed;
+  };
   const explicit = array(row.permissions_json);
   return {
     role: row.role,
     permissions: [...new Set([...ROLE_PERMISSIONS[row.role], ...explicit])],
     scope: {
-      pipelineIds: array(row.pipeline_ids_json),
-      teamIds: array(row.team_ids_json),
-      ownerIds: array(row.owner_ids_json),
-      regionCodes: array(row.region_codes_json),
+      pipelineIds: scopeArray(row.pipeline_ids_json),
+      teamIds: scopeArray(row.team_ids_json),
+      ownerIds: scopeArray(row.owner_ids_json),
+      regionCodes: scopeArray(row.region_codes_json),
     },
     bootstrap: false,
   };
@@ -114,8 +127,8 @@ export async function enterpriseAccessContext(env: Env, identity: RequestIdentit
         .bind(identity.portalId, identity.userId).first<RoleRow>()
     : null;
   const byEmail = !row && identity.userEmail
-    ? await env.DB.prepare(`SELECT * FROM enterprise_role_assignments WHERE portal_id = ? AND lower(user_email) = lower(?) LIMIT 1`)
-        .bind(identity.portalId, identity.userEmail).first<RoleRow>()
+    ? await env.DB.prepare(`SELECT * FROM enterprise_role_assignments WHERE portal_id = ? AND lower(user_email) = lower(?) AND (user_id IS NULL OR user_id = ?) LIMIT 1`)
+        .bind(identity.portalId, identity.userEmail, identity.userId).first<RoleRow>()
     : null;
   if (row || byEmail) return mapRow((row ?? byEmail)!);
 

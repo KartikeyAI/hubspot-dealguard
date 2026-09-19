@@ -42,7 +42,7 @@ async function commercialAccessFallback(request: Request, env: Env): Promise<Rec
 
 async function enrichedCachedAssessment(request: Request, env: Env, dealId: string): Promise<Response | null> {
   const identity = await validateHubSpotRequest(request, env);
-  const enriched = await enrichStoredAssessmentForPortal(env, identity.portalId, dealId);
+  const enriched = await enrichStoredAssessmentForPortal(env, identity.portalId, dealId, identity);
   return enriched ? json(enriched) : null;
 }
 

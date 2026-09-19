@@ -1,3 +1,5 @@
+import { assessmentFreshness } from './evidence-freshness.js';
+import { authorizeRecordedDeal, authorizeFreshDeal } from './record-access.js';
 import { saveAssessmentContext } from './assessment-context.js';
 import { assessDealForPortal } from './assessment-service.js';
 import { exportAuditCsv, searchAuditEvents } from './audit.js';
@@ -178,20 +180,21 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   if (url.pathname === '/webhooks/hubspot') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     await validateHubSpotSignature(request, env);
-    const events = normalizeHubSpotWebhookEvents(await readJson<unknown>(request, 1_000_000));
-    if (events.length > 0) ctx.waitUntil(processHubSpotWebhookEvents(env, events));
-    return json({ accepted: events.length }, 202);
+    const body = await readJson<unknown>(request, 1_000_000);
+    if (!Array.isArray(body) || body.length > 100) throw new AppError(400, 'webhook_batch_invalid', 'Provide a webhook batch of at most 100 events.');
+    const events = normalizeHubSpotWebhookEvents(body);
+    return json(await processHubSpotWebhookEvents(env, events), 202);
   }
 
   if (url.pathname === '/integrations/hubspot/workflow-actions/assess-deal') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
-    await validateHubSpotSignature(request, env);
+    await validateHubSpotSignature(request, env, true);
     return json(await executeWorkflowAction(env, await readJson<unknown>(request)));
   }
 
   if (url.pathname === '/integrations/hubspot/workflow-actions/create-remediation') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
-    await validateHubSpotSignature(request, env);
+    await validateHubSpotSignature(request, env, true);
     return json(await executeRemediationWorkflow(env, await readJson<unknown>(request)));
   }
 
@@ -330,7 +333,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   }
 
   if (url.pathname === '/api/v1/remediations') {
-    if (request.method === 'GET') return json({ cases: await listRemediationCases(env, identity.portalId, url) });
+    if (request.method === 'GET') return json({ cases: await listRemediationCases(env, identity, url) });
     if (request.method === 'POST') {
       await requireCommercialTier(env, identity.portalId, 'enterprise');
       await requireOperationalPermission(env, identity, 'remediation.manage');
@@ -340,7 +343,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   }
   if (url.pathname === '/api/v1/remediations/summary') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
-    return json(await remediationSummary(env, identity.portalId));
+    return json(await remediationSummary(env, identity));
   }
   const remediationRoute = remediationPath(url.pathname);
   if (remediationRoute) {
@@ -501,13 +504,14 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   const dealId = dealIdFromPath(url.pathname);
   const action = routeAction(url.pathname);
   if (dealId && action) {
+    await authorizeRecordedDeal(env, identity, dealId, action === 'review' ? 'deal.review' : action === 'handoff' ? 'handoff.confirm' : 'analytics.view');
     if (action === 'assessment') {
       if (!['GET', 'POST'].includes(request.method)) return methodNotAllowed(['GET', 'POST']);
       if (request.method === 'GET') {
         const cached = await repository.getAssessment(identity.portalId, dealId);
-        if (cached && Date.now() - Date.parse(cached.assessedAt) < 15 * 60_000) return json(cached);
+        if (cached && assessmentFreshness(cached.assessedAt, Date.now()).status === 'fresh' && Date.now() - Date.parse(cached.assessedAt) < 15 * 60_000) return json(cached);
       }
-      return json(await assessDealForPortal(env, identity.portalId, dealId, 'record'));
+      return json(await assessDealForPortal(env, identity.portalId, dealId, 'record', false, identity));
     }
     if (action === 'review') {
       if (request.method !== 'POST') return methodNotAllowed(['POST']);
@@ -518,10 +522,11 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
       if (request.method !== 'POST') return methodNotAllowed(['POST']);
       const client = await HubSpotClient.forPortal(env, identity.portalId);
       const deal = await client.getDeal(dealId);
+      await authorizeFreshDeal(env,identity,deal,'handoff.confirm');
       const resolved = await resolveSegmentedRules(env, identity.portalId, client.settings.rules, deal);
       const assessment = assessDeal(deal, resolved.rules);
       await repository.saveAssessment(identity.portalId, assessment);
-      await saveAssessmentContext(env, identity.portalId, assessment);
+      await saveAssessmentContext(env, identity.portalId, assessment, deal.properties);
       await recordAssessmentHistory(env, identity.portalId, assessment, { trigger: 'handoff', properties: deal.properties, policyId: resolved.policyId });
       await repository.confirmHandoff(identity, dealId, assessment);
       ctx.waitUntil(notifyHandoffConfirmed(env, identity.portalId, assessment, client.settings, client.plan).catch((error) => {

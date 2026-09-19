@@ -22,8 +22,9 @@ test('recommendation APIs are Enterprise-scoped, permission-aware and CRM-read-f
   assert.match(route, /dealRecommendationsPath/);
   assert.match(route, /accept\|complete\|dismiss/);
   assert.match(route, /requireCommercialTier\(env, identity\.portalId, 'enterprise'\)/);
-  assert.match(lifecycle, /requireEnterprisePermission\(env, identity, 'remediation\.view'/);
-  assert.match(lifecycle, /requireEnterprisePermission\(env, identity, 'remediation\.manage'/);
+  assert.match(lifecycle, /requireRemediationRecord\(env, identity, dealId, 'remediation\.view'/);
+  assert.match(lifecycle, /requireRemediationRecord\(env,identity,row\.deal_id\)/);
+  assert.match(read('worker/src/remediation-access.ts'), /permission: RecordPermission = 'remediation.manage'/);
   assert.match(lifecycle, /requireEnterprisePermission\(env, identity, 'analytics\.view'/);
   assert.doesNotMatch(`${lifecycle}\n${observation}`, /HubSpotClient|api\.hubapi\.com|\/crm\//);
   assert.match(index, /from '\.\/routes-v17\.js'/);
@@ -38,7 +39,7 @@ test('lifecycle semantics distinguish expiry, accepted overdue work and terminal
   assert.match(storage, /status = 'presented' AND due_at IS NOT NULL/);
   assert.doesNotMatch(storage, /status IN \('presented', 'accepted'\) AND due_at/);
   assert.match(storage, /row\.status === 'accepted' && Boolean\(dueAt/);
-  assert.match(lifecycle, /automaticallyAcceptedOnCompletion: true/);
+  assert.match(read('database/migrations/0030_recommendation_remediation.sql'), /automaticallyAcceptedOnCompletion.*true/);
   assert.match(lifecycle, /dismissal_reason_required/);
   assert.match(observation, /status IN \('presented', 'accepted'\)/);
   assert.match(migration, /preserve_accepted_recommendation_definition/);

@@ -29,6 +29,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
       DEALGUARD_CUTOVER_TEST_DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
+      DEALGUARD_ANALYTICS_TEST_DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,6 +37,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Capture immutable repository baseline
+        run: node scripts/release-baseline.mjs --target staging
+      - name: Upload repository baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-baseline-${{ github.sha }}
+          path: .release/release-baseline.json
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 90
+      - name: Archive exact tracked source for review
+        run: git archive --format=tar.gz --output=.release/review-source.tar.gz HEAD
+      - name: Upload review source
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-source-${{ github.sha }}
+          path: .release/review-source.tar.gz
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
       - name: Create non-secret CI environment file
         run: touch .env
       - run: npm install --ignore-scripts --silent
@@ -111,8 +132,6 @@ jobs:
             REPLACE_WITH_LOCAL_HUBSPOT_APP_ID: '123456',
             REPLACE_WITH_STAGING_HUBSPOT_APP_ID: '123456',
             REPLACE_WITH_PRODUCTION_HUBSPOT_APP_ID: '123456',
-            REPLACE_WITH_STAGING_HYPERDRIVE_ID: '0123456789abcdef0123456789abcdef',
-            REPLACE_WITH_PRODUCTION_HYPERDRIVE_ID: '0123456789abcdef0123456789abcdef',
             REPLACE_WITH_LOCAL_TIGRIS_BUCKET: 'dealguard-ci',
             REPLACE_WITH_STAGING_TIGRIS_BUCKET: 'dealguard-ci',
             REPLACE_WITH_PRODUCTION_TIGRIS_BUCKET: 'dealguard-ci',

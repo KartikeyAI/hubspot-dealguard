@@ -1,3 +1,7 @@
+import { authorizeRecordedDeal, authorizeFreshDeal, assertRecordScope, type RecordResource } from './record-access.js';
+import { AppError } from './errors.js';
+import { assertRecordAvailable } from './record-lifecycle.js';
+import { assessmentFreshness } from './evidence-freshness.js';
 import { saveAssessmentContext } from './assessment-context.js';
 import { recordUsageAtomic } from './billing-usage.js';
 import { loadBuyerCommitteeData } from './buyer-committee-data.js';
@@ -23,12 +27,12 @@ import { recordOperationalMetric } from './reliability.js';
 import { Repository } from './repository.js';
 import { assessDeal } from './scoring.js';
 import { notifyAssessmentTransition } from './slack.js';
-import type { DealAssessment, Env, NormalizedDeal, RuleSettings } from './types.js';
+import type { DealAssessment, Env, NormalizedDeal, RuleSettings, RequestIdentity } from './types.js';
 
 const ENRICHMENT_CACHE_TTL_MS = 60_000;
 const ENRICHMENT_CACHE_MAX = 500;
-const enrichmentCache = new Map<string, { expiresAt: number; value: Record<string, unknown> }>();
-const enrichmentInFlight = new Map<string, Promise<Record<string, unknown> | null>>();
+const enrichmentCache = new Map<string, { expiresAt: number; value: Record<string, unknown>; resource: RecordResource }>();
+const enrichmentInFlight = new Map<string, Promise<{value: Record<string, unknown>; resource: RecordResource} | null>>();
 
 type CompleteIntelligence = DealIntelligence
   & Partial<DealMomentumIntelligence>
@@ -40,12 +44,12 @@ function cacheKey(portalId: string, dealId: string): string {
   return `${portalId}:${dealId}`;
 }
 
-function putCache(key: string, value: Record<string, unknown>): void {
+function putCache(key: string, value: Record<string, unknown>, resource: RecordResource): void {
   if (enrichmentCache.size >= ENRICHMENT_CACHE_MAX) {
     const oldest = enrichmentCache.keys().next().value as string | undefined;
     if (oldest) enrichmentCache.delete(oldest);
   }
-  enrichmentCache.set(key, { expiresAt: Date.now() + ENRICHMENT_CACHE_TTL_MS, value });
+  enrichmentCache.set(key, { expiresAt: Date.now() + ENRICHMENT_CACHE_TTL_MS, value, resource });
 }
 
 async function recordOptionalMetric(
@@ -212,16 +216,18 @@ async function buildStoredAssessmentEnrichment(
   portalId: string,
   dealId: string,
   key: string,
-): Promise<Record<string, unknown> | null> {
+  identity: RequestIdentity,
+): Promise<{value: Record<string, unknown>; resource: RecordResource} | null> {
   const repository = new Repository(env);
   const stored = await repository.getAssessment(portalId, dealId);
   if (!stored) return null;
-  const assessedAt = Date.parse(stored.assessedAt);
-  if (!Number.isFinite(assessedAt) || Date.now() - assessedAt >= 15 * 60_000) return null;
+  const freshness = assessmentFreshness(stored.assessedAt, Date.now());
+  if (freshness.status === 'unavailable' || freshness.ageHours === null || freshness.ageHours >= 0.25) return null;
 
   const client = await HubSpotClient.forPortal(env, portalId);
   const dimensionProperties = await policyDimensionPropertyNames(env, portalId);
   const deal = await client.getDeal(dealId, undefined, dimensionProperties);
+  const resource = await authorizeFreshDeal(env, identity, deal);
   const policy = await resolveSegmentedRulesForDeal(env, portalId, client.settings.rules, deal);
   const readiness = await readinessIntelligence(env, portalId, dealId, deal, policy.rules, stored);
   const [momentum, relationship, engagement] = await Promise.all([
@@ -235,29 +241,33 @@ async function buildStoredAssessmentEnrichment(
     intelligence,
     policy: { id: policy.policyId, segmentIds: policy.segmentIds },
   };
-  putCache(key, value);
-  return value;
+  putCache(key, value, resource);
+  return {value,resource};
 }
 
 export async function enrichStoredAssessmentForPortal(
-  env: Env,
-  portalId: string,
-  dealId: string,
+  env: Env, portalId: string, dealId: string, identity: RequestIdentity,
 ): Promise<Record<string, unknown> | null> {
+  if (identity.portalId !== portalId) throw new AppError(403, 'record_identity_mismatch', 'Record identity does not match.');
+  await assertRecordAvailable(env, portalId, dealId);
+  const access = await authorizeRecordedDeal(env,identity,dealId);
   const key = cacheKey(portalId, dealId);
+  const validate = async (result: {value: Record<string, unknown>; resource: RecordResource} | null) => {
+    if (!result) return null;
+    const current = await authorizeRecordedDeal(env,identity,dealId);
+    assertRecordScope(current.context,result.resource);
+    if (result.value.assessedAt !== current.assessmentAt) return null;
+    return result.value;
+  };
   const cachedResult = enrichmentCache.get(key);
-  if (cachedResult && cachedResult.expiresAt > Date.now()) return cachedResult.value;
+  if (cachedResult && cachedResult.expiresAt > Date.now() && cachedResult.value.assessedAt === access.assessmentAt) return validate(cachedResult);
   if (cachedResult) enrichmentCache.delete(key);
   const pending = enrichmentInFlight.get(key);
-  if (pending) return pending;
-
-  const task = buildStoredAssessmentEnrichment(env, portalId, dealId, key);
+  if (pending) return validate(await pending);
+  const task = buildStoredAssessmentEnrichment(env, portalId, dealId, key, identity);
   enrichmentInFlight.set(key, task);
-  try {
-    return await task;
-  } finally {
-    if (enrichmentInFlight.get(key) === task) enrichmentInFlight.delete(key);
-  }
+  try { return await validate(await task); }
+  finally { if (enrichmentInFlight.get(key) === task) enrichmentInFlight.delete(key); }
 }
 
 export async function assessDealForPortal(
@@ -266,17 +276,26 @@ export async function assessDealForPortal(
   dealId: string,
   trigger: 'record' | 'webhook' | 'workflow',
   forceSlack = false,
+  identity?: RequestIdentity,
 ) {
+  if (trigger === 'record') {
+    if (!identity || identity.portalId !== portalId) throw new AppError(403, 'record_user_required', 'An identified HubSpot user is required.');
+    await authorizeRecordedDeal(env,identity,dealId);
+  }
   const startedAt = Date.now();
   const repository = new Repository(env);
   const previous = await repository.getAssessment(portalId, dealId);
   const client = await HubSpotClient.forPortal(env, portalId);
   const dimensionProperties = await policyDimensionPropertyNames(env, portalId);
   const deal = await client.getDeal(dealId, undefined, dimensionProperties);
+  const resource = identity ? await authorizeFreshDeal(env,identity,deal) : null;
   const policy = await resolveSegmentedRulesForDeal(env, portalId, client.settings.rules, deal);
   const assessment = assessDeal(deal, policy.rules);
-  await repository.saveAssessment(portalId, assessment);
-  await saveAssessmentContext(env, portalId, assessment);
+  if (!await repository.saveAssessment(portalId, assessment)) {
+    if (identity) await authorizeRecordedDeal(env,identity,dealId);
+    return await repository.getAssessment(portalId, dealId) as unknown as Record<string, unknown> | null;
+  }
+  await saveAssessmentContext(env, portalId, assessment, deal.properties);
   await recordAssessmentHistory(env, portalId, assessment, {
     trigger,
     properties: deal.properties,
@@ -331,6 +350,21 @@ export async function assessDealForPortal(
     intelligence,
     policy: { id: policy.policyId, segmentIds: policy.segmentIds },
   };
-  putCache(cacheKey(portalId, dealId), value);
+  if (resource) putCache(cacheKey(portalId, dealId), value, resource);
+  if (identity) await authorizeRecordedDeal(env,identity,dealId);
   return value;
+}
+
+/** Reuse the record evidence builders without notification, write-back or billing side effects. */
+export async function buildBackgroundAssessmentEvidence(
+  env: Env, portalId: string, deal: NormalizedDeal, assessment: DealAssessment,
+  rules: RuleSettings, client: HubSpotClient,
+): Promise<Record<string, unknown>> {
+  const readiness = await readinessIntelligence(env, portalId, deal.id, deal, rules, assessment);
+  const [momentum, relationship, engagement] = await Promise.all([
+    optionalMomentumIntelligence(env, portalId, deal.id, client, deal, rules, assessment),
+    optionalBuyerCommitteeIntelligence(env, portalId, deal.id, client),
+    optionalEngagementIntelligence(env, portalId, deal.id, client, deal),
+  ]);
+  return { ...assessment, intelligence: completeIntelligence(assessment, readiness, momentum, relationship, engagement) };
 }

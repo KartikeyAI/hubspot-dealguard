@@ -126,7 +126,7 @@ export async function governanceContext(env: Env, identity: RequestIdentity): Pr
     ? await env.DB.prepare(`SELECT role FROM governance_roles WHERE portal_id = ? AND user_id = ? LIMIT 1`).bind(identity.portalId, identity.userId).first<{ role: GovernanceRole }>()
     : null;
   const byEmail = !explicit && identity.userEmail
-    ? await env.DB.prepare(`SELECT role FROM governance_roles WHERE portal_id = ? AND lower(user_email) = lower(?) LIMIT 1`).bind(identity.portalId, identity.userEmail).first<{ role: GovernanceRole }>()
+    ? await env.DB.prepare(`SELECT role FROM governance_roles WHERE portal_id = ? AND lower(user_email) = lower(?) AND (user_id IS NULL OR user_id = ?) LIMIT 1`).bind(identity.portalId, identity.userEmail, identity.userId).first<{ role: GovernanceRole }>()
     : null;
   if (explicit?.role) role = explicit.role;
   else if (byEmail?.role) role = byEmail.role;

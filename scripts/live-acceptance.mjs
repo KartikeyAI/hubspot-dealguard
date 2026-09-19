@@ -21,7 +21,7 @@ const config = {
   timeoutMs: Math.max(1000, Number(process.env.ACCEPTANCE_TIMEOUT_MS ?? 25000)),
   outputDir: String(process.env.ACCEPTANCE_OUTPUT_DIR ?? 'artifacts/acceptance'),
   operator: String(process.env.ACCEPTANCE_OPERATOR ?? process.env.GITHUB_ACTOR ?? 'unknown'),
-  gitSha: String(process.env.GITHUB_SHA ?? 'local'),
+  gitSha: String(process.env.RELEASE_SHA ?? process.env.GITHUB_SHA ?? 'local').trim(),
   runScan: bool(process.env.ACCEPTANCE_RUN_SCAN, full),
   runCheckout: bool(process.env.ACCEPTANCE_CREATE_CHECKOUT, full),
   runDodoWebhook: bool(process.env.ACCEPTANCE_DODO_WEBHOOK, full),
@@ -43,6 +43,10 @@ const evidence = new EvidenceRun({
     userEmailConfigured: Boolean(config.userEmail),
     operator: config.operator,
     gitSha: config.gitSha,
+    releaseTarget: String(process.env.RELEASE_TARGET ?? ''),
+    testDealId: config.testDealId,
+    workflowRunId: String(process.env.GITHUB_RUN_ID ?? ''),
+    workflowRunAttempt: String(process.env.GITHUB_RUN_ATTEMPT ?? ''),
   },
 });
 const client = new AcceptanceClient(config);

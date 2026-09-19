@@ -11,7 +11,8 @@ test('manager queue uses latest-per-deal state and does not call HubSpot', () =>
   assert.doesNotMatch(source, /HubSpotClient|api\.hubapi\.com|\/crm\//);
   assert.match(source, /deterministic_management_priority_not_win_probability/);
   assert.match(source, /percentile_within_company_currency_or_same_deal_currency_cohort/);
-  assert.match(source, /LIMIT 10000/);
+  assert.match(source, /LIMIT 10001/);
+  assert.match(source, /decision_queue_capacity_exceeded/);
 });
 
 
@@ -33,7 +34,9 @@ test('decision snapshots retain only bounded derived evidence', () => {
   assert.match(source, /safeRisks/);
   assert.match(source, /dimensions/);
   assert.doesNotMatch(source, /contacts_json|emails_json|meetings_json|calls_json|quotes_json|line_items_json/);
-  assert.match(source, /WHERE excluded\.assessment_at::timestamptz >= deal_decision_snapshots\.assessment_at::timestamptz/);
+  assert.match(source, /RETURNING deal_id/);
+  assert.match(source, /if \(!written\) return false/);
+  assert.match(source, /WHERE excluded\.assessment_at::timestamptz > deal_decision_snapshots\.assessment_at::timestamptz/);
 });
 
 test('migration and validator establish the snapshot table and indexes', () => {

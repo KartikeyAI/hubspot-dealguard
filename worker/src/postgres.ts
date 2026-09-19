@@ -8,7 +8,7 @@ const APP_SCHEMA = 'dealguard';
 // repeatedly establishes TCP/TLS sessions and was the source of intermittent
 // connection termination and gateway timeout failures. Neon HTTP is the runtime path.
 const APP_RELATIONS = new Set([
-  'tenants','oauth_states','deal_assessments','deal_reviews','handoffs','scan_runs','audit_events',
+  'background_intelligence_settings','hubspot_webhook_inbox', 'deal_record_lifecycle', 'deal_record_lifecycle_events', 'background_intelligence_jobs','background_intelligence_usage','portfolio_snapshot_runs','portfolio_snapshot_items','portfolio_snapshot_schedule','handoff_cycles','tenants','oauth_states','deal_assessments','deal_reviews','handoffs','scan_runs','audit_events',
   'slack_installations','slack_delivery_log','native_sync_state','governance_roles','policy_versions',
   'policy_approvals','policy_simulations','policy_exceptions','assessment_context','analytics_snapshots',
   'remediation_cases','remediation_events','enterprise_alerts','alert_deliveries','compliance_exports',
@@ -26,7 +26,7 @@ const APP_RELATIONS = new Set([
   'policy_segments','policy_templates','remediation_bulk_jobs','remediation_comments','remediation_evidence',
   'restore_tests','scan_checkpoints','secure_download_tokens','service_health','service_slos','slack_connections',
   'subscriptions','subscriptions_v2','deal_decision_snapshots','executive_revenue_snapshots',
-  'recommendation_instances','recommendation_events','recommendation_outcomes',
+  'recommendation_remediation_links', 'recommendation_instances','recommendation_events','recommendation_outcomes',
   'recommendation_followup_batches','recommendation_followup_items',
   'recommendation_routing_policies','recommendation_policy_dispatches','recommendation_delivery_events',
   'recommendation_delivery_slo_policies','recommendation_delivery_slo_states',

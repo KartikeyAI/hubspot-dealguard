@@ -1,3 +1,4 @@
+import { assessmentFreshness, assessmentActionDueAt, freshnessConfidence } from './evidence-freshness.js';
 import type { BuyerCommitteeIntelligence } from './buyer-committee-types.js';
 import type { DealBrief, DealBriefChange, DealBriefIntelligence, DealBriefItem } from './deal-brief-types.js';
 import type { DealIntelligence } from './deal-intelligence.js';
@@ -27,18 +28,6 @@ function round(value: number, digits = 0): number {
   return Math.round(value * scale) / scale;
 }
 
-function freshness(assessedAt: string, now: number): DealBrief['freshness'] {
-  const parsed = Date.parse(assessedAt);
-  if (!Number.isFinite(parsed)) {
-    return { assessedAt, ageHours: null, status: 'unavailable' };
-  }
-  const ageHours = round(Math.max(0, now - parsed) / 3_600_000, 1);
-  return {
-    assessedAt,
-    ageHours,
-    status: ageHours <= 24 ? 'fresh' : ageHours <= 72 ? 'aging' : 'stale',
-  };
-}
 
 function uniqueItems(items: DealBriefItem[]): DealBriefItem[] {
   const seen = new Set<string>();
@@ -79,7 +68,7 @@ function readinessFallbackAction(
     priority: item.severity === 'critical' ? 'high' : item.severity === 'warning' ? 'medium' : 'low',
     rationale: `This deterministic readiness fix can restore up to ${item.impact} readiness points.`,
     owner: 'deal_owner',
-    dueAt: new Date(Math.max(now, Date.parse(assessedAt) || now) + 24 * 3_600_000).toISOString(),
+    dueAt: assessmentActionDueAt(assessedAt, 24, now),
     evidenceCodes: [item.code],
   };
 }
@@ -474,7 +463,8 @@ function limitations(
     result.push(`Unavailable evidence dimensions: ${coverage.missingDimensions.join(', ').replaceAll('_', ' ')}.`);
   }
   if (coverage.truncated) result.push('Relationship evidence is truncated because the deal exceeds bounded on-demand association limits.');
-  if (freshnessState.status === 'stale') result.push('The current readiness assessment is more than 72 hours old.');
+  if (freshnessState.status === 'stale') result.push('The recorded readiness assessment is more than 72 hours old; generating this brief does not refresh it.');
+  if (freshnessState.status === 'unavailable') result.push('The assessment observation time is invalid or in the future; freshness is unavailable.');
   if (momentum?.momentum.limitations) result.push(momentum.momentum.limitations);
   for (const item of relationship?.relationshipCoverage.limitations ?? []) result.push(item);
   return [...new Set(result)].slice(0, 8);
@@ -501,7 +491,7 @@ export function buildDealBrief(
   const changes = [...readinessItems.changes, ...momentumItems.changes].slice(0, 6);
   const nextAction = decisionActions[0] ?? readinessFallbackAction(readiness, assessment.assessedAt, now);
   const coverage = evidenceCoverage(momentum, relationship);
-  const freshnessState = freshness(assessment.assessedAt, now);
+  const freshnessState = { ...assessmentFreshness(assessment.assessedAt, now), assessedAt: assessment.assessedAt };
   const attention = attentionScore(assessment, momentum, relationship, freshnessState);
   const status = briefStatus(assessment, momentum, relationship, decisionActions, coverage, attention);
   return {
@@ -510,7 +500,7 @@ export function buildDealBrief(
       generatedAt: new Date(now).toISOString(),
       status,
       attentionScore: attention,
-      confidence: confidence(coverage, freshnessState, momentum, relationship),
+      confidence: freshnessConfidence(confidence(coverage, freshnessState, momentum, relationship), freshnessState.status),
       summary: summary(status, assessment, risks, positiveSignals, nextAction, coverage),
       risks,
       positiveSignals,

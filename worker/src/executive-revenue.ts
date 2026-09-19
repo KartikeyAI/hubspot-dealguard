@@ -1,3 +1,4 @@
+import { snapshotFreshness, freshnessConfidence, evidenceInstant } from './evidence-freshness.js';
 import { PLAN_LIMITS } from './config.js';
 import { AppError } from './errors.js';
 import { buildExecutiveRevenueView } from './executive-revenue-analysis.js';
@@ -8,7 +9,8 @@ import type {
   ExecutiveRevenueResponse,
   ExecutiveRevenueSnapshot,
 } from './executive-revenue-types.js';
-import { requireEnterprisePermission, type EnterpriseAccessContext } from './enterprise-access.js';
+import type { EnterpriseAccessContext } from './enterprise-access.js';
+import { requireAnalyticsCollectionAccess, selectedAnalyticsFilters, analyticsFilters } from './analytics-scope.js';
 import { HubSpotClient } from './hubspot.js';
 import type { Env, NormalizedDeal, RequestIdentity } from './types.js';
 
@@ -26,7 +28,7 @@ interface AssessmentRow extends Record<string, unknown> {
   assessed_at: string;
 }
 
-interface DecisionRow extends Record<string, unknown> {
+export interface DecisionRow extends Record<string, unknown> {
   deal_id: string;
   assessment_at: string;
   generated_at: string;
@@ -37,6 +39,7 @@ interface DecisionRow extends Record<string, unknown> {
   next_action_due_at: string | null;
   next_action_priority: ExecutiveDecisionEvidence['nextActionPriority'];
   dimensions_json: string;
+  freshness_status: string;
 }
 
 interface SnapshotRow extends Record<string, unknown> {
@@ -100,11 +103,6 @@ function currency(value: unknown): string | null {
   return code && /^[A-Z]{3}$/.test(code) ? code : null;
 }
 
-function sameInstant(left: unknown, right: unknown): boolean {
-  const leftValue = iso(left);
-  const rightValue = iso(right);
-  return Boolean(leftValue && rightValue && Math.abs(Date.parse(leftValue) - Date.parse(rightValue)) < 1000);
-}
 
 function dateOnly(value: Date): string {
   return value.toISOString().slice(0, 10);
@@ -134,7 +132,9 @@ function parsePeriod(url: URL, now = new Date()): ExecutiveRevenuePeriod {
   }
   const start = rawStart ? new Date(`${rawStart}T00:00:00.000Z`) : defaults.start;
   const end = rawEnd ? new Date(`${rawEnd}T23:59:59.999Z`) : defaults.end;
-  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) {
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())
+    || (rawStart && start.toISOString().slice(0,10) !== rawStart)
+    || (rawEnd && end.toISOString().slice(0,10) !== rawEnd)) {
     throw new AppError(400, 'executive_period_invalid', 'Executive period dates must use YYYY-MM-DD.');
   }
   if (start.getTime() > end.getTime()) {
@@ -159,8 +159,11 @@ function requestedFilters(url: URL, access: EnterpriseAccessContext): ScopeFilte
     ['ownerId', 'ownerIds'],
     ['regionCode', 'regionCodes'],
   ] as const;
+  const selected = selectedAnalyticsFilters(url.searchParams);
+  analyticsFilters(access.scope, selected);
+  if (selected.stageId) throw new AppError(400, 'executive_filter_invalid', 'Stage filtering is not supported in this executive view.');
   for (const [queryKey, scopeKey] of definitions) {
-    const requested = text(url.searchParams.get(queryKey), 128);
+    const requested = selected[queryKey] ?? null;
     const allowed = access.scope[scopeKey];
     if (requested && allowed.length > 0 && !allowed.includes(requested)) {
       throw new AppError(403, 'executive_scope_denied', `The selected ${queryKey} is outside your assigned scope.`);
@@ -206,10 +209,12 @@ function unavailableDecision(): ExecutiveDecisionEvidence {
   };
 }
 
-function currentDecision(row: DecisionRow | undefined, assessmentAt: string | null, now: number): ExecutiveDecisionEvidence {
-  if (!row || !assessmentAt || !sameInstant(row.assessment_at, assessmentAt)) return unavailableDecision();
-  const generatedAt = iso(row.generated_at);
-  if (!generatedAt || now - Date.parse(generatedAt) > 72 * 3_600_000) return unavailableDecision();
+export function currentDecision(row: DecisionRow | undefined, assessmentAt: string | null, now: number): ExecutiveDecisionEvidence {
+  const freshness = snapshotFreshness({ assessmentAt,
+    snapshotAssessmentAt: row?.assessment_at, generatedAt: row?.generated_at,
+    recordedStatus: row?.freshness_status }, now);
+  if (!row || !freshness.usable) return { ...unavailableDecision(), freshness };
+  const generatedAt = freshness.generatedAt;
 
   let dimensions: Record<string, unknown> = {};
   try {
@@ -231,7 +236,8 @@ function currentDecision(row: DecisionRow | undefined, assessmentAt: string | nu
   return {
     status,
     attentionScore: numeric(row.attention_score),
-    confidence,
+    confidence: freshnessConfidence(confidence, freshness.status),
+    freshness,
     coveragePercent: numeric(row.coverage_percent),
     generatedAt,
     closeDateCredibilityScore: numeric(closeDate?.score),
@@ -248,7 +254,7 @@ function mapCurrentDeal(
   decision: DecisionRow | undefined,
   now: number,
 ): ExecutiveRevenueDeal {
-  const assessmentAt = iso(assessment?.assessed_at);
+  const assessmentAt = evidenceInstant(assessment?.assessed_at);
   return {
     dealId: deal.id,
     dealName: text(deal.properties.dealname, 300) ?? assessment?.deal_name ?? `Deal ${deal.id}`,
@@ -326,7 +332,7 @@ async function loadDatabaseEvidence(
     env.DB.prepare(
       `SELECT deal_id, assessment_at, generated_at, brief_status, attention_score,
               confidence, coverage_percent, next_action_due_at, next_action_priority,
-              dimensions_json
+              dimensions_json, freshness_status
        FROM deal_decision_snapshots WHERE portal_id = ?`,
     ).bind(portalId).all<DecisionRow>(),
     env.DB.prepare(
@@ -438,11 +444,19 @@ export async function executiveRevenueView(
   identity: RequestIdentity,
   url: URL,
 ): Promise<ExecutiveRevenueResult> {
-  const access = await requireEnterprisePermission(env, identity, 'analytics.view');
+  const access = await requireAnalyticsCollectionAccess(env, identity, 'analytics.view');
+  for (const key of ['periodStart', 'periodEnd', 'candidateLimit', 'refresh']) {
+    if (url.searchParams.getAll(key).length > 1) throw new AppError(400, 'executive_filter_invalid', 'Executive filters must be single values.');
+  }
+  const candidate = url.searchParams.get('candidateLimit') ?? '20';
+  if (!/^[1-9][0-9]*$/.test(candidate) || Number(candidate) > 50) {
+    throw new AppError(400, 'executive_filter_invalid', 'Candidate limit must be between 1 and 50.');
+  }
   const period = parsePeriod(url);
   const filters = requestedFilters(url, access);
   const candidateLimit = Math.min(50, Math.max(1, Number(url.searchParams.get('candidateLimit') ?? 20) || 20));
-  const key = cacheKey(identity, access, filters, period, candidateLimit);
+  const lifecycle = await env.DB.prepare('SELECT COALESCE(SUM(version),0)::text AS revision FROM deal_record_lifecycle WHERE portal_id = ?').bind(identity.portalId).first<{revision:string}>();
+  const key = `${cacheKey(identity, access, filters, period, candidateLimit)}:${lifecycle?.revision ?? '0'}`;
   const force = url.searchParams.get('refresh') === 'true';
 
   if (!force) {
@@ -459,7 +473,10 @@ export async function executiveRevenueView(
   const snapshotDate = fetchedAt.slice(0, 10);
   const evidencePromise = loadDatabaseEvidence(env, identity.portalId, snapshotDate);
   const dealsPromise = client.listDeals(maxDeals, ['hs_forecast_category']);
-  const [rawDeals, evidence] = await Promise.all([dealsPromise, evidencePromise]);
+  const [sourceDeals, evidence, removed] = await Promise.all([dealsPromise, evidencePromise,
+    env.DB.prepare("SELECT deal_id FROM deal_record_lifecycle WHERE portal_id = ? AND state = 'archived'").bind(identity.portalId).all<{deal_id:string}>()]);
+  const archived = new Set((removed.results ?? []).map(row=>row.deal_id));
+  const rawDeals = sourceDeals.filter(deal=>!archived.has(deal.id));
   const now = Date.parse(fetchedAt);
   const allCurrentDeals = rawDeals.map((deal) => mapCurrentDeal(
     identity.portalId,
@@ -476,13 +493,18 @@ export async function executiveRevenueView(
     now,
   ));
 
-  const response = buildExecutiveRevenueView(scopedDeals, evidence.snapshots, {
+  const permittedSnapshots = evidence.snapshots.filter(snapshot => {
+    const dimensions = [['pipelineId','pipelineIds'], ['ownerId','ownerIds'], ['teamId','teamIds'], ['regionCode','regionCodes']] as const;
+    return dimensions.every(([key, scopeKey]) => (!filters[key] || snapshot[key] === filters[key])
+      && (access.scope[scopeKey].length === 0 || (snapshot[key] !== null && access.scope[scopeKey].includes(snapshot[key]!))));
+  });
+  const response = buildExecutiveRevenueView(scopedDeals, permittedSnapshots, {
     period,
     generatedAt: fetchedAt,
     fetchedAt,
     maxDeals,
     loadedDeals: rawDeals.length,
-    sourceTruncated: rawDeals.length >= maxDeals,
+    sourceTruncated: sourceDeals.length >= maxDeals,
     candidateLimit,
   });
   putCache(key, response);

@@ -134,6 +134,8 @@ test('does not use a stale Deal Brief attention score as current evidence', () =
     status: 'ready',
     stage_age_days: 1,
     issue_count: 0,
+    assessed_at: '2026-08-25T09:00:00.000Z',
+    snapshot_assessment_at: '2026-08-25T09:00:00.000Z',
     snapshot_generated_at: '2026-08-25T10:00:00.000Z',
     snapshot_attention_score: 99,
     brief_status: 'intervention_required',

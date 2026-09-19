@@ -4,6 +4,7 @@ import test from 'node:test';
 import { TRUSTWORTHY_INTELLIGENCE_SEMANTICS } from '../dist/enterprise-analytics-v2.js';
 
 const analytics = fs.readFileSync(new URL('../worker/src/enterprise-analytics-v2.ts', import.meta.url), 'utf8');
+const outcomes = fs.readFileSync(new URL('../worker/src/outcome-evidence.ts', import.meta.url), 'utf8');
 const config = fs.readFileSync(new URL('../worker/src/config.ts', import.meta.url), 'utf8');
 const migration = fs.readFileSync(new URL('../database/migrations/0015_trustworthy_intelligence_currency.sql', import.meta.url), 'utf8');
 const home = fs.readFileSync(new URL('../src/app/pages/EnterpriseHomeV4.tsx', import.meta.url), 'utf8');
@@ -15,7 +16,7 @@ test('current analytics use one latest open assessment per deal', () => {
   assert.match(analytics, /SELECT DISTINCT ON \(deal_id\) \*/);
   assert.match(analytics, /ORDER BY deal_id, assessed_at DESC, id DESC/);
   assert.doesNotMatch(functionSource('latestAssessmentCte'), /assessed_at >=/, 'current state must not disappear outside the trend window');
-  assert.match(analytics, /return `\$\{alias\}\.is_closed = 0 AND \$\{filterSql\(alias, filters\)\}`/);
+  assert.match(functionSource('currentStateWhere'), /is_closed = 0 AND dealguard\.record_is_available\(\$\{alias\}\.portal_id,\$\{alias\}\.deal_id\) AND \$\{filterSql\(alias, filters\)\}/);
   assert.match(analytics, /FROM latest_assessments latest\s+WHERE \$\{currentStateWhere\('latest', filters\)\}/);
 });
 
@@ -25,13 +26,14 @@ test('daily trends deduplicate repeated same-day assessments', () => {
   assert.match(analytics, /ORDER BY deal_id, substr\(assessed_at, 1, 10\), assessed_at DESC, id DESC/);
 });
 
-test('outcome evidence uses one pre-close snapshot per deal', () => {
-  assert.equal(TRUSTWORTHY_INTELLIGENCE_SEMANTICS.outcomeEvidence, 'latest_open_assessment_before_latest_close_per_deal');
-  assert.match(analytics, /closed_outcomes AS/);
-  assert.match(analytics, /SELECT DISTINCT ON \(history\.deal_id\)/);
-  assert.match(analytics, /history\.is_closed = 0/);
-  assert.match(analytics, /history\.assessed_at < outcome\.outcome_at/);
-  assert.match(analytics, /outcome\.is_won/);
+test('outcome evidence uses the pre-close state of the current closure episode', () => {
+  assert.equal(TRUSTWORTHY_INTELLIGENCE_SEMANTICS.outcomeEvidence, 'latest_preclose_assessment_for_current_closed_episode');
+  assert.match(analytics, /await loadOutcomeEvidence/);
+  assert.match(outcomes, /SELECT DISTINCT ON \(history\.deal_id\)/);
+  assert.match(outcomes, /current\.is_closed = 1/);
+  assert.match(outcomes, /history\.observed_at > opening\.observed_at/);
+  assert.match(outcomes, /closure\.observed_at >= bounds\.since/);
+  assert.match(outcomes, /precloseEvidenceStrictlyBeforeClosure: true/);
 });
 
 test('currency-safe analytics never sum incomparable deal currencies', () => {

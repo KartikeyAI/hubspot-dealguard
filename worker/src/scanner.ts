@@ -96,8 +96,16 @@ export async function scanPortal(
       const previous = await repository.getAssessment(portalId, deal.id);
       const policy = await resolveSegmentedRulesForDeal(env, portalId, client.settings.rules, deal);
       const assessment = assessDeal(deal, policy.rules);
-      await repository.saveAssessment(portalId, assessment);
-      await saveAssessmentContext(env, portalId, assessment);
+      if (!await repository.saveAssessment(portalId, assessment)) {
+        const current = await repository.getAssessment(portalId, deal.id);
+        if (current?.status === 'ready') ready += 1;
+        if (current?.status === 'at_risk') atRisk += 1;
+        if (current?.status === 'critical') critical += 1;
+        if (current?.isWon && current.handoffStatus !== 'confirmed') incompleteHandoffs += 1;
+        processedDealIds.add(deal.id);
+        continue; // Superseded work must not notify, write back or create remediation.
+      }
+      await saveAssessmentContext(env, portalId, assessment, deal.properties);
       await recordAssessmentHistory(env, portalId, assessment, {
         trigger,
         properties: deal.properties,

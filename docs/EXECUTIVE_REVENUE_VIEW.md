@@ -66,7 +66,7 @@ The view combines:
 
 1. Current HubSpot deal properties loaded under the existing deal-read permission.
 2. Current deterministic DealGuard readiness from `deal_assessments`.
-3. Current bounded Deal Brief evidence from `deal_decision_snapshots` when the snapshot matches the latest assessment and is no more than 72 hours old.
+3. Current bounded Deal Brief evidence from `deal_decision_snapshots` when the snapshot exactly matches the latest assessment and the source assessment is no more than 72 hours old. Valid generation ordering and recorded freshness are also required; generating a new brief does not renew old evidence (see `EVIDENCE_FRESHNESS.md`).
 4. The latest daily executive snapshot before today for movement comparison.
 
 The HubSpot read requests `hs_forecast_category` as an additional deal property. No additional OAuth scope is required.

@@ -1,6 +1,8 @@
+import { authorizeRecordedDeal, authorizeFreshDeal } from './record-access.js';
 import { saveAssessmentContext } from './assessment-context.js';
 import { recordAssessmentHistory } from './enterprise-analytics-v2.js';
 import { HubSpotClient } from './hubspot.js';
+import { AppError } from './errors.js';
 import { json, methodNotAllowed } from './http.js';
 import { syncAssessmentIfEnabled } from './native-sync.js';
 import { policyDimensionPropertyNames } from './policy-dimensions.js';
@@ -19,27 +21,33 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     const identity = await validateHubSpotRequest(request, env);
     const dealId = match[1]!;
+    await authorizeRecordedDeal(env, identity, dealId, 'handoff.confirm');
     const repository = new Repository(env);
     const client = await HubSpotClient.forPortal(env, identity.portalId);
     const dimensionProperties = await policyDimensionPropertyNames(env, identity.portalId);
     const deal = await client.getDeal(dealId, undefined, dimensionProperties);
+    await authorizeFreshDeal(env, identity, deal, 'handoff.confirm');
     const resolved = await resolveSegmentedRulesForDeal(env, identity.portalId, client.settings.rules, deal);
     const assessment = assessDeal(deal, resolved.rules);
-    await repository.saveAssessment(identity.portalId, assessment);
-    await saveAssessmentContext(env, identity.portalId, assessment);
+    if (!await repository.saveAssessment(identity.portalId, assessment)) {
+      throw new AppError(409, 'assessment_superseded', 'The deal changed during confirmation. Refresh and try again.');
+    }
+    await saveAssessmentContext(env, identity.portalId, assessment, deal.properties);
     await recordAssessmentHistory(env, identity.portalId, assessment, {
       trigger: 'handoff',
       properties: deal.properties,
       policyId: resolved.policyId,
     });
-    await repository.confirmHandoff(identity, dealId, assessment);
+    const confirmation = await repository.confirmHandoff(identity, dealId, assessment);
+    if (confirmation.changed) {
     ctx.waitUntil(notifyHandoffConfirmed(env, identity.portalId, assessment, client.settings, client.plan).catch((error) => {
       console.error(JSON.stringify({ level: 'error', task: 'slack_handoff_confirmation', portalId: identity.portalId, dealId, error: error instanceof Error ? error.message : String(error) }));
     }));
     ctx.waitUntil(syncAssessmentIfEnabled(env, client, assessment, 'confirmed').catch((error) => {
       console.error(JSON.stringify({ level: 'error', task: 'native_handoff_sync', portalId: identity.portalId, dealId, error: error instanceof Error ? error.message : String(error) }));
     }));
-    return json({ ok: true, handoffStatus: 'confirmed', confirmedAt: new Date().toISOString() });
+    }
+    return json({ ok: true, handoffStatus: 'confirmed', confirmedAt: confirmation.confirmedAt, cycle: confirmation.cycle, changed: confirmation.changed });
   }
   return routeV8(request, env, ctx);
 }

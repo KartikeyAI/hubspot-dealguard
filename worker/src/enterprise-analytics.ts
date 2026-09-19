@@ -33,7 +33,7 @@ async function currentMetrics(env: Env, portalId: string): Promise<EnterpriseAna
      FROM deal_assessments a
      LEFT JOIN assessment_context c ON c.portal_id = a.portal_id AND c.deal_id = a.deal_id
      LEFT JOIN handoffs h ON h.portal_id = a.portal_id AND h.deal_id = a.deal_id
-     WHERE a.portal_id = ?`
+     WHERE dealguard.record_is_available(a.portal_id,a.deal_id) AND a.portal_id = ?`
   ).bind(portalId).first<Record<string, unknown>>();
   return snapshotFromRow(row ?? {}, todayUtc());
 }
@@ -87,7 +87,7 @@ export async function enterpriseOverview(env: Env, identity: RequestIdentity): P
        AVG(a.score) AS average_score
        FROM deal_assessments a
        JOIN assessment_context c ON c.portal_id = a.portal_id AND c.deal_id = a.deal_id
-       WHERE a.portal_id = ? AND a.is_closed = 0
+       WHERE dealguard.record_is_available(a.portal_id,a.deal_id) AND a.portal_id = ? AND a.is_closed = 0
        GROUP BY c.pipeline_id
        ORDER BY amount_at_risk DESC LIMIT 20`
     ).bind(identity.portalId).all<Record<string, unknown>>(),
@@ -98,7 +98,7 @@ export async function enterpriseOverview(env: Env, identity: RequestIdentity): P
        AVG(a.score) AS average_score
        FROM deal_assessments a
        JOIN assessment_context c ON c.portal_id = a.portal_id AND c.deal_id = a.deal_id
-       WHERE a.portal_id = ? AND a.is_closed = 0
+       WHERE dealguard.record_is_available(a.portal_id,a.deal_id) AND a.portal_id = ? AND a.is_closed = 0
        GROUP BY COALESCE(c.owner_id, 'unassigned')
        ORDER BY amount_at_risk DESC LIMIT 25`
     ).bind(identity.portalId).all<Record<string, unknown>>(),

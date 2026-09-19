@@ -1,3 +1,6 @@
+import { assertRecordScope } from './record-access.js';
+import { requireRemediationRecord } from './remediation-access.js';
+import { requireWorkResult } from './recommendation-remediation.js';
 import { requireEnterprisePermission, type EnterpriseAccessContext } from './enterprise-access.js';
 import { AppError } from './errors.js';
 import {
@@ -24,11 +27,6 @@ import type {
 import { Repository } from './repository.js';
 import type { Env, RequestIdentity } from './types.js';
 
-const AUDIT_ACTIONS: Record<RecommendationTransition, string> = {
-  accept: 'recommendation.accepted',
-  complete: 'recommendation.completed',
-  dismiss: 'recommendation.dismissed',
-};
 
 export async function listDealRecommendations(
   env: Env,
@@ -36,16 +34,23 @@ export async function listDealRecommendations(
   dealId: string,
   url: URL,
 ): Promise<{ recommendations: RecommendationInstance[]; semantics: Record<string, boolean> }> {
-  const scope = await recommendationDealScope(env, identity.portalId, dealId);
-  await requireEnterprisePermission(env, identity, 'remediation.view', recommendationScopeResource(scope));
+  const access=await requireRemediationRecord(env, identity, dealId, 'remediation.view');
   await expirePresentedRecommendations(env, identity.portalId, dealId);
-  const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit') ?? 20) || 20));
+  const values=url.searchParams.getAll('limit');
+  if(values.length>1 || (values[0] && !/^[1-9][0-9]?$/.test(values[0])) || Number(values[0]??20)>50) throw new AppError(400,'recommendation_limit_invalid','Choose a limit from 1 to 50.');
+  const limit=Number(values[0]??20);
+  const clauses:string[]=[],params:unknown[]=[];
+  for(const [allowed,column] of [[access.context.scope.pipelineIds,'baseline_pipeline_id'],[access.context.scope.ownerIds,'baseline_owner_id'],
+    [access.context.scope.teamIds,'baseline_team_id'],[access.context.scope.regionCodes,'baseline_region_code']] as Array<[string[],string]>) {
+    if(allowed.length){clauses.push(`recommendation.${column} IN (${allowed.map(()=>'?').join(',')})`);params.push(...allowed);}
+  }
   const rows = await env.DB.prepare(
     `${RECOMMENDATION_SELECT}
-     WHERE recommendation.portal_id = ? AND recommendation.deal_id = ?
+     WHERE recommendation.portal_id = ? AND recommendation.deal_id = ? AND ${clauses.join(' AND ')||'TRUE'}
      ORDER BY recommendation.presented_at DESC
      LIMIT ?`,
-  ).bind(identity.portalId, dealId, limit).all<RecommendationRow>();
+  ).bind(identity.portalId, dealId, ...params, limit).all<RecommendationRow>();
+  await requireRemediationRecord(env,identity,dealId,'remediation.view');
   return {
     recommendations: (rows.results ?? []).map((row) => mapRecommendation(row)),
     semantics: {
@@ -58,109 +63,22 @@ export async function listDealRecommendations(
 }
 
 export async function transitionRecommendation(
-  env: Env,
-  identity: RequestIdentity,
-  recommendationId: string,
-  transition: RecommendationTransition,
-  input: unknown,
+  env: Env, identity: RequestIdentity, recommendationId: string,
+  transition: RecommendationTransition, input: unknown,
 ): Promise<RecommendationInstance> {
-  const row = await env.DB.prepare(
-    `SELECT * FROM recommendation_instances WHERE portal_id = ? AND id = ? LIMIT 1`,
-  ).bind(identity.portalId, recommendationId).first<RecommendationRow>();
-  if (!row) throw new AppError(404, 'recommendation_not_found', 'The recommendation does not exist.');
-  const scope = await recommendationDealScope(env, identity.portalId, row.deal_id);
-  await requireEnterprisePermission(env, identity, 'remediation.manage', recommendationScopeResource(scope));
-  const body = object(input) ?? {};
-  const now = new Date().toISOString();
-
-  if (transition === 'accept') {
-    if (row.status === 'accepted' || row.status === 'completed') {
-      return (await recommendationById(env, identity.portalId, row.id))!;
-    }
-    if (row.status !== 'presented') {
-      throw new AppError(409, 'recommendation_not_actionable', `A ${row.status} recommendation cannot be accepted.`);
-    }
-    const result = await env.DB.prepare(
-      `UPDATE recommendation_instances
-       SET status = 'accepted', accepted_at = ?, accepted_by_user_id = ?, accepted_by_email = ?, updated_at = ?
-       WHERE portal_id = ? AND id = ? AND status = 'presented'`,
-    ).bind(now, identity.userId, identity.userEmail, now, identity.portalId, row.id).run();
-    if (Number(result.meta?.changes ?? 0) <= 0) {
-      const current = await recommendationById(env, identity.portalId, row.id);
-      if (current?.status === 'accepted' || current?.status === 'completed') return current;
-      throw new AppError(409, 'recommendation_transition_conflict', 'The recommendation changed before it could be accepted. Refresh and try again.');
-    }
-    await addRecommendationEvent(env, identity.portalId, row.id, row.deal_id, 'accepted', identity, {}, now);
-  } else if (transition === 'complete') {
-    if (row.status === 'completed') return (await recommendationById(env, identity.portalId, row.id))!;
-    if (!ACTIVE_RECOMMENDATION_STATUSES.includes(row.status)) {
-      throw new AppError(409, 'recommendation_not_actionable', `A ${row.status} recommendation cannot be completed.`);
-    }
-    const result = await env.DB.prepare(
-      `UPDATE recommendation_instances
-       SET status = 'completed',
-           accepted_at = COALESCE(accepted_at, ?),
-           accepted_by_user_id = COALESCE(accepted_by_user_id, ?),
-           accepted_by_email = COALESCE(accepted_by_email, ?),
-           completed_at = ?, completed_by_user_id = ?, completed_by_email = ?, updated_at = ?
-       WHERE portal_id = ? AND id = ? AND status IN ('presented', 'accepted')`,
-    ).bind(
-      now, identity.userId, identity.userEmail,
-      now, identity.userId, identity.userEmail, now,
-      identity.portalId, row.id,
-    ).run();
-    if (Number(result.meta?.changes ?? 0) <= 0) {
-      const current = await recommendationById(env, identity.portalId, row.id);
-      if (current?.status === 'completed') return current;
-      throw new AppError(409, 'recommendation_transition_conflict', 'The recommendation changed before it could be completed. Refresh and try again.');
-    }
-    if (row.status === 'presented') {
-      await addRecommendationEvent(env, identity.portalId, row.id, row.deal_id, 'accepted', identity, {
-        automaticallyAcceptedOnCompletion: true,
-      }, now);
-    }
-    await env.DB.prepare(
-      `INSERT INTO recommendation_outcomes (
-        recommendation_id, portal_id, deal_id, evaluation_status, created_at, updated_at
-      ) VALUES (?, ?, ?, 'pending', ?, ?)
-      ON CONFLICT(recommendation_id) DO NOTHING`,
-    ).bind(row.id, identity.portalId, row.deal_id, now, now).run();
-    await addRecommendationEvent(env, identity.portalId, row.id, row.deal_id, 'completed', identity, {
-      observationStatus: 'pending_next_deal_brief',
-    }, now);
-  } else {
-    if (row.status === 'dismissed') return (await recommendationById(env, identity.portalId, row.id))!;
-    if (!ACTIVE_RECOMMENDATION_STATUSES.includes(row.status)) {
-      throw new AppError(409, 'recommendation_not_actionable', `A ${row.status} recommendation cannot be dismissed.`);
-    }
-    const reason = text(body.reason, 1000);
-    if (!reason) throw new AppError(400, 'dismissal_reason_required', 'Provide a reason for dismissing the recommendation.');
-    const result = await env.DB.prepare(
-      `UPDATE recommendation_instances
-       SET status = 'dismissed', terminal_reason = 'user_dismissed', dismissed_at = ?,
-           dismissed_by_user_id = ?, dismissed_by_email = ?, dismissal_reason = ?, updated_at = ?
-       WHERE portal_id = ? AND id = ? AND status IN ('presented', 'accepted')`,
-    ).bind(now, identity.userId, identity.userEmail, reason, now, identity.portalId, row.id).run();
-    if (Number(result.meta?.changes ?? 0) <= 0) {
-      const current = await recommendationById(env, identity.portalId, row.id);
-      if (current?.status === 'dismissed') return current;
-      throw new AppError(409, 'recommendation_transition_conflict', 'The recommendation changed before it could be dismissed. Refresh and try again.');
-    }
-    await addRecommendationEvent(env, identity.portalId, row.id, row.deal_id, 'dismissed', identity, { reason }, now);
-  }
-
-  await new Repository(env).audit(
-    identity.portalId,
-    identity.userId,
-    identity.userEmail,
-    AUDIT_ACTIONS[transition],
-    {
-      recommendationId: row.id,
-      dealId: row.deal_id,
-      recommendationCode: row.recommendation_code,
-    },
-  );
-  return (await recommendationById(env, identity.portalId, row.id))!;
+  const row = await env.DB.prepare('SELECT * FROM recommendation_instances WHERE portal_id=? AND id=?')
+    .bind(identity.portalId,recommendationId).first<RecommendationRow>();
+  if(!row) throw new AppError(404,'recommendation_not_found','The recommendation does not exist.');
+  const access=await requireRemediationRecord(env,identity,row.deal_id);
+  assertRecordScope(access.context,{pipelineId:row.baseline_pipeline_id,ownerId:row.baseline_owner_id,teamId:row.baseline_team_id,regionCode:row.baseline_region_code});
+  const body=object(input)??{};
+  if(transition==='dismiss' && (typeof body.reason!=='string' || !body.reason.trim() || body.reason.length>1000))
+    throw new AppError(400,'dismissal_reason_required','Provide a dismissal reason of at most 1,000 characters.');
+  requireWorkResult(await env.DB.prepare('SELECT dealguard.transition_recommendation_work(?,?,?,?,?,?,?,?) AS result')
+    .bind(identity.portalId,row.deal_id,row.id,access.assessmentAt,transition,identity.userId,identity.userEmail,
+      transition==='dismiss'?(body.reason as string).trim():null).first<{result:unknown}>());
+  await requireRemediationRecord(env,identity,row.deal_id);
+  return (await recommendationById(env,identity.portalId,row.id))!;
 }
 
 function scopedAnalyticsFilter(

@@ -1,4 +1,8 @@
+import { webhookInboxStatus, retryWebhookInbox } from './hubspot-events.js';
+import { backgroundIntelligenceStatus, saveBackgroundIntelligenceSettings, retryBackgroundIntelligence } from './background-intelligence.js';
+import { recordedPortfolioHistory } from './portfolio-snapshots.js';
 import { requireCommercialTier } from './billing.js';
+import { portfolioHistory } from './portfolio-history.js';
 import { json, methodNotAllowed, readJson } from './http.js';
 import { evaluateRecommendationDeliverySlos } from './recommendation-delivery-slo-evaluator.js';
 import {
@@ -24,6 +28,38 @@ export async function route(
   ctx: { waitUntil(promise: Promise<unknown>): void },
 ): Promise<Response> {
   const url = new URL(request.url);
+  if (url.pathname === '/api/v1/enterprise/webhook-inbox') {
+    if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    return json({ statuses: await webhookInboxStatus(env, await validateHubSpotRequest(request, env)) });
+  }
+  if (url.pathname === '/api/v1/enterprise/webhook-inbox/retry') {
+    if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    return json(await retryWebhookInbox(env, await validateHubSpotRequest(request, env)));
+  }
+  if (url.pathname === '/api/v1/enterprise/background-intelligence') {
+    if (!['GET', 'PUT'].includes(request.method)) return methodNotAllowed(['GET','PUT']);
+    const identity = await validateHubSpotRequest(request, env);
+    if (request.method === 'GET') return json(await backgroundIntelligenceStatus(env, identity));
+    return json(await saveBackgroundIntelligenceSettings(env, identity, await readJson(request)));
+  }
+  if (url.pathname === '/api/v1/enterprise/background-intelligence/retry') {
+    if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    const identity = await validateHubSpotRequest(request, env);
+    return json(await retryBackgroundIntelligence(env, identity));
+  }
+  if (url.pathname === '/api/v1/enterprise/portfolio-snapshots') {
+    if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    const identity = await validateHubSpotRequest(request, env);
+    await requireCommercialTier(env, identity.portalId, 'enterprise');
+    return json(await recordedPortfolioHistory(env, identity, url));
+  }
+
+  if (url.pathname === '/api/v1/enterprise/portfolio-history') {
+    if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    const identity = await validateHubSpotRequest(request, env);
+    await requireCommercialTier(env, identity.portalId, 'enterprise');
+    return json(await portfolioHistory(env, identity, url));
+  }
 
   if (url.pathname === `${SLO_ROOT}/evaluate`) {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);

@@ -21,7 +21,7 @@ Daily trend points use the latest assessment for each deal on that calendar day.
 
 ### Outcome evidence
 
-Win/loss evidence uses one latest open assessment before the latest recorded close outcome for each deal. Post-close assessments are excluded from the evidence row so the known outcome cannot leak into the pre-close signal.
+Win/loss evidence uses the latest strictly pre-close assessment for each currently closed episode. The first observed closure after the latest open assessment anchors the reporting window; later closed assessments cannot shift it. Recorded reopening removes a prior outcome, and reclosing uses its new pre-close evidence. Conflicting closed labels and inaccessible pre-close evidence are excluded. Unknown group metrics and unsupported comparisons are null, not zero. See `OUTCOME_EVIDENCE.md` for cohort, coverage, scope and retained-history limitations.
 
 ### Policy impact
 

@@ -1,0 +1,38 @@
+name: Local PostgreSQL test runtime
+on:
+  push:
+    branches: [work/dealguard-local-postgres-validation-20260919]
+    paths: [.github/workflows/local-postgres-runtime.yml]
+permissions:
+  contents: read
+jobs:
+  package-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Assemble official PostgreSQL binaries and their runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/postgres-runtime"
+          docker pull postgres:18-bookworm
+          docker image inspect postgres:18-bookworm --format '{{index .RepoDigests 0}}' > "$RUNNER_TEMP/postgres-runtime/image-digest.txt"
+          docker run --rm --entrypoint bash -v "$RUNNER_TEMP/postgres-runtime:/out" postgres:18-bookworm -ceu '
+            mkdir -p /out/runtime/bin /out/runtime/lib /out/runtime/share
+            cp -a /usr/lib/postgresql/18/bin/. /out/runtime/bin/
+            cp -a /usr/lib/postgresql/18/lib/. /out/runtime/lib/
+            cp -a /usr/share/postgresql/18/. /out/runtime/share/
+            find /usr/lib/postgresql/18 -type f -exec sh -c '\''ldd "$1" 2>/dev/null || true'\'' sh {} \; | awk '\''/=> \/|^[[:space:]]*\// {for(i=1;i<=NF;i++) if($i ~ /^\//) print $i}'\'' | sort -u > /tmp/runtime-libs
+            while IFS= read -r file; do
+              case "$(basename "$file")" in libc.so.*|libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*|ld-linux*|libresolv.so.*) continue;; esac
+              cp -L "$file" /out/runtime/lib/
+            done < /tmp/runtime-libs
+            chmod -R a+rX /out/runtime
+          '
+          tar -C "$RUNNER_TEMP/postgres-runtime" -czf "$RUNNER_TEMP/postgres-runtime.tar.gz" runtime image-digest.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: postgres-offline-runtime-${{ github.run_id }}
+          path: ${{ runner.temp }}/postgres-runtime.tar.gz
+          retention-days: 1
+          if-no-files-found: error

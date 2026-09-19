@@ -29,7 +29,7 @@ async function fixture(t, version = '3.0.0-alpha.1') {
     requiredScopes: ['crm.objects.deals.read'], optionalScopes: ['crm.objects.quotes.read'],
   }, unusedSecretFixture: 'secret-not-for-baseline' } });
   await put('src/app/cards/card-hsmeta.json', { uid: 'card', type: 'card', config: {} });
-  await put('src/app/cards/package.json', { name: 'cards', version: '2.1.0' });
+  await put('src/app/cards/package.json', { name: 'cards', version });
   await put('database/migrations/0001_initial.sql', 'CREATE SCHEMA dealguard;\n');
   await put('database/migrations/0002_next.sql', 'SELECT 1;\n');
   const commit = () => { git('add', '.'); git('commit', '-qm', 'fixture'); return git('rev-parse', 'HEAD'); };
@@ -216,7 +216,7 @@ test('deployment input validation does not execute shell syntax inside dispatch 
   const marker = join(f.root, 'must-not-exist');
   const env = { ...process.env, RELEASE_SHA: 'a'.repeat(40), RELEASE_TARGET: 'production',
     BACKUP_REFERENCE: 'backups/production/test.enc', BACKUP_SHA256: 'b'.repeat(64),
-    ACCEPTANCE_PORTAL_ID: '123', ACCEPTANCE_PROFILE: 'full', STAGING_RUN_ID: '123',
+    ACCEPTANCE_PORTAL_ID: '123', ACCEPTANCE_PROFILE: 'full', STAGING_RUN_ID: '123', SIGNOFF_RUN_ID: '456',
     ACCEPTANCE_TEST_DEAL_ID: '456', PRODUCTION_CONFIRMATION: 'DEPLOY DEALGUARD TO PRODUCTION' };
   assert.equal(spawnSync('bash', ['-c', script], { env }).status, 0);
   for (const name of ['ACCEPTANCE_PORTAL_ID', 'PRODUCTION_CONFIRMATION']) {
@@ -231,3 +231,11 @@ test('deployment input validation does not execute shell syntax inside dispatch 
     assert.doesNotMatch(source, /path:\s*\.release\/\*\*/);
   }
 });
+
+for (const uiVersion of ['2.1.0', '3.0.0', null]) {
+  test(`baseline rejects mismatched or missing UI identity: ${uiVersion}`, async (t) => {
+    const f = await fixture(t);
+    await f.put('src/app/cards/package.json', { name: 'cards', version: uiVersion }); f.commit();
+    await assert.rejects(collectReleaseBaseline({ root: f.root }), /Every HubSpot UI package version/);
+  });
+}

@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.0.0-alpha.1 — 2026-09-19
+
+### Development consolidation
+
+- Consolidated the published PR #46 changes through `9f34835`: release certification, scoped analytics, durable portfolio evidence, lifecycle handling, background enrichment, webhook receipt, authorization, and closed-loop remediation.
+- Synchronized the root package, Worker health endpoint, deal card, settings, and App Home release identities to `3.0.0-alpha.1`.
+- Added regression checks for aligned release identities and retained the stable-only production version policy.
+- Preserved HubSpot project/component identities and OAuth scope definitions.
+
+### Explicit exclusions
+
+- The separate 81-file local candidate (`fb4d30ac59e6`) is not included; source publication remains blocked by a tool safety check. Its local 670-test result is not release evidence for this source.
+- This is a development prerelease, not production sign-off. No customer migration or deployment is performed by the version bump.
+- See `docs/RELEASE_3_0_ALPHA_1.md` for included scope, preserved work, and outstanding acceptance gates.
+
 ## 2.1.0 — 2026-07-18
 
 ### Production platform

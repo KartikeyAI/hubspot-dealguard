@@ -1,8 +1,10 @@
 # DealGuard by Rokad
 
+**Current development version: `3.0.0-alpha.1`.** This prerelease consolidates the published PR #46 source; it is not production-ready. The separately preserved 81-file intelligence candidate is not included. See [release scope and outstanding gates](docs/RELEASE_3_0_ALPHA_1.md).
+
 DealGuard is an enterprise HubSpot revenue-governance application that detects incomplete, stale, and risky deals; governs policy lifecycle; makes readiness signals native inside HubSpot; manages remediation SLAs; delivers operational events reliably; and provides auditable commercial, compliance, and reliability controls.
 
-## What ships in v2.1.0
+## Platform capabilities
 
 ### Revenue governance
 
@@ -53,7 +55,7 @@ DealGuard is an enterprise HubSpot revenue-governance application that detects i
 - Service SLOs, latency/success telemetry, synthetic checks, incident management, and a public status endpoint.
 - Resumable scans using processed-deal checkpoints stable across HubSpot result reordering.
 - Recoverable job leases, exponential backoff with jitter, service health, backup manifests, and restore-test evidence.
-- Neon PostgreSQL through Cloudflare Hyperdrive, with immutable migrations and tenant constraint validation.
+- Direct Neon PostgreSQL, with immutable migrations and tenant constraint validation.
 
 ### Commercial infrastructure
 
@@ -69,7 +71,7 @@ DealGuard is an enterprise HubSpot revenue-governance application that detects i
 - Least-privilege application scopes and product-level authorization.
 - DealGuard never autonomously changes deal stage, owner, amount, close date, or forecast category.
 - Deterministic policy remains the readiness system of record.
-- Direct Neon credentials are reserved for protected migration jobs; runtime access uses Hyperdrive.
+- Database credentials are restricted to the Worker runtime and protected migration jobs; Hyperdrive is not the runtime database path.
 
 ## Repository layout
 
@@ -106,4 +108,4 @@ Production enablement requires protected staging evidence, an encrypted and rest
 
 ## Current release
 
-`2.1.0` — production release of DealGuard on Neon PostgreSQL, Cloudflare Hyperdrive, Tigris object storage, Cloudflare Queues, HubSpot developer platform `2026.03`, and Dodo Payments.
+`3.0.0-alpha.1` — development prerelease on direct Neon PostgreSQL, Tigris object storage, Cloudflare Queues, HubSpot developer platform `2026.03`, and Dodo Payments. Source merge and versioning do not establish production acceptance or deployment.

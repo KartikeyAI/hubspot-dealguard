@@ -41,7 +41,7 @@ jobs:
           from pathlib import Path
           def git(*args): return subprocess.check_output(['git',*args],text=True).strip()
           base='86761582ff798ef31d44f81008351567a021dded'
-          target='e31ba016b95bbd66c56bfb2eacd6a29421f15da2'
+          target='9db78079ef45205c041d656e8376c652522e4964'
           parts=[f'.development/closedloop-{i}.part' for i in range(7)]
           helpers=parts+['.github/workflows/development-batch.yml']
           assert git('rev-parse','HEAD')==os.environ['INPUT_SHA']
@@ -65,6 +65,20 @@ jobs:
               assert type(c['start']) is int and type(c['end']) is int and 0<=c['start']<=c['end']<=end
               lines[c['start']:c['end']]=c['text'].splitlines(keepends=True); end=c['start']
             p.parent.mkdir(parents=True,exist_ok=True);p.write_text(''.join(lines))
+          p=Path('test/recommendation-remediation-postgres.test.mjs');text=p.read_text()
+          fixes=[
+            ("portal_id,deal_id,deal_name,score,grade,status,summary,issues_json,issue_codes_json,issue_count,is_closed,is_won,assessed_at,reviewed_at)","portal_id,deal_id,deal_name,pipeline_label,stage_label,score,grade,status,readiness_summary,issues_json,is_closed,is_won,assessed_at)"),
+            ("VALUES($1,$2,'Deal',80,'B','at_risk','Summary','[]','[]',0,0,0,$3,$3)","VALUES($1,$2,'Deal','Pipeline','Stage',80,'B','at_risk','Summary','[]',0,0,$3)"),
+            ("assessment_at,generated_at,brief_status,attention_score,confidence,coverage_percent,freshness_status,updated_at,next_action_code)","assessment_at,generated_at,methodology,brief_status,attention_score,confidence,coverage_percent,freshness_status,created_at,updated_at,next_action_code)"),
+            ("VALUES($1,$2,$3,$4,'needs_attention',50,'medium',100,'fresh',$4,'readiness_next_step')","VALUES($1,$2,$3,$4,'deterministic_evidence_synthesis','watch',50,'medium',100,'fresh',$4,$4,'readiness_next_step')"),
+            ("deal_id,fingerprint,recommendation_code,recommendation_label,recommendation_text,dimension,priority,owner_role,due_at,rationale,","deal_id,recommendation_fingerprint,recommendation_code,recommendation_label,recommendation_text,recommendation_dimension,priority,owner_role,due_at,rationale,methodology,status,"),
+            ("baseline_assessment_at,baseline_snapshot_at,","baseline_assessment_at,baseline_snapshot_generated_at,"),
+            ("$5,'Missing next step',$6,$7,","$5,'Missing next step','deterministic_evidence_synthesis','presented',$6,$7,")
+          ]
+          for before,after in fixes:
+            assert text.count(before)==1
+            text=text.replace(before,after)
+          p.write_text(text)
           subprocess.run(['git','add','--',*paths],check=True)
           subprocess.run(['git','rm','--',*helpers],check=True)
           actual=git('write-tree')
@@ -145,7 +159,7 @@ jobs:
           subprocess.run(['git','fetch',str(p/'source.bundle'),'HEAD:refs/heads/validated-candidate'],check=True)
           assert git('rev-parse','validated-candidate')==sha
           assert git('rev-parse',sha+'^')==os.environ['INPUT_SHA']
-          assert git('rev-parse',sha+'^{tree}')=='e31ba016b95bbd66c56bfb2eacd6a29421f15da2'
+          assert git('rev-parse',sha+'^{tree}')=='9db78079ef45205c041d656e8376c652522e4964'
           assert git('rev-list','--count',os.environ['INPUT_SHA']+'..'+sha)=='1'
           env=os.environ.copy();env['GIT_CONFIG_COUNT']='1';env['GIT_CONFIG_KEY_0']='http.https://github.com/.extraheader'
           env['GIT_CONFIG_VALUE_0']='AUTHORIZATION: basic '+base64.b64encode(('x-access-token:'+env.pop('PUBLISH_TOKEN')).encode()).decode()

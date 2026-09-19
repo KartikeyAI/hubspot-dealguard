@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Button,
@@ -6,6 +6,7 @@ import {
   Flex,
   Heading,
   LoadingSpinner,
+  Input,
   StatusTag,
   Text,
   TextArea,
@@ -50,6 +51,10 @@ type Recommendation = {
   dismissalReason: string | null;
   overdue: boolean;
   current: boolean;
+  updatedAt: string;
+  revision: string;
+  remediation: {caseId:string;status:string;ownerId:string|null;dueAt:string|null}|null;
+  baseline?: {ownerId?:string|null};
   outcome: RecommendationOutcome | null;
 };
 
@@ -130,7 +135,14 @@ export function RecommendationLifecyclePanel({
   const [dismissReason, setDismissReason] = useState('');
   const [dismissAttempted, setDismissAttempted] = useState(false);
 
+  const requestId=useRef(0);
+  const [loadedDeal,setLoadedDeal]=useState<string|null>(null);
+  const [linkId,setLinkId]=useState<string|null>(null);
+  const [caseOwner,setCaseOwner]=useState('');
+  const [caseDue,setCaseDue]=useState('');
+
   const load = useCallback(async (manual = false) => {
+    const token=++requestId.current;
     if (manual) setRefreshing(true);
     else setLoading(true);
     setError(null);
@@ -141,11 +153,13 @@ export function RecommendationLifecyclePanel({
         timeout: 15_000,
       });
       const accessData = await accessResponse.json();
+      if(token!==requestId.current) return;
       if (!accessResponse.ok) {
         throw new Error(accessData?.error?.message ?? 'DealGuard access could not be checked.');
       }
       const nextAccess = accessData as AccessContext;
       setAccess(nextAccess);
+      setLoadedDeal(dealId);
       const permissions = Array.isArray(nextAccess.permissions) ? nextAccess.permissions : [];
       if (!nextAccess.entitled || !permissionMatches(permissions, 'remediation.view')) {
         setRecommendations([]);
@@ -157,20 +171,22 @@ export function RecommendationLifecyclePanel({
         timeout: 15_000,
       });
       const data = await response.json();
+      if(token!==requestId.current) return;
       if (!response.ok) {
         throw new Error(data?.error?.message ?? 'Tracked recommendations could not be loaded.');
       }
       setRecommendations((data as RecommendationList).recommendations ?? []);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Tracked recommendations could not be loaded.');
+      if(token===requestId.current) {setError(caught instanceof Error ? caught.message : 'Tracked recommendations could not be loaded.');setLoadedDeal(dealId);setRecommendations([]);}
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if(token===requestId.current){setLoading(false);setRefreshing(false);}
     }
   }, [dealId]);
 
   useEffect(() => {
+    setWorkingId(null);setLinkId(null);
     void load(false);
+    return ()=>{requestId.current+=1;};
   }, [load, reloadToken]);
 
   const transition = useCallback(async (
@@ -178,6 +194,7 @@ export function RecommendationLifecyclePanel({
     action: RecommendationTransition,
     reason?: string,
   ) => {
+    const token=++requestId.current;
     setWorkingId(recommendationId);
     setError(null);
     setNotice(null);
@@ -188,6 +205,7 @@ export function RecommendationLifecyclePanel({
         body: action === 'dismiss' ? { reason } : {},
       });
       const data = await response.json();
+      if(token!==requestId.current) return;
       if (!response.ok) {
         throw new Error(data?.error?.message ?? 'The recommendation could not be updated.');
       }
@@ -204,11 +222,27 @@ export function RecommendationLifecyclePanel({
             : 'Recommendation dismissed with its reason retained for audit and product-quality analysis.',
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'The recommendation could not be updated.');
+      if(token===requestId.current) setError(caught instanceof Error ? caught.message : 'The recommendation could not be updated.');
     } finally {
-      setWorkingId(null);
+      if(token===requestId.current) setWorkingId(null);
     }
   }, []);
+
+  const linkCase=async(item:Recommendation)=>{
+    const token=++requestId.current;
+    setWorkingId(item.id);setError(null);setNotice(null);
+    try {
+      const response=await hubspot.fetch(`${API_BASE}/recommendations/${item.id}/remediation`,{
+        method:'POST',timeout:15000,body:{confirm:true,ownerId:caseOwner.trim(),dueAt:caseDue.trim(),expectedRevision:item.revision}
+      });
+      const data=await response.json();if(token!==requestId.current)return;
+      if(!response.ok)throw new Error(data?.error?.message??'The case could not be created.');
+      setRecommendations(items=>items.map(previous=>previous.id===item.id?data.recommendation as Recommendation:previous));
+      setLinkId(null);
+      setNotice(data.createdCase?'Remediation created and recommendation accepted. No HubSpot task was created.':'Existing remediation linked. Its owner, deadline and controls were preserved.');
+    }catch(caught){if(token===requestId.current)setError(caught instanceof Error?caught.message:'Case creation failed.');}
+    finally{if(token===requestId.current)setWorkingId(null);}
+  };
 
   const permissions = Array.isArray(access?.permissions) ? access.permissions : [];
   const canView = permissionMatches(permissions, 'remediation.view');
@@ -216,7 +250,7 @@ export function RecommendationLifecyclePanel({
   const active = recommendations.filter((item) => item.status === 'presented' || item.status === 'accepted');
   const history = recommendations.filter((item) => item.status !== 'presented' && item.status !== 'accepted').slice(0, 4);
 
-  if (loading) return <LoadingSpinner label="Loading tracked recommendations" />;
+  if (loading || loadedDeal!==dealId) return <LoadingSpinner label="Loading tracked recommendations" />;
 
   if (!access?.entitled) {
     return <Alert title="Recommendation tracking is an Enterprise capability" variant="info">
@@ -270,6 +304,23 @@ export function RecommendationLifecyclePanel({
             {item.overdue && <Alert title="Accepted action is overdue" variant="warning">
               Accepted work remains open after its deadline; it is not silently expired or replaced.
             </Alert>}
+
+            {item.remediation && <Alert title="Linked remediation" variant="info">
+              Case {item.remediation.caseId}: {item.remediation.status}. Owner ID: {item.remediation.ownerId??'Unassigned'}. Due: {formatDate(item.remediation.dueAt)}.
+              Recommendation completion and case resolution are separate actions.
+            </Alert>}
+            {canManage && !item.remediation && <Button variant="secondary" disabled={workingId!==null} onClick={()=>{
+              setLinkId(item.id);setCaseOwner(item.owner==='deal_owner'?item.baseline?.ownerId??'':'');setCaseDue(item.dueAt??'');
+            }}>Create or link remediation</Button>}
+            {canManage && linkId===item.id && !item.remediation && <Flex direction="column" gap="small">
+              <Input name={`case-owner-${item.id}`} label="HubSpot owner ID" value={caseOwner} onChange={setCaseOwner}/>
+              <Input name={`case-due-${item.id}`} label="Deadline (ISO timestamp with timezone)" value={caseDue} onChange={setCaseDue}/>
+              <Text>Creates accountable work in DealGuard, or reuses the active case for this issue without changing its owner or deadline. Existing escalation policies may apply. This does not create a HubSpot task or send an immediate notification.</Text>
+              <Flex direction="row" gap="small">
+                <Button disabled={workingId!==null||!caseOwner.trim()||!caseDue.trim()} onClick={()=>void linkCase(item)}>Confirm case creation or linking</Button>
+                <Button variant="secondary" disabled={workingId!==null} onClick={()=>setLinkId(null)}>Cancel</Button>
+              </Flex>
+            </Flex>}
 
             {canManage && <Flex direction="row" gap="small" wrap="wrap">
               {item.status === 'presented' && <Button
@@ -347,6 +398,7 @@ export function RecommendationLifecyclePanel({
             <StatusTag variant={statusVariant(item.status)}>{statusLabel(item.status)}</StatusTag>
           </Flex>
           <Text variant="microcopy">Presented {formatDate(item.presentedAt)}{item.completedAt ? ` · Completed ${formatDate(item.completedAt)}` : ''}</Text>
+          {item.remediation && <Text>Linked case {item.remediation.caseId}: {item.remediation.status}. Case resolution is tracked separately.</Text>}
           {item.dismissalReason && <Text variant="microcopy">Dismissal reason: {item.dismissalReason}</Text>}
           {item.outcome?.evaluationStatus === 'pending' && <Text variant="microcopy">Awaiting a later Deal Brief before any outcome evidence can be observed.</Text>}
           {item.outcome?.observedProgress && <Alert

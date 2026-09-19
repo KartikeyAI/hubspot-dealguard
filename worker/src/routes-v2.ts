@@ -333,7 +333,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   }
 
   if (url.pathname === '/api/v1/remediations') {
-    if (request.method === 'GET') return json({ cases: await listRemediationCases(env, identity.portalId, url) });
+    if (request.method === 'GET') return json({ cases: await listRemediationCases(env, identity, url) });
     if (request.method === 'POST') {
       await requireCommercialTier(env, identity.portalId, 'enterprise');
       await requireOperationalPermission(env, identity, 'remediation.manage');
@@ -343,7 +343,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   }
   if (url.pathname === '/api/v1/remediations/summary') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
-    return json(await remediationSummary(env, identity.portalId));
+    return json(await remediationSummary(env, identity));
   }
   const remediationRoute = remediationPath(url.pathname);
   if (remediationRoute) {

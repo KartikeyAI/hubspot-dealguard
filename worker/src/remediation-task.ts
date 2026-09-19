@@ -1,3 +1,4 @@
+import { requireRemediationRecord } from './remediation-access.js';
 import { requireEnterprisePermission } from './enterprise-access.js';
 import { AppError } from './errors.js';
 import { HubSpotClient } from './hubspot.js';
@@ -30,7 +31,7 @@ export async function attachTaskToExistingRemediation(
     hubspot_task_id: string | null;
   }>();
   if (!item) throw new AppError(404, 'remediation_case_not_found', 'The remediation case does not exist.');
-  await requireEnterprisePermission(env, identity, 'remediation.manage', { ownerId: item.owner_id });
+  await requireRemediationRecord(env, identity, item.deal_id);
   if (item.hubspot_task_id) return { taskId: item.hubspot_task_id, existing: true };
 
   const client = await HubSpotClient.forPortal(env, identity.portalId);

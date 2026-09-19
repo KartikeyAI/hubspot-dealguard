@@ -302,8 +302,8 @@ async function validateRepository() {
   );
   add(
     'migrations.latest',
-    migrationNumbers.at(-1) === 29
-      && migrationFiles.at(-1) === '0029_background_dispatch.sql',
+    migrationNumbers.at(-1) === 30
+      && migrationFiles.at(-1) === '0030_recommendation_remediation.sql',
     `latest migration is ${migrationFiles.at(-1) ?? 'missing'}`,
   );
   add(

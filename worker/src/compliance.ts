@@ -246,7 +246,7 @@ async function completeExportPayload(env: Env, portalId: string, scope: string):
     result.configuration = configuration;
   }
   if (scope === 'operational' || scope === 'complete') {
-    const tables = ['hubspot_webhook_inbox', 'deal_record_lifecycle', 'deal_record_lifecycle_events', 'background_intelligence_jobs', 'background_intelligence_settings', 'background_intelligence_usage', 'deal_assessments', 'assessment_history', 'portfolio_snapshot_runs', 'portfolio_snapshot_items', 'handoff_cycles', 'remediation_cases', 'remediation_events', 'outbox_events', 'outbox_deliveries', 'service_health', 'operational_metrics', 'incidents'];
+    const tables = ['hubspot_webhook_inbox', 'deal_record_lifecycle', 'deal_record_lifecycle_events', 'background_intelligence_jobs', 'background_intelligence_settings', 'background_intelligence_usage', 'deal_assessments', 'assessment_history', 'portfolio_snapshot_runs', 'portfolio_snapshot_items', 'handoff_cycles', 'recommendation_remediation_links', 'remediation_cases', 'remediation_events', 'outbox_events', 'outbox_deliveries', 'service_health', 'operational_metrics', 'incidents'];
     const operational: Record<string, unknown> = {};
     for (const table of tables) operational[table] = (await env.DB.prepare(`SELECT * FROM ${table} WHERE portal_id = ?`).bind(portalId).all<Record<string, unknown>>()).results ?? [];
     result.operational = operational;

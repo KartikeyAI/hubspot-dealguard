@@ -341,3 +341,32 @@ Operational receipt cleanup respects active/configured holds. See
 All four actual dependency typechecks pass locally; local non-database test results
 are distinct from canonical CI and live acceptance. Exact executed CI results will
 be recorded on PR #46. No production readiness or completed phase is inferred.
+
+## Slice 16 — Retry-safe recommendation-to-case linkage
+
+- Added additive migration 0030 with tenant/deal-safe links, monotonic work revisions,
+  atomic manual recommendation transitions/events/outcome initialization/audit rows.
+- Explicit confirmed case creation binds the reviewed revision, owner and deadline;
+  exact retries do not duplicate work; existing active issue cases retain their settings.
+- Recommendation completion remains distinct from case resolution and observed impact.
+- Deal-record card exposes linkage, explicit confirmation and separate case status,
+  with stale-response invalidation for record changes.
+- Added production-service PostgreSQL concurrency/rollback and input/contract tests.
+  Execution evidence is recorded on PR #46, not inferred from adding a test file.
+
+## Slice 17 — Scoped, actionable remediation workspace
+
+- Closed the portal-wide list/summary access gap: collections and details use the
+  current CRM deal's scope, not the remediation assignee. Baseline recommendation
+  scope is retained; results are bounded with explicit capacity/truncation disclosure.
+- Resolution, waiver, reopening and acknowledgement transitions are transactionally
+  fenced with evidence/acknowledgement gates, revision/source checks and audit rows.
+- Comments/evidence/controls/review use atomic revision-checked writes. Bulk case
+  actions require individual record access and only the original requester can run
+  a claimed batch. External tasks remain a separate provider-side-effect operation.
+- Added an active App Home panel for case lookup, assignment, notes, evidence/review,
+  resolution, waiver and reopening. Empty resolution samples are unavailable, not zero.
+- Presented recommendation expiry is conditional and event-atomic, preventing a
+  racing expiry worker from reverting accepted work.
+- These slices do not close M1.6 live/customer acceptance or the overall Phase 1 gate.
+  No live deployment, task, notification, grant or billing transaction was performed.

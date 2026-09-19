@@ -3,7 +3,7 @@ import { enterpriseAccessContext, permissionMatches, type EnterpriseAccessContex
 import { dimensionValues, getPolicyDimensionMappings } from './policy-dimensions.js';
 import type { Env, NormalizedDeal, RequestIdentity } from './types.js';
 
-export type RecordPermission = 'analytics.view' | 'deal.review' | 'handoff.confirm';
+export type RecordPermission = 'analytics.view' | 'deal.review' | 'handoff.confirm' | 'remediation.view' | 'remediation.manage' | 'remediation.bulk' | 'remediation.review' | 'remediation.evidence';
 export interface RecordResource { pipelineId: string | null; ownerId: string | null; teamId: string | null; regionCode: string | null }
 export interface RecordAccess { context: EnterpriseAccessContext; resource: RecordResource; assessmentAt: string | null }
 

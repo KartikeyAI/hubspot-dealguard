@@ -1,3 +1,4 @@
+import { RemediationWorkPanel } from './RemediationWorkPanel';
 import { WebhookHealthPanel } from './WebhookHealthPanel';
 import { BackgroundIntelligencePanel } from './BackgroundIntelligencePanel';
 import React from 'react';
@@ -15,6 +16,7 @@ import { RecommendationRoutingPoliciesPanel } from './RecommendationRoutingPolic
 export function ManagerDecisionQueuePanel({ enabled }: { enabled: boolean }) {
   return <Flex direction="column" gap="large">
     <ManagerDecisionQueueCore enabled={enabled} />
+    <RemediationWorkPanel enabled={enabled} />
     <ExecutiveRevenuePanel enabled={enabled} />
     <PortfolioHistoryPanel enabled={enabled} />
     <BackgroundIntelligencePanel enabled={enabled} />

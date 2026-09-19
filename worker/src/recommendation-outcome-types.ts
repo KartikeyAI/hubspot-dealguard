@@ -46,6 +46,9 @@ export interface RecommendationInstance {
   dismissalReason: string | null;
   overdue: boolean;
   current: boolean;
+  updatedAt: string;
+  revision: string;
+  remediation: { caseId: string; status: string; ownerId: string | null; dueAt: string | null } | null;
   baseline: RecommendationBaseline;
   outcome: RecommendationOutcome | null;
 }

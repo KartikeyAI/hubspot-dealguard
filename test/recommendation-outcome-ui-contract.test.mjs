@@ -63,9 +63,11 @@ test('existing backend remains permission-aware, audited and CRM-read-free', () 
   assert.match(route, /dealRecommendationsPath/);
   assert.match(route, /recommendations/);
   assert.match(route, /accept\|complete\|dismiss/);
-  assert.match(lifecycle, /requireEnterprisePermission\(env, identity, 'remediation\.view'/);
-  assert.match(lifecycle, /requireEnterprisePermission\(env, identity, 'remediation\.manage'/);
-  assert.match(lifecycle, /new Repository\(env\)\.audit/);
+  assert.match(lifecycle, /requireRemediationRecord\(env, identity, dealId, 'remediation\.view'/);
+  assert.match(lifecycle, /requireRemediationRecord\(env,identity,row\.deal_id\)/);
+  assert.match(read('worker/src/remediation-access.ts'), /permission: RecordPermission = 'remediation.manage'/);
+  assert.match(read('database/migrations/0030_recommendation_remediation.sql'), /INSERT INTO dealguard.audit_events/);
+  assert.match(lifecycle,/transition_recommendation_work/);
   assert.doesNotMatch(`${lifecycle}\n${observation}`, /HubSpotClient|api\.hubapi\.com|\/crm\//);
 });
 

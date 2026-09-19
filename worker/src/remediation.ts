@@ -1,3 +1,6 @@
+import { remediationCollection, requireRemediationRecord } from './remediation-access.js';
+import { requireWorkResult } from './recommendation-remediation.js';
+import { evidenceInstant } from './evidence-freshness.js';
 import { assertRecordAvailable } from './record-lifecycle.js';
 import { PLAN_LIMITS } from './config.js';
 import { AppError } from './errors.js';
@@ -10,6 +13,7 @@ export type RemediationStatus = 'open' | 'acknowledged' | 'in_progress' | 'resol
 export type RemediationPriority = 'low' | 'medium' | 'high' | 'urgent';
 
 interface CaseRow {
+  work_revision: string | number;
   id: string;
   portal_id: string;
   deal_id: string;
@@ -205,71 +209,68 @@ export async function createRemediationCase(
   return mapCase(row);
 }
 
-export async function listRemediationCases(env: Env, portalId: string, url: URL): Promise<RemediationCase[]> {
-  const status = url.searchParams.get('status')?.trim() ?? '';
-  const ownerId = url.searchParams.get('ownerId')?.trim() ?? '';
-  const dealId = url.searchParams.get('dealId')?.trim() ?? '';
-  const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') ?? 100) || 100));
-  const rows = await env.DB.prepare(
-    `SELECT * FROM remediation_cases WHERE portal_id = ?
-      AND (? = '' OR status = ?)
-      AND (? = '' OR owner_id = ?)
-      AND (? = '' OR deal_id = ?)
-     ORDER BY CASE status WHEN 'overdue' THEN 0 WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
-      CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
-      COALESCE(due_at, '9999-12-31') ASC LIMIT ?`
-  ).bind(portalId, status, status, ownerId, ownerId, dealId, dealId, limit).all<CaseRow>();
-  return (rows.results ?? []).map(mapCase);
+export async function listRemediationCases(env: Env, identity: RequestIdentity, url: URL): Promise<RemediationCase[]> {
+  const scope=await remediationCollection(env,identity);
+  const clauses:string[]=[],params:unknown[]=[...scope.params];
+  for(const [key,column] of [['status','status'],['ownerId','owner_id']] as const) {
+    const values=url.searchParams.getAll(key);
+    if(values.length>1 || values.some(v=>v.length>128 || v!==v.trim())) throw new AppError(400,'remediation_filter_invalid','Use one bounded value per filter.');
+    if(values[0]){clauses.push(`r.${column}=?`);params.push(values[0]);}
+  }
+  const pipeline=url.searchParams.getAll('pipelineId');
+  if(pipeline.length>1 || pipeline.some(v=>v.length>128 || v!==v.trim())) throw new AppError(400,'remediation_filter_invalid','Pipeline filter is invalid.');
+  if(pipeline[0]){clauses.push('EXISTS(SELECT 1 FROM permitted p WHERE p.portal_id=r.portal_id AND p.deal_id=r.deal_id AND p.pipeline_id=?)');params.push(pipeline[0]);}
+  const rows=await env.DB.prepare(`${scope.sql} SELECT r.* FROM scoped_cases r WHERE ${clauses.join(' AND ')||'TRUE'}
+    ORDER BY CASE r.severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,COALESCE(r.due_at,r.created_at),r.id LIMIT 201`)
+    .bind(...params).all<CaseRow>();
+  if((rows.results??[]).length>200) throw new AppError(422,'remediation_filter_required','More than 200 cases match. Narrow the status, assignee or pipeline filter.');
+  return (rows.results??[]).map(mapCase);
 }
 
-export async function remediationSummary(env: Env, portalId: string): Promise<{ open: number; overdue: number; critical: number; dueSoon: number; averageResolutionHours: number }> {
-  const row = await env.DB.prepare(
-    `SELECT
-      SUM(CASE WHEN status IN ('open', 'acknowledged', 'in_progress', 'overdue') THEN 1 ELSE 0 END) AS open_count,
-      SUM(CASE WHEN status = 'overdue' THEN 1 ELSE 0 END) AS overdue_count,
-      SUM(CASE WHEN severity = 'critical' AND status IN ('open', 'acknowledged', 'in_progress', 'overdue') THEN 1 ELSE 0 END) AS critical_count,
-      SUM(CASE WHEN due_at IS NOT NULL AND due_at <= ? AND status IN ('open', 'acknowledged', 'in_progress') THEN 1 ELSE 0 END) AS due_soon,
-      AVG(CASE WHEN resolved_at IS NOT NULL THEN EXTRACT(EPOCH FROM (resolved_at::timestamptz - created_at::timestamptz)) / 3600.0 END) AS average_resolution_hours
-     FROM remediation_cases WHERE portal_id = ?`
-  ).bind(new Date(Date.now() + 24 * 60 * 60_000).toISOString(), portalId).first<Record<string, unknown>>();
-  return {
-    open: Number(row?.open_count ?? 0),
-    overdue: Number(row?.overdue_count ?? 0),
-    critical: Number(row?.critical_count ?? 0),
-    dueSoon: Number(row?.due_soon ?? 0),
-    averageResolutionHours: Math.round(Number(row?.average_resolution_hours ?? 0) * 10) / 10,
-  };
+export async function remediationSummary(env: Env, identity: RequestIdentity): Promise<{
+  open:number;overdue:number;critical:number;dueSoon:number;averageResolutionHours:number|null;resolutionObservations:number;
+}> {
+  const scope=await remediationCollection(env,identity);
+  const row=await env.DB.prepare(`${scope.sql} SELECT
+    COUNT(*) FILTER(WHERE status IN ('open','acknowledged','in_progress','overdue')) AS open,
+    COUNT(*) FILTER(WHERE status IN ('open','acknowledged','in_progress','overdue') AND due_at IS NOT NULL AND due_at::timestamptz<NOW()) AS overdue,
+    COUNT(*) FILTER(WHERE status IN ('open','acknowledged','in_progress','overdue') AND severity='critical') AS critical,
+    COUNT(*) FILTER(WHERE status IN ('open','acknowledged','in_progress','overdue') AND due_at::timestamptz>=NOW() AND due_at::timestamptz<=NOW()+INTERVAL '24 hours') AS due_soon,
+    AVG(EXTRACT(EPOCH FROM(resolved_at::timestamptz-created_at::timestamptz))/3600) FILTER(WHERE status IN ('resolved','closed') AND resolved_at IS NOT NULL AND resolved_at::timestamptz>=created_at::timestamptz) AS average_resolution_hours,
+    COUNT(*) FILTER(WHERE status IN ('resolved','closed') AND resolved_at IS NOT NULL AND resolved_at::timestamptz>=created_at::timestamptz) AS observations
+    FROM scoped_cases`).bind(...scope.params).first<Record<string,unknown>>();
+  return {open:Number(row?.open??0),overdue:Number(row?.overdue??0),critical:Number(row?.critical??0),dueSoon:Number(row?.due_soon??0),
+    averageResolutionHours:row?.average_resolution_hours==null?null:Math.round(Number(row.average_resolution_hours)*10)/10,
+    resolutionObservations:Number(row?.observations??0)};
 }
 
-export async function transitionRemediationCase(env: Env, identity: RequestIdentity, caseId: string, action: string, value: unknown): Promise<RemediationCase> {
-  const row = await getCaseRow(env, identity.portalId, caseId);
-  const input = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  const now = new Date().toISOString();
-  let status = row.status;
-  let acknowledgedAt = row.acknowledged_at;
-  let resolvedAt = row.resolved_at;
-  let resolutionNote = row.resolution_note;
-  let ownerId = row.owner_id;
-  let ownerEmail = row.owner_email;
-  let dueAt = row.due_at;
-  if (action === 'acknowledge') { status = 'acknowledged'; acknowledgedAt = now; }
-  else if (action === 'start') { status = 'in_progress'; acknowledgedAt ??= now; }
-  else if (action === 'resolve') { status = 'resolved'; resolvedAt = now; resolutionNote = safeText(input.note, 'Resolved by an authorised DealGuard user.', 2000); }
-  else if (action === 'waive') { status = 'waived'; resolvedAt = now; resolutionNote = safeText(input.note, 'Waived by an authorised DealGuard user.', 2000); }
-  else if (action === 'close') { status = 'closed'; resolvedAt ??= now; resolutionNote = safeText(input.note, resolutionNote ?? 'Closed.', 2000); }
-  else if (action === 'reopen') { status = 'open'; resolvedAt = null; resolutionNote = null; }
-  else if (action === 'assign') {
-    ownerId = typeof input.ownerId === 'string' ? input.ownerId.slice(0, 128) : null;
-    ownerEmail = typeof input.ownerEmail === 'string' ? input.ownerEmail.slice(0, 254) : null;
-    dueAt = validDate(input.dueAt, row.due_at);
-  } else throw new AppError(400, 'remediation_action_invalid', 'Unknown remediation action.');
-  await env.DB.prepare(`UPDATE remediation_cases SET status = ?, owner_id = ?, owner_email = ?, due_at = ?, acknowledged_at = ?, resolved_at = ?, resolution_note = ?, updated_at = ? WHERE portal_id = ? AND id = ?`)
-    .bind(status, ownerId, ownerEmail, dueAt, acknowledgedAt, resolvedAt, resolutionNote, now, identity.portalId, caseId).run();
-  const updated = await getCaseRow(env, identity.portalId, caseId);
-  await event(env, updated, action, identity, { previousStatus: row.status, status, ownerId, ownerEmail, dueAt, resolutionNote });
-  await emitCaseEvent(env, updated, `remediation.${action}`);
-  await new Repository(env).audit(identity.portalId, identity.userId, identity.userEmail, `remediation.${action}`, { caseId, previousStatus: row.status, status });
-  return mapCase(updated);
+export async function transitionRemediationCase(env: Env, identity: RequestIdentity, caseId: string, action: string, inputValue: unknown): Promise<RemediationCase> {
+  const row=await env.DB.prepare('SELECT * FROM remediation_cases WHERE portal_id=? AND id=?').bind(identity.portalId,caseId).first<CaseRow>();
+  if(!row) throw new AppError(404,'remediation_case_not_found','The remediation case does not exist.');
+  const access=await requireRemediationRecord(env,identity,row.deal_id);
+  const input=inputValue && typeof inputValue==='object' && !Array.isArray(inputValue)?inputValue as Record<string,unknown>:{}, normalized:Record<string,unknown>={};
+  if(!['acknowledge','start','resolve','waive','close','reopen','assign','set_due_date','set_priority'].includes(action)) throw new AppError(400,'remediation_action_invalid','Unsupported remediation action.');
+  if(['resolve','waive'].includes(action)) {
+    if(typeof input.note!=='string' || !input.note.trim() || input.note.length>2000) throw new AppError(400,'remediation_note_required','A resolution or waiver note of at most 2,000 characters is required.');
+    normalized.note=input.note.trim();
+  }
+  for(const key of ['ownerId','ownerEmail','dueAt','priority'] as const) {
+    if(!(key in input)) continue;
+    if(key==='dueAt' && (typeof input[key]!=='string' || !evidenceInstant(input[key]))) throw new AppError(400,'remediation_due_date_invalid','Use an explicit ISO deadline with timezone.');
+    if(key==='ownerId' && input[key]!==null && (typeof input[key]!=='string' || !/^\d{1,32}$/.test(input[key]))) throw new AppError(400,'remediation_owner_invalid','Use a HubSpot owner ID.');
+    if(key==='ownerEmail' && input[key]!==null && (typeof input[key]!=='string' || input[key].length>254)) throw new AppError(400,'remediation_owner_invalid','The owner email is invalid.');
+    if(key==='priority' && !['low','medium','high','urgent'].includes(String(input[key]))) throw new AppError(400,'remediation_priority_invalid','The priority is invalid.');
+    normalized[key]=key==='dueAt'?evidenceInstant(input[key]):input[key];
+  }
+  if(action==='set_due_date' && !normalized.dueAt) throw new AppError(400,'remediation_due_date_required','A deadline is required.');
+  if(action==='set_priority' && !normalized.priority) throw new AppError(400,'remediation_priority_required','A priority is required.');
+  if(action==='assign' && Object.keys(normalized).length===0) throw new AppError(400,'remediation_assignment_required','Provide an assignee, deadline or priority.');
+  requireWorkResult(await env.DB.prepare('SELECT dealguard.transition_remediation_work(?,?,?,?,?,?,?::jsonb,?,?) AS result')
+    .bind(identity.portalId,row.deal_id,row.id,access.assessmentAt,String(row.work_revision),action,JSON.stringify(normalized),identity.userId,identity.userEmail).first<{result:unknown}>());
+  await requireRemediationRecord(env,identity,row.deal_id);
+  const current=await env.DB.prepare('SELECT * FROM remediation_cases WHERE portal_id=? AND id=?').bind(identity.portalId,caseId).first<CaseRow>();
+  if(!current) throw new AppError(409,'remediation_record_changed','The case changed; refresh before retrying.');
+  return mapCase(current);
 }
 
 export async function syncAssessmentRemediations(env: Env, portalId: string, assessment: DealAssessment): Promise<void> {

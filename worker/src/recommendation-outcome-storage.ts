@@ -176,39 +176,20 @@ export async function addRecommendationEvent(
   ).run();
 }
 
-export async function expirePresentedRecommendations(
-  env: Env,
-  portalId: string,
-  dealId?: string,
-): Promise<number> {
-  const now = new Date().toISOString();
-  const rows = await env.DB.prepare(
-    `SELECT id, deal_id, due_at
-     FROM recommendation_instances
-     WHERE portal_id = ? AND status = 'presented' AND due_at IS NOT NULL
-       AND due_at::timestamptz < NOW()
-       ${dealId ? 'AND deal_id = ?' : ''}
-     ORDER BY due_at ASC
-     LIMIT 500`,
-  ).bind(portalId, ...(dealId ? [dealId] : [])).all<{ id: string; deal_id: string; due_at: string }>();
-  let expired = 0;
-  for (const row of rows.results ?? []) {
-    const result = await env.DB.prepare(
-      `UPDATE recommendation_instances
-       SET status = 'expired', terminal_reason = 'unaccepted_due_date_passed', expired_at = ?, updated_at = ?
-       WHERE portal_id = ? AND id = ? AND status = 'presented'`,
-    ).bind(now, now, portalId, row.id).run();
-    if (Number(result.meta?.changes ?? 0) <= 0) continue;
-    expired += 1;
-    await addRecommendationEvent(env, portalId, row.id, row.deal_id, 'expired', {
-      userId: null,
-      userEmail: null,
-    }, {
-      reason: 'unaccepted_due_date_passed',
-      dueAt: row.due_at,
-    }, now);
-  }
-  return expired;
+export async function expirePresentedRecommendations(env:Env,portalId:string,dealId?:string):Promise<void> {
+  const stamp=new Date().toISOString();
+  const clause=dealId?'AND deal_id = ?':'';
+  const params:unknown[]=[portalId,stamp,...(dealId?[dealId]:[]),stamp,stamp,stamp];
+  await env.DB.prepare(`WITH due AS (
+    SELECT id FROM recommendation_instances WHERE portal_id=? AND status = 'presented' AND due_at IS NOT NULL
+      AND due_at < ? ${clause} ORDER BY due_at,id LIMIT 500 FOR UPDATE SKIP LOCKED
+  ), changed AS (
+    UPDATE recommendation_instances r SET status='expired',expired_at=?,updated_at=?,terminal_reason='unaccepted_due_date_passed'
+    FROM due WHERE r.id=due.id AND r.status='presented' RETURNING r.id,r.portal_id,r.deal_id
+  ), events AS (
+    INSERT INTO recommendation_events(id,portal_id,recommendation_id,deal_id,event_type,metadata_json,occurred_at)
+    SELECT gen_random_uuid()::text,portal_id,id,deal_id,'expired','{"reason":"unaccepted_due_date_passed"}',? FROM changed RETURNING recommendation_id
+  ) SELECT COUNT(*) AS expired_count FROM events`).bind(...params).all();
 }
 
 function outcomeFromRow(row: RecommendationRow): RecommendationOutcome | null {
@@ -242,6 +223,10 @@ export function mapRecommendation(row: RecommendationRow, now = Date.now()): Rec
   const dueAt = iso(row.due_at);
   return {
     id: row.id,
+    updatedAt: String(row.updated_at ?? ''),
+    revision:String(row.work_revision??0),
+    remediation: row.linked_case_id ? {caseId:String(row.linked_case_id),status:String(row.linked_case_status),
+      ownerId:text(row.linked_case_owner_id,128),dueAt:iso(row.linked_case_due_at)} : null,
     dealId: row.deal_id,
     recommendationCode: row.recommendation_code,
     label: row.recommendation_label,
@@ -288,6 +273,7 @@ export function mapRecommendation(row: RecommendationRow, now = Date.now()): Rec
 
 export const RECOMMENDATION_SELECT = `
   SELECT recommendation.*,
+    linked.id AS linked_case_id,linked.status AS linked_case_status,linked.owner_id AS linked_case_owner_id,linked.due_at AS linked_case_due_at,
     snapshot.next_action_code AS current_action_code,
     outcome.evaluation_status AS outcome_evaluation_status,
     outcome.observed_progress AS outcome_observed_progress,
@@ -306,6 +292,8 @@ export const RECOMMENDATION_SELECT = `
     outcome.first_observed_at AS outcome_first_observed_at,
     outcome.last_observed_at AS outcome_last_observed_at
   FROM recommendation_instances recommendation
+  LEFT JOIN recommendation_remediation_links linkage ON linkage.portal_id=recommendation.portal_id AND linkage.recommendation_id=recommendation.id
+  LEFT JOIN remediation_cases linked ON linked.portal_id=linkage.portal_id AND linked.id=linkage.case_id AND linked.deal_id=recommendation.deal_id
   LEFT JOIN deal_decision_snapshots snapshot
     ON snapshot.portal_id = recommendation.portal_id AND snapshot.deal_id = recommendation.deal_id
   LEFT JOIN recommendation_outcomes outcome

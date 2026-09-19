@@ -17,9 +17,7 @@ jobs:
           POSTGRES_PASSWORD: dealguard-test-password
           POSTGRES_DB: dealguard_test
         ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U dealguard -d dealguard_test"
-          --health-interval 5s --health-timeout 5s --health-retries 20
+        options: --health-cmd "pg_isready -U dealguard -d dealguard_test" --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       INPUT_SHA: ${{ github.sha }}
       DATABASE_URL: postgresql://dealguard:dealguard-test-password@127.0.0.1:5432/dealguard_test
@@ -33,7 +31,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Assemble hash-verified reviewed changes as data
+      - name: Assemble and verify reviewed candidate source
         shell: bash
         run: |
           python3 - <<'PY'
@@ -41,7 +39,6 @@ jobs:
           from pathlib import Path
           def git(*args): return subprocess.check_output(['git',*args],text=True).strip()
           base='86761582ff798ef31d44f81008351567a021dded'
-          target='9db78079ef45205c041d656e8376c652522e4964'
           parts=[f'.development/closedloop-{i}.part' for i in range(7)]
           helpers=parts+['.github/workflows/development-batch.yml']
           assert git('rev-parse','HEAD')==os.environ['INPUT_SHA']
@@ -54,16 +51,15 @@ jobs:
           entries=json.loads(raw); paths=[e['path'] for e in entries]
           assert len(paths)==26 and len(set(paths))==len(paths)
           for e in entries:
-            f=e['path']; p=Path(f)
-            assert re.fullmatch(r'(database|docs|scripts|src|test|worker)/[A-Za-z0-9_./-]+',f) and '..' not in p.parts
+            p=Path(e['path'])
+            assert re.fullmatch(r'(database|docs|scripts|src|test|worker)/[A-Za-z0-9_./-]+',str(p)) and '..' not in p.parts
             assert not p.is_symlink() and all(not a.is_symlink() for a in p.parents)
             old=p.read_bytes() if p.exists() else b''
-            before=hashlib.sha1(b'blob '+str(len(old)).encode()+b'\0'+old).hexdigest() if p.exists() else None
-            assert before==e['before'], 'Wrong base: '+f
+            assert (hashlib.sha1(b'blob '+str(len(old)).encode()+b'\0'+old).hexdigest() if p.exists() else None)==e['before']
             lines=old.decode().splitlines(keepends=True); end=len(lines)
             for c in reversed(e['changes']):
               assert type(c['start']) is int and type(c['end']) is int and 0<=c['start']<=c['end']<=end
-              lines[c['start']:c['end']]=c['text'].splitlines(keepends=True); end=c['start']
+              lines[c['start']:c['end']]=c['text'].splitlines(keepends=True);end=c['start']
             p.parent.mkdir(parents=True,exist_ok=True);p.write_text(''.join(lines))
           p=Path('test/recommendation-remediation-postgres.test.mjs');text=p.read_text()
           fixes=[
@@ -73,51 +69,60 @@ jobs:
             ("VALUES($1,$2,$3,$4,'needs_attention',50,'medium',100,'fresh',$4,'readiness_next_step')","VALUES($1,$2,$3,$4,'deterministic_evidence_synthesis','watch',50,'medium',100,'fresh',$4,$4,'readiness_next_step')"),
             ("deal_id,fingerprint,recommendation_code,recommendation_label,recommendation_text,dimension,priority,owner_role,due_at,rationale,","deal_id,recommendation_fingerprint,recommendation_code,recommendation_label,recommendation_text,recommendation_dimension,priority,owner_role,due_at,rationale,methodology,status,"),
             ("baseline_assessment_at,baseline_snapshot_at,","baseline_assessment_at,baseline_snapshot_generated_at,"),
-            ("$5,'Missing next step',$6,$7,","$5,'Missing next step','deterministic_evidence_synthesis','presented',$6,$7,")
+            ("$5,'Missing next step',$6,$7,","$5,'Missing next step','deterministic_evidence_synthesis','presented',$6,$7,"),
+            ("80,'B','at_risk','[]',0,'p1',$4","80,'B','at_risk','[]',0,'p1','Pipeline','Stage',$4"),
+            ("80,'B','at_risk','[]',0,'p1','999'","80,'B','at_risk','[]',0,'p1','Pipeline','Stage','999'")
           ]
           for before,after in fixes:
             assert text.count(before)==1
             text=text.replace(before,after)
+          before='id,portal_id,deal_id,score,grade,status,issue_codes_json,issue_count,pipeline_id,owner_id,team_id,region_code,is_closed,is_won,trigger_type,assessed_at)'
+          assert text.count(before)==2
+          text=text.replace(before,before.replace('pipeline_id,owner_id','pipeline_id,pipeline_label,stage_label,owner_id'))
+          addition=""" const submitter={...user,userId:'402',userEmail:'remediator@example.test'};
+           const reviewer={...user,userId:'403',userEmail:'reviewer@example.test'};
+           for(const [actor,role] of [[submitter,'remediation_manager'],[reviewer,'reviewer']]) {
+            await first.query(`INSERT INTO enterprise_role_assignments(id,portal_id,user_id,user_email,role,pipeline_ids_json,owner_ids_json,team_ids_json,region_codes_json,created_at,updated_at)
+             VALUES($1,$2,$3,$4,$5,'["p1"]','["101","102"]','["t1"]','["r1"]',$6,$6)`,[crypto.randomUUID(),portal,actor.userId,actor.userEmail,role,at(0)]);
+           }
+          """
+          # Strip only YAML indentation from the explicitly reviewed inserted fixture.
+          addition=addition.splitlines(keepends=True)
+          addition=''.join([addition[0]]+[line[10:] for line in addition[1:]])
+          text=text.replace(' async function seed(deal',addition+' async function seed(deal')
+          text=text.replace('  await addRemediationEvidence(env,user,caseId,{',"  await assert.rejects(addRemediationEvidence(env,user,caseId,{type:'text',label:'Denied',value:'Not permitted'}),e=>e.status===403);\n  await addRemediationEvidence(env,submitter,caseId,{")
+          text=text.replace("  await reviewRemediationEvidence(env,user,caseId,'accepted','Verified');","  await assert.rejects(reviewRemediationEvidence(env,submitter,caseId,'accepted','Not permitted'),e=>e.status===403);\n  await reviewRemediationEvidence(env,reviewer,caseId,'accepted','Verified');")
           p.write_text(text)
           subprocess.run(['git','add','--',*paths],check=True)
           subprocess.run(['git','rm','--',*helpers],check=True)
-          actual=git('write-tree')
-          assert actual==target, 'Source tree mismatch: '+actual
-          subprocess.run(['git','-c','user.name=DealGuard development automation','-c','user.email=development@users.noreply.github.com','commit','-m','feat: atomic recommendation remediation and scoped work console'],check=True)
-          print('Exact reviewed product tree:',target)
+          target='476584d50a623b653c0a335326110ddaafd4a732'
+          actual=git('write-tree');assert actual==target,actual
+          subprocess.run(['git','-c','user.name=DealGuard development automation','-c','user.email=development@users.noreply.github.com','commit','-m','feat: validated recommendation remediation and scoped work console'],check=True)
           PY
-      - name: Record immutable candidate baseline
-        run: node scripts/release-baseline.mjs --target staging
-      - name: Install real Worker and UI dependencies
+      - name: Baseline and install
         run: |
+          node scripts/release-baseline.mjs --target staging
           touch .env
           npm install --ignore-scripts --silent
-          npm install --ignore-scripts --silent --prefix src/app/cards
-          npm install --ignore-scripts --silent --prefix src/app/settings
-          npm install --ignore-scripts --silent --prefix src/app/pages
-      - name: Validate builds and additive migrations
+          for p in cards settings pages; do npm install --ignore-scripts --silent --prefix "src/app/$p"; done
+      - name: Validate code and database
         run: |
           npm run release:convergence
           npm run typecheck
-          npm run typecheck --prefix src/app/cards
-          npm run typecheck --prefix src/app/settings
-          npm run typecheck --prefix src/app/pages
+          npm run typecheck:ui
           npm run db:migrate
           npm run db:migrate:check
           npm run db:validate
-      - name: Execute all regression tests
+      - name: Full regression tests
         shell: bash
         run: npm test 2>&1 | tee "$RUNNER_TEMP/batch-tests.log"
-      - name: Preserve test diagnostics
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
           name: batch-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/batch-tests.log
-          if-no-files-found: warn
           retention-days: 7
       - name: Package tested candidate
-        shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/candidate"
           git bundle create "$RUNNER_TEMP/candidate/source.bundle" HEAD "^$INPUT_SHA"
@@ -143,7 +148,7 @@ jobs:
         with:
           name: candidate-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/candidate/
-      - name: Verify and publish only a non-production candidate
+      - name: Verify and publish non-production candidate
         env:
           INPUT_SHA: ${{ github.sha }}
           PUBLISH_TOKEN: ${{ github.token }}
@@ -157,12 +162,10 @@ jobs:
           assert re.fullmatch('[0-9a-f]{40}',sha) and (p/'source.bundle').stat().st_size<2000000
           subprocess.run(['git','bundle','verify',str(p/'source.bundle')],check=True)
           subprocess.run(['git','fetch',str(p/'source.bundle'),'HEAD:refs/heads/validated-candidate'],check=True)
-          assert git('rev-parse','validated-candidate')==sha
-          assert git('rev-parse',sha+'^')==os.environ['INPUT_SHA']
-          assert git('rev-parse',sha+'^{tree}')=='9db78079ef45205c041d656e8376c652522e4964'
+          assert git('rev-parse','validated-candidate')==sha and git('rev-parse',sha+'^')==os.environ['INPUT_SHA']
+          assert git('rev-parse',sha+'^{tree}')=='476584d50a623b653c0a335326110ddaafd4a732'
           assert git('rev-list','--count',os.environ['INPUT_SHA']+'..'+sha)=='1'
           env=os.environ.copy();env['GIT_CONFIG_COUNT']='1';env['GIT_CONFIG_KEY_0']='http.https://github.com/.extraheader'
           env['GIT_CONFIG_VALUE_0']='AUTHORIZATION: basic '+base64.b64encode(('x-access-token:'+env.pop('PUBLISH_TOKEN')).encode()).decode()
           subprocess.run(['git','push','origin',sha+':refs/heads/work/dealguard-closedloop-20260919'],env=env,check=True)
-          print('Validated non-production candidate:',sha)
           PY

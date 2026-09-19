@@ -41,7 +41,7 @@ jobs:
           from pathlib import Path
           def git(*args): return subprocess.check_output(['git',*args],text=True).strip()
           base='86761582ff798ef31d44f81008351567a021dded'
-          target='d514ab3060d341aaea01c89a4e2ef3bbf05c746f'
+          target='e31ba016b95bbd66c56bfb2eacd6a29421f15da2'
           parts=[f'.development/closedloop-{i}.part' for i in range(7)]
           helpers=parts+['.github/workflows/development-batch.yml']
           assert git('rev-parse','HEAD')==os.environ['INPUT_SHA']
@@ -67,7 +67,8 @@ jobs:
             p.parent.mkdir(parents=True,exist_ok=True);p.write_text(''.join(lines))
           subprocess.run(['git','add','--',*paths],check=True)
           subprocess.run(['git','rm','--',*helpers],check=True)
-          assert git('write-tree')==target
+          actual=git('write-tree')
+          assert actual==target, 'Source tree mismatch: '+actual
           subprocess.run(['git','-c','user.name=DealGuard development automation','-c','user.email=development@users.noreply.github.com','commit','-m','feat: atomic recommendation remediation and scoped work console'],check=True)
           print('Exact reviewed product tree:',target)
           PY
@@ -144,7 +145,7 @@ jobs:
           subprocess.run(['git','fetch',str(p/'source.bundle'),'HEAD:refs/heads/validated-candidate'],check=True)
           assert git('rev-parse','validated-candidate')==sha
           assert git('rev-parse',sha+'^')==os.environ['INPUT_SHA']
-          assert git('rev-parse',sha+'^{tree}')=='d514ab3060d341aaea01c89a4e2ef3bbf05c746f'
+          assert git('rev-parse',sha+'^{tree}')=='e31ba016b95bbd66c56bfb2eacd6a29421f15da2'
           assert git('rev-list','--count',os.environ['INPUT_SHA']+'..'+sha)=='1'
           env=os.environ.copy();env['GIT_CONFIG_COUNT']='1';env['GIT_CONFIG_KEY_0']='http.https://github.com/.extraheader'
           env['GIT_CONFIG_VALUE_0']='AUTHORIZATION: basic '+base64.b64encode(('x-access-token:'+env.pop('PUBLISH_TOKEN')).encode()).decode()

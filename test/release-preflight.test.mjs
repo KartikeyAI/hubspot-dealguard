@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, rm } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
+import { releaseVersionPolicy } from '../scripts/release-baseline.mjs';
 
 const { version } = JSON.parse(await readFile('package.json', 'utf8'));
 const completeEnvironment = {
@@ -18,8 +19,21 @@ test('release preflight validates direct Neon configuration and renders no place
   const wrangler = await readFile('.release/test-wrangler.toml', 'utf8'); assert.match(wrangler, /main = "\.\.\/worker\/src\/index\.ts"/); assert.match(wrangler, /APP_BASE_URL = "https:\/\/dealguard-api-staging\.rokad\.co"/); assert.match(wrangler, /HUBSPOT_APP_ID = "123456"/); assert.match(wrangler, /TIGRIS_BUCKET = "dealguard-staging"/); assert.match(wrangler, /workers_dev = true/); assert.doesNotMatch(wrangler, /REPLACE_WITH_|d1_databases|D1_DATABASE_ID|hyperdrive/i);
 });
 
-test('release preflight requires live Dodo mode and production URL for production', async () => {
-  await rm('.release', { recursive: true, force: true }); const productionBase = { RELEASE_TARGET: 'production', APP_BASE_URL: 'https://dealguard-api.rokad.co' }; const rejected = runPreflight({ ...productionBase, DODO_ENVIRONMENT: 'test' }, ['--no-render']); assert.notEqual(rejected.status, 0); const rejectedReport = JSON.parse(await readFile('.release/test-preflight.json', 'utf8')); assert.ok(rejectedReport.checks.some((item) => item.id === 'env.DODO_ENVIRONMENT.target' && !item.ok)); const accepted = runPreflight({ ...productionBase, DODO_ENVIRONMENT: 'live' }, ['--no-render']); assert.equal(accepted.status, 0, `${accepted.stdout}\n${accepted.stderr}`);
+test('production preflight requires live Dodo mode and a stable release independently', async () => {
+  await rm('.release', { recursive: true, force: true });
+  const productionBase = { RELEASE_TARGET: 'production', APP_BASE_URL: 'https://dealguard-api.rokad.co' };
+  const rejected = runPreflight({ ...productionBase, DODO_ENVIRONMENT: 'test' }, ['--no-render']);
+  assert.notEqual(rejected.status, 0);
+  const rejectedReport = JSON.parse(await readFile('.release/test-preflight.json', 'utf8'));
+  assert.ok(rejectedReport.checks.some((item) => item.id === 'env.DODO_ENVIRONMENT.target' && !item.ok));
+
+  const live = runPreflight({ ...productionBase, DODO_ENVIRONMENT: 'live' }, ['--no-render']);
+  const liveReport = JSON.parse(await readFile('.release/test-preflight.json', 'utf8'));
+  assert.ok(liveReport.checks.some((item) => item.id === 'env.DODO_ENVIRONMENT.target' && item.ok));
+  const eligible = releaseVersionPolicy(version, 'production').ok;
+  assert.equal(live.status, eligible ? 0 : 1, `${live.stdout}\n${live.stderr}`);
+  assert.deepEqual(liveReport.checks.filter((item) => !item.ok).map((item) => item.id),
+    eligible ? [] : ['package.version.production']);
 });
 
 test('release preflight reports invalid environment without crashing or rendering config', async () => {

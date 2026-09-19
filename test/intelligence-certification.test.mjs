@@ -13,7 +13,14 @@ test('complete, current, identity-bound intelligence evidence certifies', () => 
   const expected = context(version);
   assert.deepEqual(intelligenceEvidenceFailures(intelligenceEvidence(expected), expected), []);
   assert.deepEqual(deploymentEvidenceFailures(deploymentRecord(version)), []);
-  assert.deepEqual(deploymentEvidenceFailures(deploymentRecord(version, 'production')), []);
+  assert.deepEqual(deploymentEvidenceFailures(deploymentRecord('3.0.0', 'production')), []);
+});
+
+test('complete evidence cannot certify alpha, beta or rc releases for production', () => {
+  for (const channel of ['alpha', 'beta', 'rc']) {
+    assert.deepEqual(deploymentEvidenceFailures(deploymentRecord(`3.0.0-${channel}.1`, 'production')),
+      ['production requires stable version and full acceptance']);
+  }
 });
 
 for (const [name, mutate] of [

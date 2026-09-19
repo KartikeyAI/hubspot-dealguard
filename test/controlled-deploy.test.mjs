@@ -7,11 +7,13 @@ import { join, resolve } from 'node:path';
 import { deploymentRecord as validRecord, workflowMetadata } from './intelligence-evidence-fixtures.mjs';
 const { version } = JSON.parse(await readFile('package.json', 'utf8'));
 
-async function fixture(t, target = 'staging') {
+async function fixture(t, target = 'staging', releaseVersion = version) {
   const root = await mkdtemp(join(tmpdir(), 'dg-deploy-')); t.after(() => rm(root, { recursive: true, force: true }));
-  const record = validRecord(version, target);
+  const record = validRecord(releaseVersion, target);
   for (const directory of ['acceptance', 'intelligence', 'download/nested']) await mkdir(join(root, directory), { recursive: true });
   async function put(name, data) { await writeFile(join(root,name),JSON.stringify(data)); }
+  // The CLI reads its package identity from this isolated fixture, not the development checkout.
+  await put('package.json', { version: releaseVersion });
   await put('preflight.json',{summary:record.preflight}); await put('health.json',record.health);
   await put('smoke.json',record.smoke); await put('baseline.json',record.baseline);
   await put('acceptance/result.json',record.acceptance); await put('intelligence/result.json',record.intelligence);
@@ -24,10 +26,10 @@ async function fixture(t, target = 'staging') {
     '--output',join(root,'deployment-record.json'),'--preflight',join(root,'preflight.json'),
     '--health',join(root,'health.json'),'--smoke',join(root,'smoke.json'),'--baseline',join(root,'baseline.json'),
     '--acceptance-dir',join(root,'acceptance'),'--intelligence-dir',join(root,'intelligence')],
-  { encoding:'utf8',env:{...env,...overrides},timeout:10_000 });
+  { cwd:root,encoding:'utf8',env:{...env,...overrides},timeout:10_000 });
   const promote = (overrides = {}) => spawnSync(process.execPath, [resolve('scripts/verify-staging-promotion.mjs'),
     '--input',join(root,'download'),'--run-metadata',join(root,'staging-run.json')],
-  { encoding:'utf8',env:{...env,...overrides},timeout:10_000 });
+  { cwd:root,encoding:'utf8',env:{...env,...overrides},timeout:10_000 });
   return { root,record,put,run,promote };
 }
 
@@ -56,9 +58,19 @@ test('deployment evidence fails closed when public smoke is missing, failed or f
 });
 
 test('production deployment requires full standard and intelligence acceptance', async (t) => {
-  const f=await fixture(t,'production'); assert.equal(f.run().status,0);
+  const f=await fixture(t,'production','3.0.0'); const complete=f.run(); assert.equal(complete.status,0,complete.stderr);
   await f.put('acceptance/result.json',{...f.record.acceptance,profile:'read-only'});
   const result=f.run(); assert.notEqual(result.status,0); assert.match(result.stderr,/production requires stable version and full acceptance/);
+});
+
+test('production deployment rejects an alpha even with complete acceptance evidence', async (t) => {
+  const f = await fixture(t, 'production', '3.0.0-alpha.1');
+  const result = f.run();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /production requires stable version and full acceptance/);
+  const record = JSON.parse(await readFile(join(f.root, 'deployment-record.json'), 'utf8'));
+  assert.equal(record.result, 'failed');
+  assert.equal(record.promotable, false);
 });
 
 test('production promotion requires exact release, fresh intelligence and trusted run metadata', async (t) => {

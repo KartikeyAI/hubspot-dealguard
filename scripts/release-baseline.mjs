@@ -105,6 +105,9 @@ export async function collectReleaseBaseline({ root = process.cwd(), target = 's
   if (requiredScopes.some((scope) => optionalScopes.includes(scope))) throw new Error('Required and optional scopes overlap.');
   const packages = paths.filter((path) => path === 'package.json'
     || /^src\/app\/[^/]+\/package\.json$/.test(path)).map((path) => ({ ...digest(path), version: json(path).version ?? null }));
+  if (packages.some((entry) => entry.version !== packageJson.version)) {
+    throw new Error('Every HubSpot UI package version must match the root and Worker release identity.');
+  }
   const configuration = ['package.json', 'worker/src/version.ts', 'hsproject.json', 'wrangler.toml'].map(digest);
 
   return {

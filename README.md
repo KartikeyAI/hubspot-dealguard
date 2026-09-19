@@ -1,5 +1,7 @@
 # DealGuard by Rokad
 
+Stable 3.0 production approval work is tracked in [STABLE_3_0_SIGNOFF.md](docs/STABLE_3_0_SIGNOFF.md). The current alpha is not production-approved; the independent evidence gate does not change the product version.
+
 **Current development version: `3.0.0-alpha.1`.** This prerelease consolidates the published PR #46 source; it is not production-ready. The separately preserved 81-file intelligence candidate is not included. See [release scope and outstanding gates](docs/RELEASE_3_0_ALPHA_1.md).
 
 DealGuard is an enterprise HubSpot revenue-governance application that detects incomplete, stale, and risky deals; governs policy lifecycle; makes readiness signals native inside HubSpot; manages remediation SLAs; delivers operational events reliably; and provides auditable commercial, compliance, and reliability controls.

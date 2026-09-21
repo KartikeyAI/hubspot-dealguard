@@ -92,7 +92,7 @@ export async function readEvidenceFile(root, path, maximum = 1_048_576) {
   } finally { await handle.close(); }
 }
 
-function reportFailures(report, gate, expected, now, approvedAt) {
+export function reportFailures(report, gate, expected, now, approvedAt) {
   const errors = [];
   const require = (condition, code) => { if (!condition) errors.push(`${gate}: ${code}`); };
   require(object(report) && report.schemaVersion === 1 && report.gate === gate, 'report identity invalid');

@@ -17,6 +17,7 @@
     "release:preflight": "node scripts/release-preflight.mjs",
     "release:bundle": "node scripts/release-bundle.mjs",
     "release:record": "node scripts/deployment-record.mjs",
+    "release:evidence": "node scripts/prepare-signoff.mjs",
     "release:signoff": "node scripts/production-signoff.mjs",
     "release:verify-staging": "node scripts/verify-staging-promotion.mjs",
     "dev:worker": "wrangler dev",

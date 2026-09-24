@@ -25,6 +25,10 @@ on:
         description: Successful full-profile Controlled deploy staging run ID; required for production
         required: false
         type: string
+      signoff_run_id:
+        description: Run containing independently signed production evidence; required for production
+        required: false
+        type: string
       acceptance_profile:
         description: Signed post-deployment acceptance profile; production requires full
         required: true
@@ -86,6 +90,7 @@ jobs:
       RELEASE_TARGET: ${{ inputs.target }}
       RELEASE_SHA: ${{ inputs.release_sha }}
       RELEASE_INCLUDE_HUBSPOT_UPLOAD: 'false'
+      SIGNOFF_RUN_ID: ${{ inputs.signoff_run_id }}
       STAGING_RUN_ID: ${{ inputs.staging_run_id }}
       PRODUCTION_CONFIRMATION: ${{ inputs.production_confirmation }}
       BACKUP_REFERENCE: ${{ inputs.backup_reference }}
@@ -151,6 +156,7 @@ jobs:
             [[ "$ACCEPTANCE_TEST_DEAL_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'Full acceptance requires a dedicated test deal'; exit 1; }
           fi
           if [ "$RELEASE_TARGET" = production ]; then
+            [[ "$SIGNOFF_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'signoff_run_id is required for production'; exit 1; }
             [[ "$STAGING_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'staging_run_id must contain only digits'; exit 1; }
             [ -n "$STAGING_RUN_ID" ] || { echo 'staging_run_id is required for production promotion'; exit 1; }
             [ "$ACCEPTANCE_PROFILE" = full ] || { echo 'production requires the full acceptance profile'; exit 1; }
@@ -203,6 +209,22 @@ jobs:
 
       - name: Verify encrypted pre-change backup
         run: npm run storage:backup:head -- "$BACKUP_REFERENCE" "$BACKUP_SHA256"
+
+      - name: Download independent production sign-off evidence
+        if: inputs.target == 'production'
+        uses: actions/download-artifact@v4
+        with:
+          name: dealguard-production-signoff-${{ inputs.release_sha }}
+          path: .release/signoff-evidence
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.signoff_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Verify independent production approvals before mutations
+        if: inputs.target == 'production'
+        env:
+          PRODUCTION_SIGNOFF_TRUST_JSON: ${{ vars.PRODUCTION_SIGNOFF_TRUST_JSON }}
+        run: npm run release:signoff -- --input .release/signoff-evidence
 
       - name: Apply reviewed PostgreSQL migrations
         run: npm run db:migrate
@@ -284,6 +306,7 @@ jobs:
           path: |
             .release/release-baseline.json
             .release/deployment-record.json
+            .release/production-signoff-receipt.json
             .release/preflight.json
             .release/health.json
             .release/production-smoke/

@@ -1,7 +1,6 @@
 import { enrichStoredAssessmentForPortal } from './assessment-service.js';
-import { operationalPermissionsForRole } from './authorization.js';
+import { billingAccessFallback } from './billing-delivery-status.js';
 import { AppError } from './errors.js';
-import { governanceContext } from './governance.js';
 import { json } from './http.js';
 import { route as routeV9 } from './routes-v9.js';
 import { validateHubSpotRequest } from './signature.js';
@@ -27,17 +26,7 @@ function redactedPayload(pathname: string): Record<string, unknown> | null {
 
 async function commercialAccessFallback(request: Request, env: Env): Promise<Record<string, unknown>> {
   const identity = await validateHubSpotRequest(request, env);
-  const governance = await governanceContext(env, identity);
-  const operational = operationalPermissionsForRole(governance.role);
-  return {
-    role: governance.role,
-    permissions: ['billing.view', ...(operational.includes('billing.manage') ? ['billing.manage'] : [])],
-    scope: { pipelineIds: [], teamIds: [], ownerIds: [], regionCodes: [] },
-    bootstrap: governance.installerBootstrap,
-    entitled: false,
-    redacted: true,
-    reason: 'enterprise_subscription_required',
-  };
+  return billingAccessFallback(env, identity);
 }
 
 async function enrichedCachedAssessment(request: Request, env: Env, dealId: string): Promise<Response | null> {

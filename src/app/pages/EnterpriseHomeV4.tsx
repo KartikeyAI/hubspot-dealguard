@@ -1,3 +1,4 @@
+import { BillingDeliveryPanel } from './BillingDeliveryPanel';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
@@ -9,11 +10,12 @@ import {
   Link,
   LoadingSpinner,
   StatusTag,
+  Select,
   Text,
   hubspot,
 } from '@hubspot/ui-extensions';
 import { ManagerDecisionQueuePanel } from './ManagerDecisionQueuePanel';
-import { PLAN_COMPARISON, productPlanLabel, safeProductError, subscriptionLabel } from './product-ui';
+import { billingManagementAvailable, PLAN_COMPARISON, productPlanLabel, safeProductError, subscriptionLabel } from './product-ui';
 
 const API_BASE = 'https://dealguard-api.rokad.co/api/v1';
 type Json = Record<string, any>;
@@ -211,6 +213,7 @@ function signed(value: number): string {
 const DealGuardHome = () => {
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
+  const [checkoutInterval, setCheckoutInterval] = useState<'month' | 'year'>('year');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard>({});
@@ -280,6 +283,7 @@ const DealGuardHome = () => {
   }
 
   const plan = productPlanLabel(billing.tier);
+  const canManageBilling = billingManagementAvailable(access);
   const healthy = ['healthy', 'ok'].includes(String(overview?.health?.status ?? 'healthy'));
   const readyPercent = dashboard.totalDeals
     ? Math.round((dashboard.readyDeals ?? 0) / dashboard.totalDeals * 100)
@@ -550,15 +554,18 @@ const DealGuardHome = () => {
         <Heading>Plan & subscription</Heading>
         <StatusTag variant={billing.status === 'active' ? 'success' : 'warning'}>{subscriptionLabel(billing.status)}</StatusTag>
         <Text>{plan} plan</Text>
+        {canManageBilling && billing.tier !== 'enterprise' ? <Select name="checkout-interval" label="Billing interval" value={checkoutInterval}
+          options={[{ label: 'Monthly', value: 'month' }, { label: 'Annually', value: 'year' }]}
+          onChange={value => setCheckoutInterval(value === 'month' ? 'month' : 'year')} /> : null}
         <Flex direction="row" gap="small">
           {billing.tier !== 'enterprise' && <Button
-            disabled={working || !billing.checkoutConfigured}
+            disabled={working || !billing.checkoutConfigured || !canManageBilling}
             onClick={() => void action(async () => {
               const result = await request('/billing/checkout', {
                 method: 'POST',
                 body: {
                   tier: billing.tier === 'free' ? 'growth' : 'enterprise',
-                  interval: 'year',
+                  interval: checkoutInterval,
                   usageMode: 'capped',
                   overageEnabled: false,
                 },
@@ -568,7 +575,7 @@ const DealGuardHome = () => {
           >{billing.tier === 'free' ? 'Upgrade to Growth' : 'Explore Enterprise'}</Button>}
           <Button
             variant="secondary"
-            disabled={working || !billing.portalConfigured}
+            disabled={working || !billing.portalConfigured || !canManageBilling}
             onClick={() => void action(async () => {
               const result = await request('/billing/portal', { method: 'POST', body: {} });
               setPortalUrl(result.url);
@@ -579,6 +586,8 @@ const DealGuardHome = () => {
         {portalUrl && <Link href={{ url: portalUrl, external: true }}>Open subscription management</Link>}
       </Card>
     </Flex>
+
+    <BillingDeliveryPanel enabled={canManageBilling} />
 
     <Flex direction="column" gap="small">
       <Heading>Priority readiness gaps</Heading>

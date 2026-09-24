@@ -31,11 +31,14 @@ test('enterprise App Home read fallbacks are redacted and GET-only', async () =>
 test('non-Enterprise portals receive a safe billing and upgrade shell', async () => {
   const router = await readFile('worker/src/routes-v10.ts', 'utf8');
   assert.match(router, /\/api\/v1\/enterprise\/access/);
-  assert.match(router, /enterprise_subscription_required/);
-  assert.match(router, /operationalPermissionsForRole/);
-  assert.match(router, /'billing\.view'/);
-  assert.match(router, /operational\.includes\('billing\.manage'\)/);
-  assert.match(router, /entitled: false/);
+  const billingAccess = await readFile('worker/src/billing-delivery-status.ts', 'utf8');
+  assert.match(router, /billingAccessFallback\(env, identity\)/);
+  assert.match(billingAccess, /enterprise_subscription_required/);
+  assert.match(billingAccess, /enterpriseAccessContext\(env, identity\)/);
+  assert.match(billingAccess, /'billing\.view'/);
+  assert.match(billingAccess, /permissionMatches\(context.permissions, 'billing\.manage'\)/);
+  assert.match(billingAccess, /scope: context.scope/);
+  assert.match(billingAccess, /entitled: false/);
 });
 
 test('permission fallback does not weaken enterprise mutations', async () => {

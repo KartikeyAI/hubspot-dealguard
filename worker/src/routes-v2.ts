@@ -1,3 +1,4 @@
+import { requireBillingManagement } from './billing-delivery-status.js';
 import { assessmentFreshness } from './evidence-freshness.js';
 import { authorizeRecordedDeal, authorizeFreshDeal } from './record-access.js';
 import { saveAssessmentContext } from './assessment-context.js';
@@ -242,7 +243,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   }
   if (url.pathname === '/api/v1/billing/checkout') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
-    await requireOperationalPermission(env, identity, 'billing.manage');
+    await requireBillingManagement(env, identity);
     const body = await readJson<{ tier?: CommercialTier; interval?: 'month' | 'year'; usageMode?: UsageMode; overageEnabled?: boolean }>(request);
     return json(await createCheckoutSession(
       env,
@@ -257,7 +258,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   }
   if (url.pathname === '/api/v1/billing/portal') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
-    await requireOperationalPermission(env, identity, 'billing.manage');
+    await requireBillingManagement(env, identity);
     return json(await createCustomerPortalSession(env, identity));
   }
 

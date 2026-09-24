@@ -1,6 +1,5 @@
 import { sha256Hex } from './crypto.js';
 import { AppError } from './errors.js';
-import { Repository } from './repository.js';
 import type { CommercialTier, SubscriptionStatus, UsageMode, BillingInterval } from './billing.js';
 import type { Env, PlanId } from './types.js';
 
@@ -159,13 +158,26 @@ function entitled(status: SubscriptionStatus, graceEndsAt: string | null): boole
 async function markEvent(
   env: Env,
   webhookId: string,
-  status: 'processed' | 'failed' | 'ignored',
+  payloadHash: string,
+  status: 'failed' | 'ignored',
   reason: string | null = null,
+  audit?: { portalId: string; metadata: Record<string, unknown> },
 ): Promise<void> {
-  await env.DB.prepare(
-    `UPDATE billing_events SET status = ?, error_message = ?, processed_at = ?
-     WHERE provider = 'dodo' AND provider_event_id = ? AND status NOT IN ('processed', 'ignored')`,
-  ).bind(status, reason, new Date().toISOString(), webhookId).run();
+  const now = new Date().toISOString();
+  const transition = `UPDATE billing_events SET status = ?, error_message = ?, processed_at = ?
+    WHERE provider = 'dodo' AND provider_event_id = ? AND payload_hash = ?
+      AND status IN ('received', 'failed') RETURNING provider_event_id`;
+  if (audit) {
+    // Only the delivery that actually changes the receipt may record its disposition.
+    // RETURNING links both writes in one statement, so an audit error rolls back both.
+    await env.DB.prepare(`WITH transitioned_receipt AS (${transition})
+      INSERT INTO audit_events (id, portal_id, action, metadata_json, created_at)
+      SELECT ?, ?, 'billing.stale_event_ignored', ?, ? FROM transitioned_receipt`)
+      .bind(status, reason, now, webhookId, payloadHash, crypto.randomUUID(),
+        audit.portalId, JSON.stringify(audit.metadata), now).run();
+    return;
+  }
+  await env.DB.prepare(transition).bind(status, reason, now, webhookId, payloadHash).run();
 }
 
 async function correlatePortal(
@@ -317,7 +329,7 @@ export async function processDodoWebhookOrdered(env: Env, rawBody: string, webho
   if (receipt?.payload_hash !== payloadHash) throw new AppError(409, 'billing_event_payload_changed', 'A newer delivery is being processed; retry against the current provider payload.');
 
   if (!isSubscriptionDodoEvent(eventType)) {
-    await markEvent(env, webhookId, 'ignored', 'non_subscription_event');
+    await markEvent(env, webhookId, payloadHash, 'ignored', 'non_subscription_event');
     return;
   }
 
@@ -337,7 +349,7 @@ export async function processDodoWebhookOrdered(env: Env, rawBody: string, webho
       customerId,
     );
     if (!portalId) {
-      await markEvent(env, webhookId, 'ignored', 'tenant_correlation_missing');
+      await markEvent(env, webhookId, payloadHash, 'ignored', 'tenant_correlation_missing');
       return;
     }
 
@@ -345,7 +357,7 @@ export async function processDodoWebhookOrdered(env: Env, rawBody: string, webho
       const current = await env.DB.prepare(`SELECT s.*, md5(row_to_json(s)::text) AS state_token FROM subscriptions_v2 s WHERE portal_id = ?`)
         .bind(portalId).first<CurrentSubscription>();
       if (current?.provider === 'manual') {
-        await markEvent(env, webhookId, 'ignored', 'manual_contract_authoritative'); return;
+        await markEvent(env, webhookId, payloadHash, 'ignored', 'manual_contract_authoritative'); return;
       }
       if (current?.provider_event_at && !iso(current.provider_event_at)) throw new AppError(409, 'billing_clock_invalid', 'Stored provider clock requires reconciliation.');
       if (!subscriptionId || !customerId) throw new AppError(400, 'billing_provider_identity_missing', 'Subscription and customer identities are required.');
@@ -357,12 +369,13 @@ export async function processDodoWebhookOrdered(env: Env, rawBody: string, webho
         && !(['cancelled', 'expired', 'failed'].includes(current.status)
           && (status === 'active' || status === 'trialing') && current.provider_event_at
           && Date.parse(eventAt) > Date.parse(current.provider_event_at))) {
-        await markEvent(env, webhookId, 'ignored', 'different_subscription_requires_reconciliation'); return;
+        await markEvent(env, webhookId, payloadHash, 'ignored', 'different_subscription_requires_reconciliation'); return;
       }
       if (shouldIgnoreStaleDodoEvent(current?.provider_event_at ?? null, current?.status ?? null, eventAt, status)) {
-        await markEvent(env, webhookId, 'ignored', 'stale_subscription_event');
-        await new Repository(env).audit(portalId, null, null, 'billing.stale_event_ignored', {
-          provider: 'dodo', webhookId, eventType, eventAt, currentEventAt: current?.provider_event_at ?? null,
+        await markEvent(env, webhookId, payloadHash, 'ignored', 'stale_subscription_event', {
+          portalId,
+          metadata: { provider: 'dodo', webhookId, eventType, eventAt,
+            currentEventAt: current?.provider_event_at ?? null },
         });
         return;
       }
@@ -422,6 +435,7 @@ export async function processDodoWebhookOrdered(env: Env, rawBody: string, webho
     await markEvent(
       env,
       webhookId,
+      payloadHash,
       'failed',
       error instanceof AppError ? error.code : 'billing_processing_failed',
     );

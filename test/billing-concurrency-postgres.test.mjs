@@ -153,6 +153,84 @@ test('Dodo subscription processing serializes accepted state and rejects unsafe 
     assert.equal(Number(count.n),1);
     assert.equal((await state()).last_provider_event_id,id);
   });
+  await t.test('a delayed duplicate cannot append an ignored audit after another delivery commits',async()=>{
+    await reset(); const id=eventId(), raw=body(), ready=latch(), release=latch(); let paused=false;
+    const slow=intercept(env,async(sql,result,method)=>{
+      if(!paused && method==='first' && /SELECT status, payload_hash FROM billing_events/.test(sql)
+        && result?.status==='received') { paused=true; ready.resolve(); await release.promise; }
+    });
+    const delayed=send(raw,slow,id); await ready.promise;
+    try { await send(raw,{...f.envFor(f.second),...cfg},id); } finally { release.resolve(); }
+    await delayed;
+    const audits=(await f.first.query(`SELECT action FROM audit_events
+      WHERE portal_id=$1 AND metadata_json::jsonb->>'webhookId'=$2 ORDER BY action`,[f.portal,id])).rows;
+    assert.deepEqual(audits,[{action:'billing.subscription_updated'}]);
+    assert.equal((await f.first.query('SELECT status FROM billing_events WHERE provider_event_id=$1',[id])).rows[0].status,'processed');
+  });
+  await t.test('concurrent stale deliveries produce one ignored transition and one audit',async()=>{
+    await reset(); await send(body(f.at(30)));
+    const id=eventId(), raw=body(f.at(10)), ready=latch(), release=latch(); let paused=false;
+    const slow=intercept(env,async(sql,result,method)=>{
+      if(!paused && method==='first' && /SELECT status, payload_hash FROM billing_events/.test(sql)
+        && result?.status==='received') { paused=true; ready.resolve(); await release.promise; }
+    });
+    const delayed=send(raw,slow,id); await ready.promise;
+    try { await send(raw,{...f.envFor(f.second),...cfg},id); } finally { release.resolve(); }
+    await delayed;
+    const audits=(await f.first.query(`SELECT action FROM audit_events
+      WHERE portal_id=$1 AND metadata_json::jsonb->>'webhookId'=$2`,[f.portal,id])).rows;
+    assert.deepEqual(audits,[{action:'billing.stale_event_ignored'}]);
+    assert.equal((await f.first.query('SELECT status FROM billing_events WHERE provider_event_id=$1',[id])).rows[0].status,'ignored');
+  });
+  await t.test('stale worker cannot ignore a receipt replaced by a refreshed retry payload',async()=>{
+    await reset(); await send(body(f.at(30)));
+    const id=eventId(), old=body(f.at(10)), fresh=body(f.at(40),'active',{product_id:'enterprise-year'});
+    const {createHash}=await import('node:crypto');
+    const freshHash=createHash('sha256').update(fresh).digest('hex');
+    const ready=latch(),release=latch();let paused=false;
+    const slow=intercept(env,async(sql,_result,method)=>{
+      if(!paused && method==='first' && /AS state_token/.test(sql)){paused=true;ready.resolve();await release.promise;}
+    });
+    const delayed=send(old,slow,id); await ready.promise;
+    try { await f.second.query(`UPDATE billing_events SET payload_hash=$1 WHERE provider='dodo' AND provider_event_id=$2`,[freshHash,id]); }
+    finally { release.resolve(); }
+    await delayed;
+    const receipt=(await f.first.query('SELECT status,payload_hash FROM billing_events WHERE provider_event_id=$1',[id])).rows[0];
+    assert.deepEqual(receipt,{status:'received',payload_hash:freshHash});
+    assert.equal(Number((await f.first.query(`SELECT COUNT(*) n FROM audit_events WHERE portal_id=$1 AND metadata_json::jsonb->>'webhookId'=$2`,[f.portal,id])).rows[0].n),0);
+    await send(fresh,env,id);assert.equal((await state()).tier,'enterprise');
+  });
+  await t.test('failed older payload cannot mark a refreshed receipt failed',async()=>{
+    await reset(); await send(body(f.at(10)));
+    const id=eventId(),old=body(f.at(30),'active',{product_id:'unmapped'}),fresh=body(f.at(40));
+    const {createHash}=await import('node:crypto'); const hash=createHash('sha256').update(fresh).digest('hex');
+    const ready=latch(),release=latch();let paused=false;
+    const slow=intercept(env,async(sql,_result,method)=>{
+      if(!paused && method==='first' && /AS state_token/.test(sql)){paused=true;ready.resolve();await release.promise;}
+    });
+    const delayed=send(old,slow,id).then(()=>null,e=>e); await ready.promise;
+    try { await f.second.query(`UPDATE billing_events SET payload_hash=$1 WHERE provider='dodo' AND provider_event_id=$2`,[hash,id]); }
+    finally { release.resolve(); }
+    assert.equal((await delayed)?.code,'billing_product_unmapped');
+    assert.deepEqual((await f.first.query('SELECT status,payload_hash FROM billing_events WHERE provider_event_id=$1',[id])).rows[0],{status:'received',payload_hash:hash});
+    await send(fresh,env,id);assert.equal((await state()).last_provider_event_id,id);
+  });
+  await t.test('a stale-audit insertion failure cannot commit the ignored receipt',async()=>{
+    await reset();await send(body(f.at(30)));const id=eventId(),raw=body(f.at(10));
+    const trigger='reject_stale_audit_'+f.portal;
+    await f.first.query(`CREATE FUNCTION pg_temp.${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.portal_id='${f.portal}' AND NEW.action='billing.stale_event_ignored' THEN
+        RAISE EXCEPTION 'synthetic audit storage failure'; END IF; RETURN NEW; END; $$`);
+    await f.first.query(`CREATE TRIGGER ${trigger} BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION pg_temp.${trigger}()`);
+    try {
+      await assert.rejects(send(raw,env,id),/synthetic audit storage failure/);
+      assert.equal((await f.first.query('SELECT status FROM billing_events WHERE provider_event_id=$1',[id])).rows[0].status,'failed');
+      assert.equal(Number((await f.first.query(`SELECT COUNT(*) n FROM audit_events WHERE portal_id=$1 AND metadata_json::jsonb->>'webhookId'=$2`,[f.portal,id])).rows[0].n),0);
+    } finally { await f.first.query(`DROP TRIGGER ${trigger} ON audit_events`); }
+    await send(raw,env,id);
+    assert.equal((await f.first.query('SELECT status FROM billing_events WHERE provider_event_id=$1',[id])).rows[0].status,'ignored');
+    assert.equal(Number((await f.first.query(`SELECT COUNT(*) n FROM audit_events WHERE portal_id=$1 AND metadata_json::jsonb->>'webhookId'=$2`,[f.portal,id])).rows[0].n),1);
+  });
   await t.test('a stale preread cannot reactivate a concurrently cancelled subscription',async()=>{
     await reset();await send(body(f.at(10)));
     const read=latch(),release=latch();let paused=false;
@@ -282,7 +360,8 @@ test('usage provider transport preserves durable identity and numeric aggregatio
     assert.equal(new Set(ids).size,2);
   });
   await t.test('an unacknowledged response does not mark usage reported',async t=>{
-    await setup();mock(t,()=>Response.json({ingested_count:0}));
+    await setup();t.mock.method(globalThis,'fetch',async (_url, init)=> init.method==='GET'
+      ? new Response('',{status:404}) : Response.json({ingested_count:0}));
     await assert.rejects(recordUsageAtomic(env,f.portal,'event_overage',1,'unacknowledged'),{code:'dodo_usage_not_ingested'});
     assert.equal((await read())[0].status,'pending');
   });
@@ -291,6 +370,7 @@ test('usage provider transport preserves durable identity and numeric aggregatio
     await assert.rejects(recordUsageAtomic(env,f.portal,'event_overage',1,'expired'));
     await f.first.query("UPDATE subscriptions_v2 SET status='expired' WHERE portal_id=$1",[f.portal]);
     const spy=globalThis.fetch.mock;const before=spy.callCount();await retryAtomicUsageReports(env);
-    assert.equal(spy.callCount(),before);assert.equal((await read())[0].status,'pending');
+    assert.equal(spy.callCount(),before);assert.equal((await read())[0].status,'failed');
+    assert.equal((await read())[0].error_message,'usage_delivery_authorization_changed');
   });
 });

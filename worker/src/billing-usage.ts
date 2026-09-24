@@ -1,15 +1,7 @@
 import { getBillingStatus, type BillableMetric } from './billing.js';
 import { AppError } from './errors.js';
 import type { Env } from './types.js';
-
-interface DodoUsageEnv extends Env {
-  DODO_API_KEY?: string;
-  DODO_ENVIRONMENT?: 'test' | 'live';
-  DODO_AI_CREDIT_EVENT_NAME?: string;
-  DODO_ACTIVE_DEAL_EVENT_NAME?: string;
-  DODO_EVENT_OVERAGE_EVENT_NAME?: string;
-  DODO_RETENTION_EVENT_NAME?: string;
-}
+import { DELIVERY_CONTEXT_KEY, deliverUsageEvent, usageDeliveryContext, usageProviderMetadata } from './billing-usage-delivery.js';
 
 export type UsageAggregation = 'sum' | 'max';
 const AGGREGATIONS: Record<BillableMetric, UsageAggregation> = {
@@ -27,111 +19,12 @@ export function localUsageIncrement(metric: BillableMetric, current: number, qua
   return usageAggregation(metric) === 'max' ? Math.max(0, quantity - current) : quantity;
 }
 
-function dodoBase(env: Env): string {
-  return (env as DodoUsageEnv).DODO_ENVIRONMENT === 'live'
-    ? 'https://live.dodopayments.com'
-    : 'https://test.dodopayments.com';
-}
-
-function providerEventName(env: Env, metric: BillableMetric): string {
-  const cfg = env as DodoUsageEnv;
-  const names: Record<BillableMetric, string | undefined> = {
-    ai_credit: cfg.DODO_AI_CREDIT_EVENT_NAME,
-    active_deal_overage: cfg.DODO_ACTIVE_DEAL_EVENT_NAME,
-    event_overage: cfg.DODO_EVENT_OVERAGE_EVENT_NAME,
-    retention_gb_month: cfg.DODO_RETENTION_EVENT_NAME,
-  };
-  return names[metric] ?? `dealguard_${metric}`;
-}
-
 function periodStart(value: string | null): string {
   if (value && Number.isFinite(Date.parse(value))) return new Date(value).toISOString();
   const date = new Date();
   date.setUTCDate(1);
   date.setUTCHours(0, 0, 0, 0);
   return date.toISOString();
-}
-
-function metadataValues(
-  portalId: string,
-  quantity: number,
-  metadata: Record<string, string | number | boolean | null>,
-): Record<string, string | number | boolean> {
-  const output: Record<string, string | number | boolean> = {
-    portal_id: portalId,
-    quantity,
-  };
-  for (const [key, value] of Object.entries(metadata)) {
-    if (value !== null && key !== 'portal_id' && key !== 'quantity') output[key.slice(0, 100)] = typeof value === 'string' ? value.slice(0, 500) : value;
-  }
-  return output;
-}
-
-function providerQuantity(
-  metric: BillableMetric,
-  storedQuantity: number,
-  metadata: Record<string, string | number | boolean | null>,
-): number {
-  if (usageAggregation(metric) === 'sum') return storedQuantity;
-  const value = Number(metadata.provider_quantity);
-  if (!Number.isFinite(value) || value < 0) {
-    throw new AppError(500, 'gauge_usage_value_missing', `Gauge usage for ${metric} is missing its absolute provider quantity.`);
-  }
-  return value;
-}
-
-async function reportEvent(
-  env: Env,
-  row: {
-    id: string;
-    portalId: string;
-    metric: BillableMetric;
-    quantity: number;
-    idempotencyKey: string;
-    occurredAt: string;
-    metadata: Record<string, string | number | boolean | null>;
-  },
-): Promise<boolean> {
-  const billing = await getBillingStatus(env, row.portalId);
-  const cfg = env as DodoUsageEnv;
-  if (!billing.entitled || billing.provider !== 'dodo' || !billing.customerId || billing.usageMode !== 'metered' || !billing.overageEnabled) {
-    return false;
-  }
-  if (!cfg.DODO_API_KEY) throw new AppError(503, 'billing_not_configured', 'Dodo Payments usage reporting is not configured.');
-  const persisted = await env.DB.prepare('SELECT provider_event_id FROM billing_usage_events WHERE portal_id = ? AND id = ?')
-    .bind(row.portalId, row.id).first<{ provider_event_id: string | null }>();
-  // Preserve legacy IDs for retries whose provider-side outcome may already exist.
-  const providerEventId = persisted?.provider_event_id ?? `${row.portalId}:${row.idempotencyKey}`.slice(0, 255);
-  const absoluteQuantity = providerQuantity(row.metric, row.quantity, row.metadata);
-  const response = await fetch(`${dodoBase(env)}/events/ingest`, {
-    method: 'POST',
-    redirect: 'error',
-    signal: AbortSignal.timeout(10_000),
-    headers: {
-      accept: 'application/json',
-      authorization: `Bearer ${cfg.DODO_API_KEY}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      events: [{
-        customer_id: billing.customerId,
-        event_id: providerEventId,
-        event_name: providerEventName(env, row.metric),
-        timestamp: row.occurredAt,
-        metadata: metadataValues(row.portalId, absoluteQuantity, row.metadata),
-      }],
-    }),
-  });
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new AppError(502, 'dodo_usage_report_failed', `Dodo Payments usage reporting failed with status ${response.status}.`, detail.slice(0, 1000));
-  }
-  const payload = await response.json() as { ingested_count?: number };
-  if (Number(payload.ingested_count ?? 0) < 1) throw new AppError(502, 'dodo_usage_not_ingested', 'Dodo Payments did not ingest the usage event.');
-  await env.DB.prepare(
-    `UPDATE billing_usage_events SET status = 'reported', provider_event_id = ?, reported_at = ?, error_message = NULL WHERE id = ?`,
-  ).bind(providerEventId, new Date().toISOString(), row.id).run();
-  return true;
 }
 
 async function recordSumUsage(
@@ -278,13 +171,16 @@ export async function recordUsageAtomic(
   const enrichedMetadata = aggregation === 'max'
     ? { ...metadata, requested_quantity: quantity, provider_quantity: quantity, aggregation }
     : { ...metadata, requested_quantity: quantity, aggregation };
+  // Reserved context is generated by the service, never accepted from callers.
+  const persistedMetadata = { ...enrichedMetadata, [DELIVERY_CONTEXT_KEY]: usageDeliveryContext(env, billing, metric) };
+  usageProviderMetadata(portalId, quantity, persistedMetadata);
   const common = {
     id,
     portalId,
     metric,
     quantity,
     key,
-    metadataJson: JSON.stringify(enrichedMetadata),
+    metadataJson: JSON.stringify(persistedMetadata),
     occurredAt,
     start,
     hardLimit,
@@ -310,51 +206,20 @@ export async function recordUsageAtomic(
     throw new AppError(402, 'usage_limit_reached', `The ${metric} allowance or configured hard limit has been exhausted.`, { metric, allowance });
   }
 
-  const storedQuantity = aggregation === 'max'
-    ? localUsageIncrement(metric, allowance.consumedQuantity, quantity)
-    : quantity;
-  try {
-    const reported = await reportEvent(env, {
-      id,
-      portalId,
-      metric,
-      quantity: storedQuantity,
-      idempotencyKey: key,
-      occurredAt,
-      metadata: enrichedMetadata,
-    });
-    return { recorded: true, reported };
-  } catch (error) {
-    await env.DB.prepare(
-      `UPDATE billing_usage_events SET status = 'pending', error_message = ? WHERE id = ?`,
-    ).bind((error instanceof Error ? error.message : String(error)).slice(0, 1500), id).run();
-    throw error;
-  }
+  return { recorded: true, reported: await deliverUsageEvent(env, portalId, id) };
 }
 
 export async function retryAtomicUsageReports(env: Env, limit = 100): Promise<void> {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new AppError(400, 'usage_retry_limit_invalid', 'Use an integer retry batch size from 1 to 500.');
   const rows = await env.DB.prepare(
-    `SELECT id, portal_id, event_name, quantity, idempotency_key, metadata_json, occurred_at
-     FROM billing_usage_events
-     WHERE status = 'pending' AND error_message IS NOT NULL
-     ORDER BY occurred_at ASC LIMIT ?`,
-  ).bind(Math.min(500, Math.max(1, limit))).all<Record<string, unknown>>();
-  for (const item of rows.results ?? []) {
-    const row = {
-      id: String(item.id),
-      portalId: String(item.portal_id),
-      metric: String(item.event_name) as BillableMetric,
-      quantity: Number(item.quantity),
-      idempotencyKey: String(item.idempotency_key),
-      occurredAt: String(item.occurred_at),
-      metadata: JSON.parse(String(item.metadata_json ?? '{}')) as Record<string, string | number | boolean | null>,
-    };
-    try {
-      await reportEvent(env, row);
-    } catch (error) {
-      await env.DB.prepare(`UPDATE billing_usage_events SET error_message = ? WHERE id = ?`)
-        .bind((error instanceof Error ? error.message : String(error)).slice(0, 1500), row.id).run();
-      console.error(JSON.stringify({ level: 'error', task: 'dodo_usage_retry', portalId: row.portalId, metric: row.metric, error: error instanceof Error ? error.message : String(error) }));
+    `SELECT id, portal_id FROM billing_usage_events WHERE status = 'pending'
+     ORDER BY occurred_at ASC, id ASC LIMIT ?`,
+  ).bind(limit).all<{ id: string; portal_id: string }>();
+  for (const row of rows.results ?? []) {
+    try { await deliverUsageEvent(env, row.portal_id, row.id); }
+    catch (error) {
+      console.error(JSON.stringify({ level: 'warn', task: 'dodo_usage_retry', portalId: row.portal_id,
+        code: error instanceof AppError ? error.code : 'usage_delivery_internal_error' }));
     }
   }
 }

@@ -6,7 +6,7 @@ import { releaseVersionPolicy } from '../scripts/release-baseline.mjs';
 
 const { version } = JSON.parse(await readFile('package.json', 'utf8'));
 const completeEnvironment = {
-  APP_BASE_URL: 'https://dealguard-api-staging.rokad.co', HUBSPOT_APP_ID: '123456', HUBSPOT_CLIENT_ID: 'hubspot-client-id', HUBSPOT_CLIENT_SECRET: 'hubspot-client-secret', TOKEN_ENCRYPTION_KEY: 'x'.repeat(32), ADMIN_API_KEY: 'admin-api-key',
+  APP_BASE_URL: 'https://dealguard-api-staging.rokad.co', HUBSPOT_APP_ID: '123456', HUBSPOT_CLIENT_ID: 'hubspot-client-id', HUBSPOT_CLIENT_SECRET: 'hubspot-client-secret', TOKEN_ENCRYPTION_KEY: Buffer.alloc(32,7).toString('base64'), ADMIN_API_KEY: 'admin-api-key',
   NEON_DATABASE_URL: 'postgresql://dealguard:secret@ep-example.us-east-2.aws.neon.tech/dealguard?sslmode=require', CLOUDFLARE_ACCOUNT_ID: 'cloudflare-account-id', CLOUDFLARE_API_TOKEN: 'cloudflare-api-token', RESEND_API_KEY: 'resend-api-key', SLACK_CLIENT_ID: 'slack-client-id', SLACK_CLIENT_SECRET: 'slack-client-secret',
   TIGRIS_BUCKET: 'dealguard-staging', TIGRIS_ACCESS_KEY_ID: 'tid_test_access_key', TIGRIS_SECRET_ACCESS_KEY: 'tsec_test_secret_key', DODO_API_KEY: 'dodo-api-key', DODO_WEBHOOK_SECRET: 'whsec_ZG9kby10ZXN0LXNlY3JldA', DODO_ENVIRONMENT: 'test',
   DODO_GROWTH_MONTHLY_PRODUCT_ID: 'prod_growth_month', DODO_GROWTH_YEARLY_PRODUCT_ID: 'prod_growth_year', DODO_ENTERPRISE_MONTHLY_PRODUCT_ID: 'prod_enterprise_month', DODO_ENTERPRISE_YEARLY_PRODUCT_ID: 'prod_enterprise_year', DODO_AI_CREDIT_EVENT_NAME: 'dealguard_ai_credit', DODO_ACTIVE_DEAL_EVENT_NAME: 'dealguard_active_deal', DODO_EVENT_OVERAGE_EVENT_NAME: 'dealguard_event', DODO_RETENTION_EVENT_NAME: 'dealguard_retention_gb_month',
@@ -38,4 +38,14 @@ test('production preflight requires live Dodo mode and a stable release independ
 
 test('release preflight reports invalid environment without crashing or rendering config', async () => {
   await rm('.release', { recursive: true, force: true }); const result = runPreflight({ APP_BASE_URL: '', HUBSPOT_APP_ID: 'not-numeric', NEON_DATABASE_URL: '' }, ['--no-render']); assert.notEqual(result.status, 0); const report = JSON.parse(await readFile('.release/test-preflight.json', 'utf8')); assert.ok(report.summary.failed >= 4); assert.ok(report.checks.some((item) => item.id === 'env.APP_BASE_URL.https' && !item.ok)); assert.ok(report.checks.some((item) => item.id === 'env.HUBSPOT_APP_ID.numeric' && !item.ok)); assert.ok(report.checks.some((item) => item.id === 'env.NEON_DATABASE_URL.postgres' && !item.ok));
+});
+
+// The runtime imports a 256-bit AES key, not an arbitrary 32-character string.
+test('release preflight rejects encryption keys that the runtime cannot import', async () => {
+  for (const key of ['x'.repeat(32), 'not base64', Buffer.alloc(16).toString('base64'), Buffer.alloc(64).toString('base64')]) {
+    const result = runPreflight({ TOKEN_ENCRYPTION_KEY: key }, ['--no-render']);
+    assert.notEqual(result.status, 0);
+    const report = JSON.parse(await readFile('.release/test-preflight.json', 'utf8'));
+    assert.ok(report.checks.some(c => c.id === 'env.TOKEN_ENCRYPTION_KEY.length' && !c.ok));
+  }
 });

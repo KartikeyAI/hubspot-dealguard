@@ -1,3 +1,4 @@
+import { sourceBoundSnapshotFreshness } from './source-evidence.js';
 import { assessmentFreshness, assessmentActionDueAt, snapshotFreshness, freshnessConfidence, type EvidenceFreshness, type SnapshotFreshness } from './evidence-freshness.js';
 import { AppError } from './errors.js';
 import type { EnterpriseAccessContext } from './enterprise-access.js';
@@ -150,9 +151,9 @@ function normalizeCurrency(value: unknown): string | null {
 function snapshotMode(row: ManagerDecisionSourceRow, now: number): {
   mode: DecisionEvidenceMode; usable: boolean; generatedAt: string | null; freshness: SnapshotFreshness;
 } {
-  const freshness = snapshotFreshness({ assessmentAt: row.assessed_at,
+  const freshness = sourceBoundSnapshotFreshness(snapshotFreshness({ assessmentAt: row.assessed_at,
     snapshotAssessmentAt: row.snapshot_assessment_at, generatedAt: row.snapshot_generated_at,
-    recordedStatus: row.snapshot_freshness_status }, now);
+    recordedStatus: row.snapshot_freshness_status }, now), parseJson(row.dimensions_json, {}), now);
   const mode: DecisionEvidenceMode = freshness.status === 'fresh' ? 'full_deal_brief'
     : freshness.status === 'aging' ? 'aging_deal_brief'
     : freshness.status === 'stale' ? 'stale_deal_brief' : 'readiness_only';

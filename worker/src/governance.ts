@@ -1,6 +1,7 @@
 import { PLAN_LIMITS } from './config.js';
 import { sha256Hex } from './crypto.js';
 import { AppError } from './errors.js';
+import { assignedEnterpriseAccessContext, assertEnterprisePermission } from './enterprise-access.js';
 import { HubSpotClient } from './hubspot.js';
 import { Repository } from './repository.js';
 import { assessDeal } from './scoring.js';
@@ -116,25 +117,54 @@ async function nextVersion(env: Env, portalId: string): Promise<number> {
   return Number(row?.next_version ?? 1);
 }
 
-export async function governanceContext(env: Env, identity: RequestIdentity): Promise<GovernanceContext> {
+async function governanceInstallation(env: Env, portalId: string) {
   const repository = new Repository(env);
-  const tenant = await repository.getTenant(identity.portalId);
+  const tenant = await repository.getTenant(portalId);
   const settings = parseSettings(JSON.parse(tenant.settings_json || '{}'), tenant.plan);
+  return { tenant, settings, entitled: PLAN_LIMITS[tenant.plan].enterpriseGovernance };
+}
+
+interface LegacyAuthorityRow {
+  role: GovernanceRole;
+  user_id: string | null;
+  scope_json: string;
+  matching_emails?: number;
+}
+
+export async function governanceContext(env: Env, identity: RequestIdentity): Promise<GovernanceContext> {
+  const { tenant, settings, entitled } = await governanceInstallation(env, identity.portalId);
   let role: GovernanceRole = 'viewer';
   let installerBootstrap = false;
   const explicit = identity.userId
-    ? await env.DB.prepare(`SELECT role FROM governance_roles WHERE portal_id = ? AND user_id = ? LIMIT 1`).bind(identity.portalId, identity.userId).first<{ role: GovernanceRole }>()
+    ? await env.DB.prepare(`SELECT role,user_id,scope_json FROM governance_roles WHERE portal_id = ? AND user_id = ? LIMIT 1`).bind(identity.portalId, identity.userId).first<LegacyAuthorityRow>()
     : null;
   const byEmail = !explicit && identity.userEmail
-    ? await env.DB.prepare(`SELECT role FROM governance_roles WHERE portal_id = ? AND lower(user_email) = lower(?) AND (user_id IS NULL OR user_id = ?) LIMIT 1`).bind(identity.portalId, identity.userEmail, identity.userId).first<{ role: GovernanceRole }>()
+    ? await env.DB.prepare(`SELECT role,user_id,scope_json,COUNT(*) OVER () AS matching_emails FROM governance_roles WHERE portal_id = ? AND lower(user_email) = lower(?) LIMIT 1`).bind(identity.portalId, identity.userEmail).first<LegacyAuthorityRow>()
     : null;
-  if (explicit?.role) role = explicit.role;
-  else if (byEmail?.role) role = byEmail.role;
-  else if (identity.userEmail && tenant.installer_email && identity.userEmail.toLowerCase() === tenant.installer_email.toLowerCase()) {
-    role = 'admin';
-    installerBootstrap = true;
+  if (byEmail && (Number(byEmail.matching_emails ?? 1) !== 1 || byEmail.user_id !== null && byEmail.user_id !== identity.userId)) {
+    throw new AppError(403, 'governance_identity_conflict', 'This legacy role has an ambiguous or conflicting identity binding. Use a verified stable user assignment.');
   }
-  const entitled = PLAN_LIMITS[tenant.plan].enterpriseGovernance;
+  const assigned = explicit ?? byEmail;
+  if (assigned) {
+    let scope: unknown;
+    try { scope = JSON.parse(assigned.scope_json); }
+    catch { throw new AppError(403, 'governance_scope_invalid', 'This legacy role has an invalid data scope. A portal administrator must review the assignment.'); }
+    if (!scope || typeof scope !== 'object' || Array.isArray(scope) || Object.keys(scope).length !== 0) {
+      // Legacy governance cannot express record-scoped authorization. Do not
+      // collapse a stored restriction into portal-wide viewer or admin access.
+      throw new AppError(403, 'governance_scope_denied', 'This legacy role is not authorized for portal-wide access. Use a reviewed enterprise role with the intended record scope.');
+    }
+    if (!Object.hasOwn(ROLE_PERMISSIONS, assigned.role)) throw new AppError(403, 'governance_role_invalid', 'The assigned legacy role cannot be validated.');
+    role = assigned.role;
+  } else if (identity.userEmail && tenant.installer_email && identity.userEmail.toLowerCase() === tenant.installer_email.toLowerCase()) {
+    const initialized = await env.DB.prepare(`SELECT 1 AS present FROM enterprise_role_assignments WHERE portal_id=?
+      AND dealguard.enterprise_role_portal_admin(role,user_id,pipeline_ids_json,team_ids_json,owner_ids_json,region_codes_json) LIMIT 1`)
+      .bind(identity.portalId).first();
+    if (!initialized) {
+      role = 'admin';
+      installerBootstrap = true;
+    }
+  }
   return {
     role,
     permissions: entitled ? ROLE_PERMISSIONS[role] : ['governance.view'],
@@ -144,6 +174,20 @@ export async function governanceContext(env: Env, identity: RequestIdentity): Pr
 }
 
 export async function requireGovernancePermission(env: Env, identity: RequestIdentity, permission: string): Promise<GovernanceContext> {
+  if (!identity.userId && !identity.userEmail) throw new AppError(403, 'identified_user_required', 'An identified HubSpot user is required.');
+  const tenant = await env.DB.prepare('SELECT status FROM tenants WHERE portal_id=?').bind(identity.portalId).first<{status: string}>();
+  if (tenant?.status !== 'active') throw new AppError(403, 'installation_inactive', 'This DealGuard installation is not active.');
+  const assigned = await assignedEnterpriseAccessContext(env, identity);
+  if (assigned) {
+    // Policy/governance endpoints operate on portal-wide configuration. An
+    // explicit record-scoped assignment cannot inherit a legacy installer role.
+    assertEnterprisePermission(assigned, permission === 'governance.view' ? 'policy.view' : permission);
+    const { settings, entitled } = await governanceInstallation(env, identity.portalId);
+    const role: GovernanceRole = assigned.role === 'administrator' ? 'admin'
+      : assigned.role === 'policy_administrator' ? 'policy_admin' : assigned.role === 'reviewer' ? 'approver'
+        : ['revops_manager','sales_manager','remediation_manager'].includes(assigned.role) ? 'manager' : 'viewer';
+    return { role, permissions: assigned.permissions, governanceEnabled: entitled && settings.governance.enabled, installerBootstrap: false };
+  }
   const context = await governanceContext(env, identity);
   if (!context.permissions.includes(permission)) throw new AppError(403, 'governance_forbidden', 'You do not have permission to perform this DealGuard governance action.');
   return context;

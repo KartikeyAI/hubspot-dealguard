@@ -1,8 +1,8 @@
 # DealGuard by Rokad
 
-Stable 3.0 production approval work is tracked in [STABLE_3_0_SIGNOFF.md](docs/STABLE_3_0_SIGNOFF.md). The current alpha is not production-approved; the independent evidence gate does not change the product version.
+**Current release candidate: `3.0.0-rc.1`.** The v3 intelligence candidate and production-hardening work are now integrated in this source. Start with the [current scope and release boundaries](docs/DEALGUARD_3_CURRENT.md) and [Codex validation handoff](docs/CODEX_V3_VALIDATION.md).
 
-**Current development version: `3.0.0-alpha.1`.** This prerelease consolidates the published PR #46 source; it is not production-ready. The separately preserved 81-file intelligence candidate is not included. See [release scope and outstanding gates](docs/RELEASE_3_0_ALPHA_1.md).
+This prerelease is intended for independent review and staging acceptance. Stable production approval remains governed by [STABLE_3_0_SIGNOFF.md](docs/STABLE_3_0_SIGNOFF.md); passing code checks or merging source does not supply the required live evidence and independent approvals.
 
 DealGuard is an enterprise HubSpot revenue-governance application that detects incomplete, stale, and risky deals; governs policy lifecycle; makes readiness signals native inside HubSpot; manages remediation SLAs; delivers operational events reliably; and provides auditable commercial, compliance, and reliability controls.
 
@@ -22,6 +22,14 @@ DealGuard is an enterprise HubSpot revenue-governance application that detects i
 - Pipeline, stage, owner, team, and region breakdowns.
 - Stage-aging heatmaps, failure patterns, handoff SLA, and policy-impact timelines.
 - Audience-specific and customer-defined saved views plus secure CSV export.
+
+### Governed intelligence
+
+- Source observation receipts, recorded Deal Briefs, historical changes and explicit refresh controls.
+- Separately consented outcome datasets and durable train/calibration/holdout evaluation jobs.
+- Independently reviewed, cohort-qualified forecasts with exact quarter-start evidence, current monitoring, expiry and kill switches. Ineligible deals receive no probability.
+- Optional native AI for risk review, manager questions, next actions and current closed-won handover drafts, with scoped facts, encrypted caching and atomic usage budgets.
+- Optional read-only Breeze adapters, excluded from the canonical project until the applicable tool approval and account acceptance are complete.
 
 ### Access and approvals
 
@@ -89,12 +97,15 @@ docs/                    Product, deployment, security, compliance, billing, and
 ## Validate
 
 ```bash
-npm install
-npm run check
-npm run db:migrate
-npm run db:migrate:check
-npm run db:validate
+npm ci --ignore-scripts
+npm ci --ignore-scripts --prefix src/app/cards
+npm ci --ignore-scripts --prefix src/app/settings
+npm ci --ignore-scripts --prefix src/app/pages
+# PostgreSQL 18 binaries must be on PATH, or set DEALGUARD_POSTGRES_BIN.
+npm run test:local
 ```
+
+Use Node.js 22.12 or newer. `test:local` creates and removes its own loopback PostgreSQL database, applies and verifies every migration, validates schema constraints, and runs Worker/UI typechecks plus the complete test suite. It overrides inherited database URLs and does not use `.env` or a provider database. For an already provisioned disposable CI database, use the explicit migration and check commands in the Codex handoff.
 
 ## Deploy and test
 
@@ -110,4 +121,4 @@ Production enablement requires protected staging evidence, an encrypted and rest
 
 ## Current release
 
-`3.0.0-alpha.1` — development prerelease on direct Neon PostgreSQL, Tigris object storage, Cloudflare Queues, HubSpot developer platform `2026.03`, and Dodo Payments. Source merge and versioning do not establish production acceptance or deployment.
+`3.0.0-rc.1` — release candidate on direct Neon PostgreSQL, Tigris object storage, Cloudflare Queues, HubSpot developer platform `2026.03`, and Dodo Payments. Optional AI, forecasting and Breeze are disabled by default. Source merge and versioning do not establish production acceptance or deployment.

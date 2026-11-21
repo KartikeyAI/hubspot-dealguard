@@ -1,3 +1,4 @@
+import { optionalIntelligenceConfiguration, renderOptionalIntelligenceVariables } from './optional-intelligence-config.mjs';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve } from 'node:path';
 import process from 'node:process';
@@ -82,6 +83,7 @@ function requiredEnvironment() {
 }
 
 async function validateEnvironment() {
+  checks.push(...optionalIntelligenceConfiguration(process.env).checks);
   for (const name of requiredEnvironment()) {
     const configured = present(process.env[name]);
     add(
@@ -130,8 +132,10 @@ async function validateEnvironment() {
   );
   add(
     'env.TOKEN_ENCRYPTION_KEY.length',
-    String(process.env.TOKEN_ENCRYPTION_KEY ?? '').length >= 32,
-    'TOKEN_ENCRYPTION_KEY must contain at least 32 characters',
+    (/^[A-Za-z0-9+/]{43}=$/.test(process.env.TOKEN_ENCRYPTION_KEY ?? '')
+      && Buffer.from(process.env.TOKEN_ENCRYPTION_KEY, 'base64').byteLength === 32
+      && Buffer.from(process.env.TOKEN_ENCRYPTION_KEY, 'base64').toString('base64') === process.env.TOKEN_ENCRYPTION_KEY),
+    'TOKEN_ENCRYPTION_KEY must be canonical base64 encoding of exactly 32 bytes',
     'environment',
   );
   add(
@@ -302,8 +306,8 @@ async function validateRepository() {
   );
   add(
     'migrations.latest',
-    migrationNumbers.at(-1) === 30
-      && migrationFiles.at(-1) === '0030_recommendation_remediation.sql',
+    migrationNumbers.at(-1) === 43
+      && migrationFiles.at(-1) === '0043_atomic_change_approval.sql',
     `latest migration is ${migrationFiles.at(-1) ?? 'missing'}`,
   );
   add(
@@ -397,7 +401,7 @@ function renderDeploymentWrangler(source) {
     `(\\[env\\.${target}\\.vars\\][\\s\\S]*?APP_BASE_URL\\s*=\\s*)"[^"]*"`,
   );
   rendered = rendered.replace(environmentPattern, `$1"${baseUrl.origin}"`);
-  return rendered;
+  return renderOptionalIntelligenceVariables(rendered, target, process.env);
 }
 
 async function main() {

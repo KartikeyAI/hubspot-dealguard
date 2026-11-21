@@ -35,9 +35,9 @@ test('non-Enterprise portals receive a safe billing and upgrade shell', async ()
   assert.match(router, /billingAccessFallback\(env, identity\)/);
   assert.match(billingAccess, /enterprise_subscription_required/);
   assert.match(billingAccess, /enterpriseAccessContext\(env, identity\)/);
-  assert.match(billingAccess, /'billing\.view'/);
-  assert.match(billingAccess, /permissionMatches\(context.permissions, 'billing\.manage'\)/);
-  assert.match(billingAccess, /scope: context.scope/);
+  assert.match(billingAccess, /return \{ \.\.\.context, entitled: false/);
+  assert.match(billingAccess, /tenant\?\.status !== 'active'/);
+  assert.doesNotMatch(billingAccess, /permissions: \['\*'\]/);
   assert.match(billingAccess, /entitled: false/);
 });
 

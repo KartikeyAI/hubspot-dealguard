@@ -1,6 +1,8 @@
-# DealGuard 2.1.0 production acceptance runbook
+# DealGuard 3.0 production acceptance runbook
 
 Use this runbook after the production Worker is deployed and the production HubSpot project is uploaded. Run the sections in order. Record every result, request ID, provider screenshot, and artifact reference.
+
+Rehearse the same profiles on the exact candidate SHA in staging before approval. Unchecked steps are not acceptance evidence. The stable release must separately satisfy `STABLE_3_0_SIGNOFF.md`, including two independent signers and all eleven evidence categories. A version bump, successful CI job or pre-deployment approval receipt alone does not establish production readiness.
 
 A skipped required test is a failed release gate. Optional tests may be skipped only when the stated prerequisite is absent and the skip reason is recorded.
 
@@ -9,7 +11,7 @@ A skipped required test is a failed release gate. Optional tests may be skipped 
 Prepare:
 
 - one HubSpot production acceptance portal;
-- one administrator or installer identity;
+- two independently identified HubSpot administrator/setup identities;
 - a second user for two-person approval tests;
 - one existing test deal with company, contact, amount, stage, close date, and owner;
 - one deal intentionally missing required information;
@@ -28,7 +30,7 @@ Run:
 
 ```bash
 PRODUCTION_SMOKE_BASE_URL=https://dealguard-api.rokad.co \
-PRODUCTION_SMOKE_EXPECT_VERSION=2.1.0 \
+PRODUCTION_SMOKE_EXPECT_VERSION="$(node -p 'JSON.parse(require("node:fs").readFileSync("package.json","utf8")).version')" \
 npm run production:smoke
 ```
 
@@ -37,7 +39,7 @@ The Controlled deploy workflow runs the same command automatically.
 | ID | Test | Pass criteria |
 |---|---|---|
 | `DG-PROD-001` | Production HTTPS identity | Exact production origin and HTTPS |
-| `DG-PROD-002` | Health and release identity | HTTP 200, service `dealguard-api`, version `2.1.0` |
+| `DG-PROD-002` | Health and release identity | HTTP 200, service `dealguard-api`, version the exact stable v3 candidate version |
 | `DG-PROD-003` | Public status | HTTP 200 JSON with no sensitive diagnostic content |
 | `DG-PROD-004` | Docs, privacy, terms, support | All return non-empty HTML |
 | `DG-PROD-005` | Unsigned protected API | Billing API returns HTTP 401 |
@@ -59,7 +61,7 @@ Run the full profile:
 ACCEPTANCE_PROFILE=full \
 ACCEPTANCE_BASE_URL=https://dealguard-api.rokad.co \
 ACCEPTANCE_PORTAL_ID=<portal-id> \
-ACCEPTANCE_USER_ID=<optional-user-id> \
+ACCEPTANCE_USER_ID=<identified-admin-user-id> \
 ACCEPTANCE_USER_EMAIL=<admin-email> \
 ACCEPTANCE_EXPECT_TIER=<free|growth|enterprise> \
 ACCEPTANCE_TEST_DEAL_ID=<test-deal-id> \
@@ -118,20 +120,22 @@ Evidence:
 
 1. Open DealGuard App Home.
 2. Confirm the overview loads without console errors.
-3. Confirm policy, analytics, access, remediation, alerts, compliance, reliability, and billing sections are present.
-4. Confirm role-restricted sections are either visible or explicitly redacted.
+3. Confirm the current Home overview, manager queue, evidence panels, setup and billing controls match the installed user's permissions. The manifest's retained V3 entry loads the V4 implementation.
+4. Confirm denied administrative panels are absent and inaccessible through their APIs. Billing-only administrators must still load billing when analytics is unavailable or denied.
 5. Confirm no panel displays another portal's data.
 6. Refresh and reopen the app to verify stable routing.
 7. Test with an administrator.
 8. Test with a restricted viewer.
 9. Confirm saved views and filters persist as intended.
 10. Confirm links open only approved DealGuard or HubSpot origins.
+11. For a new enterprise setup or supported legacy migration, use **Initial enterprise administrator setup** with two distinct signed identities. Verify the requester can nominate only a different exact user ID and email, proposal grants nothing, only the nominee can accept the exact fingerprint before expiry, and acceptance atomically establishes both administrators. Self-acceptance, changed identities, changed installation state and a newly existing administrator must deny setup.
+12. Use **Workspace roles and record access** to request a separate reviewer with `forecast.approve`, then have the other authorized administrator inspect and approve it through **Two-person role changes**. Verify approval alone does not assign access. Explicitly apply the exact stored request; changed payload, stale permissions, expired approval and replay must fail. Repeat for a scoped edit and approved removal. Verify email-only assignment promotion, preservation of all scope dimensions, final-admin protection and Home access refresh after self-demotion.
 
 ## 6. Deal record card
 
 1. Open the prepared complete test deal.
 2. Confirm the DealGuard card loads.
-3. Run an assessment.
+3. Verify opening the card performs only a recorded assessment GET. An authorized reviewer's explicit refresh performs POST; a viewer cannot refresh, review or confirm handoff. No prior assessment produces an explicit unavailable state, never an automatic HubSpot fetch.
 4. Confirm score, grade, status, and issues match the deterministic policy.
 5. Confirm the seven DealGuard-owned properties synchronize when native sync is enabled.
 6. Mark the deal reviewed.
@@ -141,6 +145,7 @@ Evidence:
 10. Confirm DealGuard does not change stage, owner, amount, close date, or forecast category.
 
 Repeat with the intentionally incomplete test deal.
+Navigate rapidly between two prepared records while one response is delayed. The old record's assessment, errors, actions and success notice must not appear on the new record. Repeat while a review request is in flight. Stale or unknown evidence must remain visibly labeled; an absent optional source must not be presented as healthy or as a zero score.
 
 ## 7. Settings and native property sync
 
@@ -310,7 +315,7 @@ Use a dedicated live-mode billing test customer and the smallest approved transa
 1. Confirm `/status` reports the expected public state.
 2. Run synthetic checks.
 3. Confirm Worker logs contain request IDs but not secrets.
-4. Confirm Hyperdrive connection and transaction telemetry.
+4. Confirm direct Neon HTTP query latency, timeout and error telemetry for the Worker adapter. The runtime has no Hyperdrive binding; migration/test PostgreSQL connections are a separate path.
 5. Confirm Neon connection count and query latency remain within expected thresholds.
 6. Confirm queue depth returns to baseline.
 7. Confirm dead-letter depth is zero or every item is explained.
@@ -349,12 +354,36 @@ Record:
 
 Compare against the release SLOs. Investigate significant regression from staging before declaring the release successful.
 
-## 20. Final acceptance record
+## 20. Stable v3 product and intelligence acceptance
+
+Run these with identified users, a dedicated acceptance portal and retained original provider evidence. Local unit/SQL fixtures verify the implementation but cannot attest that an account, provider contract or live user flow works.
+
+| Surface | Required observations |
+|---|---|
+| Installation and setup | Granted required scopes are correct, optional commercial sources require explicit authorization, reconnect preserves billing and usable history without reviving revoked optional consent, expired/replayed OAuth state cannot reinstall, installer sees real next steps and can explicitly run a permitted scan. |
+| Home and access | Empty or malformed evidence is unavailable, a measured zero remains zero, stale source times stay visible, permissions hide privileged panels, and owner/pipeline/team/region restrictions apply to every read and mutation. Billing-only and expired administrators retain their allowed billing/revocation controls. |
+| Recorded cards | GET never refreshes HubSpot or creates recommendations. Manual refresh, review and handoff require their record capabilities; partial source evidence is explained, current lifecycle rules hold, and switching records discards late results. |
+| Billing expiry | Without a new webhook, a recorded trial end, current period end or grace end removes paid access at its boundary. A cancellation lacking a valid end fails closed. Paid allowance overrides/overage do not survive expired entitlement. An explicitly open-ended manual contract remains valid by design; record that contract's owner and terms. |
+| Manual billing schedule | A due change updates subscription, tenant plan and audit together once. Concurrent contract/provider changes cannot apply stale entitlement. A failed audit rolls back the whole change. Dodo renewal events retain pending provider plan changes until the authoritative plan-change/cancellation event. |
+| Remediation | Explicit task creation is authorized and idempotent across retries; an ambiguous remote result does not create a second task blindly. Closure, deletion, reactivation and changed assignment cannot restore stale permission or work. |
+| Historical outcomes | Consent is explicit and revocable after subscription expiry. Datasets retain scope, policy, quarter, retention and fingerprints; missing observations are excluded. Training queues a durable bounded job, and queued/running/failed/cancelled rows display without fabricated metrics. Repeated requests do not create duplicate jobs. |
+| Qualified forecasts | Global and portal switches default off. Register only a recent qualified evaluation with an expiring immutable artifact; an independent assigned reviewer supplies a retained review-evidence digest. Same requester/reviewer, changed policy/artifact, revoked consent or role, expired model/monitor, ineligible/unavailable cohort evidence and lifecycle changes deny eligibility. The UI labels quarter-start origin, target and historical bin uncertainty; an unavailable probability never becomes 0%. |
+| Native AI assistance | Evaluate the approved live model against recorded risk, manager-review, next-action and eligible closed-won handover evidence. Confirm source citations/times, current handover cycle, schema/injection defenses, consent, permissions, concurrent/daily/cost caps, timeout/error fallback, revocation, retention and no actions executed. Synthetic provider responses are engineering tests only. |
+| Breeze | Keep optional actions out of the production project until their applicable approval is real. For any declared supported profile, confirm exact registered action IDs, signed portal identity, explicit consent, bounded usage, current source evidence and no unauthorized mutation. |
+
+Active recurring subscriptions that arrive without an optional period end and without cancellation remain compatible with their authoritative provider status. This is not a guarantee that a missing webhook can never leave access open: retain provider reconciliation/monitoring ownership and verify supported lifecycle payloads include their boundaries. Do not claim a global finite-expiry guarantee from local date tests.
+
+Forecast review is independent model approval, not release approval. Current monitoring must run through the maintenance worker; opening a status panel must not train or monitor synchronously. Confirm stale/failed monitoring suspends eligibility, and retained observed outcomes remain distinct from forecasts and from claims of causal revenue improvement.
+
+Measure the agreed capacity in the actual staging/provider environment: at least 10,000 deals and two concurrent portals, cached read p95 greater than zero and at most 2,000 ms, documented provider limits and queue recovery. Restore the encrypted provider database and objects, reconcile their contents, and measure RPO at most 3,600 seconds and RTO greater than zero and at most 14,400 seconds. Three distinct consenting pilot accounts and zero unresolved blocking defects are required by the release contract. A disposable local PostgreSQL rehearsal does not prove those external thresholds.
+
+## 21. Final acceptance record
 
 The final acceptance package must include:
 
 - production smoke JSON and Markdown;
 - full signed acceptance JSON and Markdown;
+- required intelligence certification and live native-AI/forecast/Breeze profile evidence;
 - HubSpot installation and UI evidence;
 - workflow and webhook evidence;
 - queue and dead-letter evidence;
@@ -366,5 +395,7 @@ The final acceptance package must include:
 - operator and approver names;
 - exact release SHA and version;
 - final go/no-go decision.
+
+Attach the exact commit/tree/version, canonical CI run with zero skipped required tests, full staging run and attempt-specific deployment artifact, independently signed eleven-category dossier, protected-trust verification receipt, and production observation record. Retain original reports and reviewer signatures; a sanitized receipt is not a substitute for verifying the signed evidence.
 
 Release only when all required tests pass and the production approver signs the evidence record.

@@ -176,7 +176,8 @@ test('canonical CI and deployment capture baselines before dependencies, migrati
   for (const source of [ci, workflow]) {
     assert.ok(source.includes('node scripts/release-baseline.mjs'));
     assert.ok(source.indexOf('actions/setup-node@') < source.indexOf('node scripts/release-baseline.mjs'));
-    assert.ok(source.indexOf('node scripts/release-baseline.mjs') < source.indexOf('npm install'));
+    assert.ok(source.includes('npm ci --ignore-scripts'));
+    assert.ok(source.indexOf('node scripts/release-baseline.mjs') < source.indexOf('npm ci --ignore-scripts'));
     assert.ok(source.includes('.release/release-baseline.json'));
   }
   assert.ok(workflow.indexOf('node scripts/release-baseline.mjs') < workflow.indexOf('run: npm run db:migrate'));

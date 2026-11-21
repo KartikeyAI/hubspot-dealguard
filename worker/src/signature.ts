@@ -1,3 +1,4 @@
+import { readBoundedText } from './request-body.js';
 import { AppError } from './errors.js';
 import type { Env, RequestIdentity } from './types.js';
 
@@ -35,9 +36,9 @@ async function sha256Hex(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-export async function validateHubSpotSignature(request: Request, env: Env, requireUrlBinding = false): Promise<void> {
+export async function validateHubSpotSignature(request: Request, env: Env, requireUrlBinding = false, maximumBodyBytes = 2_000_000): Promise<void> {
   if (!env.HUBSPOT_CLIENT_SECRET) throw new AppError(401, 'signature_unavailable', 'Request authentication is not configured.');
-  const rawBody = request.method === 'GET' || request.method === 'HEAD' ? '' : await request.clone().text();
+  const rawBody = request.method === 'GET' || request.method === 'HEAD' ? '' : await readBoundedText(request.clone(), maximumBodyBytes);
   const signatureV3 = request.headers.get('x-hubspot-signature-v3');
   const timestampHeader = request.headers.get('x-hubspot-request-timestamp');
   let valid = false;
@@ -57,8 +58,8 @@ export async function validateHubSpotSignature(request: Request, env: Env, requi
 }
 
 /** UI identities come from the URL, so body-only v1 signatures are never sufficient. */
-export async function validateHubSpotRequest(request: Request, env: Env): Promise<RequestIdentity> {
-  await validateHubSpotSignature(request, env, true);
+export async function validateHubSpotRequest(request: Request, env: Env, maximumBodyBytes = 2_000_000): Promise<RequestIdentity> {
+  await validateHubSpotSignature(request, env, true, maximumBodyBytes);
   const url = new URL(request.url);
   const unique = (name: string): string | null => {
     const values = url.searchParams.getAll(name);

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { releaseVersionPolicy } from '../scripts/release-baseline.mjs';
+import { json as jsonResponse } from '../dist/http.js';
 
 const root = new URL('../', import.meta.url);
 const json = async (path) => JSON.parse(await readFile(new URL(path, root), 'utf8'));
@@ -28,4 +29,9 @@ test('health endpoint uses the shared Worker release identity', async () => {
   const source = await readFile(new URL('worker/src/index.ts', root), 'utf8');
   assert.match(source, /import\s*\{\s*DEALGUARD_VERSION\s*\}\s*from\s*['"]\.\/version\.js['"]/);
   assert.match(source, /version:\s*DEALGUARD_VERSION/);
+});
+
+test('API responses identify the same version as the release package', async () => {
+  const { version } = await json('package.json');
+  assert.equal(jsonResponse({ ok: true }).headers.get('x-dealguard-version'), version);
 });

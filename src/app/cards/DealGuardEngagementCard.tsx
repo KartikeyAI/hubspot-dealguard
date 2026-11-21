@@ -2,6 +2,7 @@ import React from 'react';
 import { Alert, Button, Divider, Flex, Heading, StatusTag, Text, hubspot } from '@hubspot/ui-extensions';
 import {
   CardLoading,
+  AssessmentEvidenceNotice,
   CardUnavailable,
   engagementVariant,
   formatDate,
@@ -11,22 +12,24 @@ import {
 hubspot.extend<'crm.record.tab'>(({ context }) => <DealGuardEngagementCard dealId={String(context.crm.objectId)} />);
 
 const DealGuardEngagementCard = ({ dealId }: { dealId: string }) => {
-  const { assessment, loading, working, error, notice, load } = useDealAssessment(dealId);
+  const { assessment, loading, working, error, notice, canRefresh, load } = useDealAssessment(dealId);
   if (loading) return <CardLoading label="Loading engagement evidence" />;
-  if (!assessment) return <CardUnavailable error={error} />;
+  if (!assessment) return <CardUnavailable error={error} canRefresh={canRefresh} working={working} onRefresh={() => void load(true)} />;
   const engagement = assessment.intelligence?.engagement;
 
   if (!engagement) {
     return <Flex direction="column" gap="medium">
+    <AssessmentEvidenceNotice assessment={assessment} />
       {error && <Alert title="Action failed" variant="danger">{error}</Alert>}
       <Alert title="Engagement metadata is not available" variant="warning">
         Refresh the deal to retrieve bounded email, call, and meeting metadata. Readiness remains available when optional activity evidence cannot be loaded.
       </Alert>
-      <Button onClick={() => void load(true)} disabled={working}>Refresh engagement evidence</Button>
+      <Button onClick={() => void load(true)} disabled={working || !canRefresh}>Refresh engagement evidence</Button>
     </Flex>;
   }
 
   return <Flex direction="column" gap="medium">
+    <AssessmentEvidenceNotice assessment={assessment} />
     {error && <Alert title="Action failed" variant="danger">{error}</Alert>}
     {notice && <Alert title="Done" variant="success">{notice}</Alert>}
     <Flex direction="row" justify="between" align="center" gap="medium">
@@ -71,6 +74,6 @@ const DealGuardEngagementCard = ({ dealId }: { dealId: string }) => {
     <Alert title="Metadata-only boundary" variant="info">DealGuard processes timestamps, direction, status, outcome, duration, and owner identifiers only. It does not request email subjects or bodies, headers, addresses, meeting descriptions or notes, call notes, phone numbers, recordings, transcripts, or sentiment.</Alert>
     {engagement.limitations.map((item, index) => <Text key={`engagement-limitation-${index}`} variant="microcopy">• {item}</Text>)}
     <Text variant="microcopy">Evidence fetched {formatDate(engagement.fetchedAt)}.</Text>
-    <Button variant="secondary" onClick={() => void load(true)} disabled={working}>Refresh engagement evidence</Button>
+    <Button variant="secondary" onClick={() => void load(true)} disabled={working || !canRefresh}>Refresh engagement evidence</Button>
   </Flex>;
 };

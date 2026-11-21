@@ -43,6 +43,8 @@ jobs:
           --health-retries 20
     env:
       DATABASE_URL: postgresql://dealguard:dealguard-readiness-password@127.0.0.1:5432/dealguard_readiness
+      DEALGUARD_ANALYTICS_TEST_DATABASE_URL: postgresql://dealguard:dealguard-readiness-password@127.0.0.1:5432/dealguard_readiness
+      DEALGUARD_CUTOVER_TEST_DATABASE_URL: postgresql://dealguard:dealguard-readiness-password@127.0.0.1:5432/dealguard_readiness
       RELEASE_TARGET: ${{ inputs.target }}
       RELEASE_INCLUDE_HUBSPOT_UPLOAD: ${{ inputs.include_hubspot_upload }}
       APP_BASE_URL: ${{ vars.APP_BASE_URL }}
@@ -74,6 +76,15 @@ jobs:
       DODO_ACTIVE_DEAL_EVENT_NAME: ${{ vars.DODO_ACTIVE_DEAL_EVENT_NAME }}
       DODO_EVENT_OVERAGE_EVENT_NAME: ${{ vars.DODO_EVENT_OVERAGE_EVENT_NAME }}
       DODO_RETENTION_EVENT_NAME: ${{ vars.DODO_RETENTION_EVENT_NAME }}
+      DEALGUARD_AI_ENABLED: ${{ vars.DEALGUARD_AI_ENABLED }}
+      DEALGUARD_FORECAST_ENABLED: ${{ vars.DEALGUARD_FORECAST_ENABLED }}
+      DEALGUARD_AI_MODEL: ${{ vars.DEALGUARD_AI_MODEL }}
+      DEALGUARD_AI_API_KEY: ${{ secrets.DEALGUARD_AI_API_KEY }}
+      DEALGUARD_AI_PRICING_VERIFIED_AT: ${{ vars.DEALGUARD_AI_PRICING_VERIFIED_AT }}
+      DEALGUARD_AI_INPUT_USD_PER_MILLION: ${{ vars.DEALGUARD_AI_INPUT_USD_PER_MILLION }}
+      DEALGUARD_AI_OUTPUT_USD_PER_MILLION: ${{ vars.DEALGUARD_AI_OUTPUT_USD_PER_MILLION }}
+      DEALGUARD_BREEZE_ENABLED: ${{ vars.DEALGUARD_BREEZE_ENABLED }}
+      DEALGUARD_BREEZE_ACTION_IDS: ${{ vars.DEALGUARD_BREEZE_ACTION_IDS }}
 
     steps:
       - uses: actions/checkout@v4
@@ -89,13 +100,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm install --ignore-scripts --silent
-          npm install --ignore-scripts --silent --prefix src/app/cards
-          npm install --ignore-scripts --silent --prefix src/app/settings
-          npm install --ignore-scripts --silent --prefix src/app/pages
-
-      - name: Run complete repository gate
-        run: npm run check
+          npm ci --ignore-scripts --silent
+          npm ci --ignore-scripts --silent --prefix src/app/cards
+          npm ci --ignore-scripts --silent --prefix src/app/settings
+          npm ci --ignore-scripts --silent --prefix src/app/pages
 
       - name: Apply PostgreSQL migrations to disposable validation database
         run: npm run db:migrate
@@ -105,6 +113,9 @@ jobs:
 
       - name: Validate PostgreSQL schema and tenant constraints
         run: npm run db:validate
+
+      - name: Run complete repository gate
+        run: npm run check
 
       - name: Run release preflight
         run: npm run release:preflight
@@ -144,6 +155,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dealguard-release-readiness-${{ inputs.target }}-${{ github.run_id }}
+          include-hidden-files: true
           path: |
             .release/preflight.json
             .release/worker-checksums.txt

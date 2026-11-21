@@ -1,3 +1,4 @@
+import { sourceBoundSnapshotFreshness } from './source-evidence.js';
 import { snapshotFreshness, freshnessConfidence, evidenceInstant } from './evidence-freshness.js';
 import { PLAN_LIMITS } from './config.js';
 import { AppError } from './errors.js';
@@ -210,9 +211,11 @@ function unavailableDecision(): ExecutiveDecisionEvidence {
 }
 
 export function currentDecision(row: DecisionRow | undefined, assessmentAt: string | null, now: number): ExecutiveDecisionEvidence {
-  const freshness = snapshotFreshness({ assessmentAt,
+  let sourceDimensions: unknown = null;
+  try { sourceDimensions = JSON.parse(row?.dimensions_json ?? '{}'); } catch { /* Invalid receipts fail closed. */ }
+  const freshness = sourceBoundSnapshotFreshness(snapshotFreshness({ assessmentAt,
     snapshotAssessmentAt: row?.assessment_at, generatedAt: row?.generated_at,
-    recordedStatus: row?.freshness_status }, now);
+    recordedStatus: row?.freshness_status }, now), sourceDimensions, now);
   if (!row || !freshness.usable) return { ...unavailableDecision(), freshness };
   const generatedAt = freshness.generatedAt;
 

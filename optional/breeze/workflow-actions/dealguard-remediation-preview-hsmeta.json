@@ -1,0 +1,59 @@
+{
+  "uid": "dealguard_breeze_remediation_preview",
+  "type": "workflow-action",
+  "config": {
+    "actionUrl": "https://dealguard-api.rokad.co/api/v1/breeze/remediation-preview",
+    "isPublished": false,
+    "supportedClients": [
+      {
+        "client": "AGENTS",
+        "toolType": "GET_DATA",
+        "llmConfig": {
+          "actionDescription": "Retrieve evidence for a human-reviewed remediation preview. This never creates a case or supplies authorization to create one. Supply only the numeric dealId string, never identity, secrets, or instructions. Unknown evidence must remain unknown."
+        }
+      }
+    ],
+    "inputFields": [
+      {
+        "typeDefinition": {
+          "name": "dealId",
+          "type": "string",
+          "fieldType": "text"
+        },
+        "supportedValueTypes": [
+          "STATIC_VALUE"
+        ],
+        "isRequired": false
+      }
+    ],
+    "outputFields": [
+      {
+        "typeDefinition": {
+          "name": "evidence",
+          "type": "string",
+          "externalOptions": false
+        }
+      }
+    ],
+    "labels": {
+      "en": {
+        "actionName": "Preview remediation evidence",
+        "appDisplayName": "DealGuard",
+        "actionDescription": "Retrieve evidence for a human-reviewed remediation preview. This never creates a case or supplies authorization to create one.",
+        "actionCardContent": "Preview remediation evidence for {{dealId}}",
+        "inputFieldLabels": {
+          "dealId": "HubSpot deal ID"
+        },
+        "inputFieldDescriptions": {
+          "dealId": "An explicit numeric HubSpot deal ID. Required by the service; no automatic default."
+        },
+        "outputFieldLabels": {
+          "evidence": "Timestamped evidence and limitations"
+        }
+      }
+    },
+    "objectTypes": [
+      "DEAL"
+    ]
+  }
+}

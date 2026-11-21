@@ -86,6 +86,19 @@ jobs:
     runs-on: ubuntu-latest
     environment: dealguard-${{ inputs.target }}
     timeout-minutes: 65
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: dealguard
+          POSTGRES_PASSWORD: dealguard-validation-password
+          POSTGRES_DB: dealguard_validation
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U dealguard -d dealguard_validation"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
       RELEASE_TARGET: ${{ inputs.target }}
       RELEASE_SHA: ${{ inputs.release_sha }}
@@ -100,6 +113,16 @@ jobs:
       HUBSPOT_CLIENT_ID: ${{ vars.HUBSPOT_CLIENT_ID }}
       HUBSPOT_CLIENT_SECRET: ${{ secrets.HUBSPOT_CLIENT_SECRET }}
       TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+      # Optional intelligence is disabled when flags are unset. Credentials never enter rendered vars.
+      DEALGUARD_AI_ENABLED: ${{ vars.DEALGUARD_AI_ENABLED }}
+      DEALGUARD_FORECAST_ENABLED: ${{ vars.DEALGUARD_FORECAST_ENABLED }}
+      DEALGUARD_AI_MODEL: ${{ vars.DEALGUARD_AI_MODEL }}
+      DEALGUARD_AI_API_KEY: ${{ secrets.DEALGUARD_AI_API_KEY }}
+      DEALGUARD_AI_PRICING_VERIFIED_AT: ${{ vars.DEALGUARD_AI_PRICING_VERIFIED_AT }}
+      DEALGUARD_AI_INPUT_USD_PER_MILLION: ${{ vars.DEALGUARD_AI_INPUT_USD_PER_MILLION }}
+      DEALGUARD_AI_OUTPUT_USD_PER_MILLION: ${{ vars.DEALGUARD_AI_OUTPUT_USD_PER_MILLION }}
+      DEALGUARD_BREEZE_ENABLED: ${{ vars.DEALGUARD_BREEZE_ENABLED }}
+      DEALGUARD_BREEZE_ACTION_IDS: ${{ vars.DEALGUARD_BREEZE_ACTION_IDS }}
       ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
       NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -184,12 +207,24 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm install --ignore-scripts --silent
-          npm install --ignore-scripts --silent --prefix src/app/cards
-          npm install --ignore-scripts --silent --prefix src/app/settings
-          npm install --ignore-scripts --silent --prefix src/app/pages
+          npm ci --ignore-scripts --silent
+          npm ci --ignore-scripts --silent --prefix src/app/cards
+          npm ci --ignore-scripts --silent --prefix src/app/settings
+          npm ci --ignore-scripts --silent --prefix src/app/pages
+
+      - name: Prepare isolated regression database
+        env:
+          DATABASE_URL: postgresql://dealguard:dealguard-validation-password@127.0.0.1:5432/dealguard_validation
+        run: |
+          node scripts/postgres-migrate.mjs
+          node scripts/postgres-migrate.mjs --check
 
       - name: Run complete repository gate
+        env:
+          DATABASE_URL: postgresql://dealguard:dealguard-validation-password@127.0.0.1:5432/dealguard_validation
+          NEON_DATABASE_URL: postgresql://dealguard:dealguard-validation-password@127.0.0.1:5432/dealguard_validation
+          DEALGUARD_ANALYTICS_TEST_DATABASE_URL: postgresql://dealguard:dealguard-validation-password@127.0.0.1:5432/dealguard_validation
+          DEALGUARD_CUTOVER_TEST_DATABASE_URL: postgresql://dealguard:dealguard-validation-password@127.0.0.1:5432/dealguard_validation
         run: npm run check
 
       - name: Run protected release preflight

@@ -1,4 +1,3 @@
-import { enrichStoredAssessmentForPortal } from './assessment-service.js';
 import { billingAccessFallback } from './billing-delivery-status.js';
 import { AppError } from './errors.js';
 import { json } from './http.js';
@@ -29,21 +28,8 @@ async function commercialAccessFallback(request: Request, env: Env): Promise<Rec
   return billingAccessFallback(env, identity);
 }
 
-async function enrichedCachedAssessment(request: Request, env: Env, dealId: string): Promise<Response | null> {
-  const identity = await validateHubSpotRequest(request, env);
-  const enriched = await enrichStoredAssessmentForPortal(env, identity.portalId, dealId, identity);
-  return enriched ? json(enriched) : null;
-}
-
 export async function route(request: Request, env: Env, ctx: { waitUntil(promise: Promise<unknown>): void }): Promise<Response> {
   const pathname = new URL(request.url).pathname;
-  if (request.method === 'GET') {
-    const assessmentMatch = pathname.match(/^\/api\/v1\/deals\/(\d+)\/assessment$/);
-    if (assessmentMatch) {
-      const enriched = await enrichedCachedAssessment(request, env, assessmentMatch[1]!);
-      if (enriched) return enriched;
-    }
-  }
   if (request.method !== 'GET') return routeV9(request, env, ctx);
   const fallback = redactedPayload(pathname);
   const isAccessRequest = pathname === '/api/v1/enterprise/access';

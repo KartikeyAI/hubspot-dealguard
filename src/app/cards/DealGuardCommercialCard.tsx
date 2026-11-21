@@ -3,6 +3,7 @@ import { Alert, Button, Divider, Flex, Heading, Link, StatusTag, Text, hubspot }
 import {
   API_BASE,
   CardLoading,
+  AssessmentEvidenceNotice,
   CardUnavailable,
   commercialVariant,
   formatDate,
@@ -17,13 +18,13 @@ function amount(value: number | null, currency: string | null): string {
 }
 
 const DealGuardCommercialCard = ({ dealId }: { dealId: string }) => {
-  const { assessment, loading, working, error, notice, load } = useDealAssessment(dealId);
+  const { assessment, loading, working, error, notice, canRefresh, load } = useDealAssessment(dealId);
   const [authorizationWorking, setAuthorizationWorking] = useState(false);
   const [authorizationError, setAuthorizationError] = useState<string | null>(null);
   const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
 
   if (loading) return <CardLoading label="Loading commercial integrity" />;
-  if (!assessment) return <CardUnavailable error={error} />;
+  if (!assessment) return <CardUnavailable error={error} canRefresh={canRefresh} working={working} onRefresh={() => void load(true)} />;
   const commercial = assessment.intelligence?.commercialIntegrity;
 
   const prepareAuthorization = async () => {
@@ -48,9 +49,10 @@ const DealGuardCommercialCard = ({ dealId }: { dealId: string }) => {
 
   if (!commercial) {
     return <Flex direction="column" gap="medium">
+    <AssessmentEvidenceNotice assessment={assessment} />
       {error && <Alert title="Action failed" variant="danger">{error}</Alert>}
       <Alert title="Commercial evidence is not available" variant="warning">Refresh the deal to evaluate optional quote and line-item metadata. Core readiness and Deal Brief evidence remain available when this module cannot be loaded.</Alert>
-      <Button onClick={() => void load(true)} disabled={working}>Refresh commercial evidence</Button>
+      <Button onClick={() => void load(true)} disabled={working || !canRefresh}>Refresh commercial evidence</Button>
     </Flex>;
   }
 
@@ -58,6 +60,7 @@ const DealGuardCommercialCard = ({ dealId }: { dealId: string }) => {
   const authorizationPartial = commercial.authorization.status === 'partial';
 
   return <Flex direction="column" gap="medium">
+    <AssessmentEvidenceNotice assessment={assessment} />
     {error && <Alert title="Action failed" variant="danger">{error}</Alert>}
     {notice && <Alert title="Done" variant="success">{notice}</Alert>}
     {authorizationError && <Alert title="Authorization failed" variant="danger">{authorizationError}</Alert>}
@@ -110,6 +113,6 @@ const DealGuardCommercialCard = ({ dealId }: { dealId: string }) => {
     <Alert title="Evidence boundary" variant="info">DealGuard reads structured quote and line-item metadata only. It does not inspect proposal documents, contract terms, attachments, payment details, or approval content. Discount thresholds are review prompts, not proof that a discount is unauthorized.</Alert>
     {commercial.limitations.map((item, index) => <Text key={`commercial-limitation-${index}`} variant="microcopy">• {item}</Text>)}
     <Text variant="microcopy">Evidence fetched {formatDate(commercial.fetchedAt)}.</Text>
-    <Button variant="secondary" onClick={() => void load(true)} disabled={working}>Refresh commercial evidence</Button>
+    <Button variant="secondary" onClick={() => void load(true)} disabled={working || !canRefresh}>Refresh commercial evidence</Button>
   </Flex>;
 };

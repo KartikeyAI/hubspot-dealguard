@@ -45,7 +45,8 @@ test('panel states the deterministic and currency-safe interpretation boundary',
 
 test('deployed Enterprise Home renders the queue panel behind entitlement', () => {
   assert.match(home, /import \{ ManagerDecisionQueuePanel \} from '\.\/ManagerDecisionQueuePanel'/);
-  assert.match(home, /<ManagerDecisionQueuePanel enabled=\{access\.entitled\} \/>/);
+  assert.match(composition, /analytics && <ManagerDecisionQueueCore enabled=\{analytics\} \/>/);
+  assert.match(home, /<ManagerDecisionQueuePanel enabled=\{access\.entitled\} administrationEnabled=\{setupAdministrator\} access=\{access\} \/>/);
 });
 
 test('documentation and focused CI cover the App Home product surface', () => {

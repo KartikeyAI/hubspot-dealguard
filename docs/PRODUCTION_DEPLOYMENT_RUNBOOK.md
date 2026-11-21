@@ -1,8 +1,8 @@
-# DealGuard 2.1.0 production deployment runbook
+# DealGuard 3.0 production deployment runbook
 
-This is the authoritative operator procedure for the first production deployment of DealGuard on Cloudflare Workers with direct TLS-enforced Neon PostgreSQL connectivity, Tigris, and Cloudflare Queues.
+This is the operator procedure for a stable v3 release on Cloudflare Workers, the Neon HTTP query adapter, Tigris, and Cloudflare Queues. It covers both an existing Neon installation and the separately identified first D1 cutover. A runbook, source version bump, local test run or public CI success is not production approval.
 
-The production release is not a single `wrangler deploy` command. It is a controlled sequence with immutable source, backup verification, data reconciliation, HubSpot platform deployment, signed acceptance, evidence retention, and an explicit go/no-go decision.
+The controlled workflow is `.github/workflows/controlled-deploy.yml`. Its immutable source, staging, backup and independently signed evidence checks run before production migrations or Worker deployment. `STABLE_3_0_SIGNOFF.md` defines the mandatory evidence and two-reviewer signature contract; use its exact report checks and measured thresholds. The workflow does not upload the HubSpot project or provision Worker secrets.
 
 ## Production go/no-go rule
 
@@ -21,17 +21,29 @@ Assign these roles before the change window:
 | Approver | Reviews evidence and approves production environment deployment |
 | Incident lead | Owns rollback decision and communications |
 
-One person may hold multiple roles, but the release operator and final approver should be different people.
+Operational roles may overlap. The two production evidence signers must have distinct stable GitHub principals, distinct Ed25519 key material, and the `release_owner` and `security_reviewer` roles. Keep signing keys in their owners' approved signing systems. A GitHub environment approval does not replace either signature.
 
 ## Phase 0 — Freeze the release source
 
-1. Confirm PR #7 contains the intended release.
-2. Record the exact 40-character head SHA.
-3. Confirm the package version is `2.1.0`.
-4. Confirm `/health` is served from `worker/src/version.ts` and reports `2.1.0`.
+1. Confirm the reviewed, merged v3 scope includes all intended source and migration changes; record its PRs.
+2. Record the exact 40-character commit SHA and source tree, with no uncommitted or local-only feature work.
+3. Confirm the package version is the exact stable v3 candidate version.
+4. Confirm `/health` is served from `worker/src/version.ts` and reports the exact stable v3 candidate version.
 5. Confirm the latest CI run for the exact SHA is green.
 6. Confirm no unresolved pull-request review thread exists.
 7. Do not add feature changes after this point. Any code change creates a new release SHA and invalidates prior staging evidence.
+
+Before freezing, reproduce the repository gate in a clean environment with Node 22.12 or later, PostgreSQL 18 binaries and the checked-in lockfiles:
+
+```bash
+npm ci --ignore-scripts
+npm ci --ignore-scripts --prefix src/app/cards
+npm ci --ignore-scripts --prefix src/app/settings
+npm ci --ignore-scripts --prefix src/app/pages
+npm run test:local
+```
+
+Set `DEALGUARD_POSTGRES_BIN` to the directory containing `initdb` and `postgres` when they are not on `PATH`. Run as a non-root operating-system user, as PostgreSQL requires. The harness always creates its own disposable database, migrates it, sets both PostgreSQL test variables, validates it, runs `npm run check`, and removes it. It does not use production credentials or `.env` database URLs. A bare `npm test` without those database variables can skip PostgreSQL tests and is not the full production regression evidence.
 
 Evidence:
 
@@ -55,6 +67,7 @@ For `dealguard-production`:
 3. Restrict deployment branches to `main` or the approved release branch.
 4. Ensure secrets are not exposed to pull requests from untrusted forks.
 5. Set a deployment wait timer only when it fits the agreed change window.
+6. Configure and independently verify `PRODUCTION_SIGNOFF_TRUST_JSON` using the format in `STABLE_3_0_SIGNOFF.md`; only public keys belong in this protected variable.
 
 ### Required environment variables
 
@@ -77,6 +90,7 @@ DODO_AI_CREDIT_EVENT_NAME
 DODO_ACTIVE_DEAL_EVENT_NAME
 DODO_EVENT_OVERAGE_EVENT_NAME
 DODO_RETENTION_EVENT_NAME
+PRODUCTION_SIGNOFF_TRUST_JSON
 ```
 
 Production values:
@@ -115,6 +129,8 @@ Rules:
 - grant Tigris credentials only the DealGuard production bucket;
 - never store populated secrets in repository files or deployment artifacts.
 
+Optional intelligence is disabled when its global flag is unset. Configure `DEALGUARD_AI_ENABLED`, its approved model/pricing metadata and protected `DEALGUARD_AI_API_KEY` only after native-AI acceptance; explicit portal consent, `ai.use`, evidence freshness and budgets still apply. `DEALGUARD_FORECAST_ENABLED` additionally requires portal outcome consent, a qualified model, independent evidence-bound review, a portal switch, current monitoring and per-deal eligibility. Breeze requires its global flag, exact registered action IDs and portal consent. See `GOVERNED_AI_ASSISTANCE.md`, `OUTCOME_DATASETS_AND_EVALUATION.md` and `optional/breeze/README.md`. Enabling a flag does not establish approval or complete acceptance.
+
 ## Phase 2 — Provision production infrastructure
 
 ### 2.1 Neon PostgreSQL
@@ -125,22 +141,22 @@ Rules:
 4. Create or verify the least-privilege runtime role used by the Worker.
 5. Require TLS.
 6. Record the project, branch, database, and region without recording credentials.
-7. Ensure the target application tables are empty before the first data import.
+7. Only for the first D1 import, ensure the target application tables are empty. Never empty or reimport an existing Neon production database as part of a v3 upgrade.
 
-Validate from an approved operator machine:
+Rehearse migrations on a disposable restored branch before production approval. The actual production application of migrations belongs in Controlled deploy, after verification of the signed evidence. On the disposable branch:
 
 ```bash
-NEON_DATABASE_URL="$PRODUCTION_NEON_URL" npm run db:migrate
-NEON_DATABASE_URL="$PRODUCTION_NEON_URL" npm run db:migrate:check
-NEON_DATABASE_URL="$PRODUCTION_NEON_URL" npm run db:validate
+NEON_DATABASE_URL="$REHEARSAL_NEON_URL" npm run db:migrate
+NEON_DATABASE_URL="$REHEARSAL_NEON_URL" npm run db:migrate:check
+NEON_DATABASE_URL="$REHEARSAL_NEON_URL" npm run db:validate
 ```
 
-Expected result: migrations `0001` through `0014` are applied, checksums match, and all schema and tenant checks pass.
+Expected result: every migration at the frozen release SHA is applied, checksums match, and all schema and tenant checks pass. This v3 implementation includes migrations through `0043`; the immutable candidate's migration manifest is authoritative. Do not edit previously applied migration files.
 
 ### 2.2 Direct Worker-to-Neon connectivity
 
 1. Create a least-privilege production runtime role distinct from the migration role.
-2. Use the Neon pooled endpoint appropriate for serverless Worker traffic.
+2. The runtime uses `@neondatabase/serverless` HTTP queries with a PostgreSQL connection URL. It does not open a new TCP client per request or use a Hyperdrive binding. Database migrations and isolated tests use the PostgreSQL driver separately.
 3. Require TLS for every connection.
 4. Store the complete runtime URL only as the protected `NEON_DATABASE_URL` environment secret.
 5. Confirm staging uses a different Neon branch, runtime role, and URL.
@@ -252,6 +268,8 @@ In GitHub Actions:
 
 Follow `docs/MIGRATION_D1_TO_NEON.md` against a copied source database and a disposable Neon branch.
 
+This D1 procedure applies only when the release actually changes persistence from D1. For an existing Neon installation, instead restore an encrypted backup into an isolated branch, apply only pending migrations, validate tenant/audit/object integrity and rehearse the compatible Worker rollback. Preserve the existing production data and migration ledger.
+
 Required evidence:
 
 - source snapshot checksum;
@@ -290,9 +308,11 @@ The workflow must pass:
 - health and version verification;
 - public smoke checks where enabled;
 - signed full acceptance;
+- required intelligence certification;
 - deployment evidence generation.
 
 Record the successful staging run ID. Production promotion must use this exact run.
+Retain its attempt-specific artifact `dealguard-deployment-staging-<run-id>-<attempt>`. A successful `read-only` run is diagnostic and cannot be promoted as full production certification.
 
 ### 4.4 Upload and test the staging HubSpot project
 
@@ -306,9 +326,15 @@ npm run hubspot:upload
 
 Install or reauthorize the staging app and complete `docs/PRODUCTION_ACCEPTANCE_RUNBOOK.md` against staging.
 
+### 4.5 Independent production evidence
+
+Complete all eleven categories in `STABLE_3_0_SIGNOFF.md`: source, canonical CI, governance, account acceptance, security, commercial, intelligence, load, recovery, consenting pilots and operations. Local simulated integrations and local recovery tests cannot replace live provider or customer evidence. Reviewers verify original evidence, report digests, the exact SHA/tree/version and the full staging run before signing.
+
+Publish the reviewed dossier, report files and detached signatures from the approved evidence process as `dealguard-production-signoff-<full-release-sha>`, and retain its producing `signoff_run_id`. The workflow downloads and verifies that artifact; it does not generate approvals or sign on anyone's behalf. The evidence receipt deliberately records `productionReady:false` until rollout and post-deployment acceptance are completed.
+
 ## Phase 5 — Production backup and write freeze
 
-This phase applies to the first migration from the previous production persistence model.
+Every production upgrade needs a fresh encrypted backup, verified checksum, isolated restore evidence and a documented write/queue control plan. Steps 6, 11 and 12 below refer to the first D1 cutover only. On existing Neon, use the PostgreSQL backup/restore procedure and skip source import; record the reason. Avoid freezing unrelated customer work longer than the reviewed migration requires.
 
 1. Announce the change window.
 2. Stop scheduled scans.
@@ -343,11 +369,12 @@ NEON_DATABASE_URL="$PRODUCTION_NEON_URL" npm run migration:d1:verify -- \
 Verify:
 
 - exact release SHA equals the successful staging release SHA;
-- package version is `2.1.0`;
+- package version is the exact stable v3 candidate version;
 - staging Controlled deploy passed with the full profile;
 - backup and restore evidence is attached;
 - migration verification has zero failures;
 - production environment approval is available;
+- all eleven signed evidence categories and both independent approvals are valid, unexpired and bound to this source and staging run;
 - rollback owner is present;
 - change window remains open.
 
@@ -361,9 +388,10 @@ release_sha=<exact release SHA>
 backup_reference=backups/production/<date>/<verified-object>.enc
 backup_sha256=<independently recorded 64-character digest>
 staging_run_id=<successful full-profile staging run ID>
+signoff_run_id=<run containing the independently signed candidate evidence artifact>
 acceptance_profile=full
 portal_id=<production acceptance portal>
-user_id=<optional HubSpot user ID>
+user_id=<identified HubSpot acceptance administrator ID>
 user_email=<production acceptance administrator>
 expected_tier=<free|growth|enterprise>
 test_deal_id=<existing production test deal>
@@ -384,14 +412,15 @@ The workflow must complete in this order:
 4. run production preflight;
 5. verify matching staging evidence;
 6. verify the encrypted Tigris backup;
-7. apply and verify PostgreSQL migrations;
-8. validate tenant constraints;
-9. deploy the production Worker environment;
-10. verify `/health` reports `2.1.0`;
-11. run `npm run production:smoke`;
-12. run signed full acceptance;
-13. record source and migration checksums;
-14. generate and upload the deployment record.
+7. download the independent sign-off artifact and verify its signatures, source, reports, staging binding and validity;
+8. apply and verify PostgreSQL migrations;
+9. validate tenant constraints;
+10. deploy the production Worker environment;
+11. verify `/health` reports the exact candidate package version;
+12. run `npm run production:smoke`;
+13. run signed full acceptance and required intelligence certification;
+14. record source and migration checksums;
+15. generate and upload the deployment record and sanitized sign-off receipt.
 
 ## Phase 7 — Upload the production HubSpot project
 
@@ -407,7 +436,7 @@ npm run hubspot:upload
 2. Install or reauthorize the production acceptance portal.
 3. Confirm the exact production redirect and fetch origins.
 4. Confirm all required scopes.
-5. Confirm App Home V3 loads.
+5. Confirm the active App Home loads. The retained `EnterpriseHomeV3.tsx` manifest entry imports the current `EnterpriseHomeV4.tsx` implementation; the entry filename is not the product release version.
 6. Confirm the deal card loads on an existing deal.
 7. Confirm the settings extension loads.
 8. Confirm both workflow actions are available.
@@ -462,6 +491,7 @@ For at least the agreed rollback window, monitor:
 Declare the release successful only when:
 
 - deployment record result is `passed`;
+- independent pre-deployment approval is valid and retained; all mandatory source/CI/security/load/recovery/pilot/operations evidence is verified;
 - production smoke has zero failures;
 - full signed acceptance has zero failures;
 - manual HubSpot and provider tests pass;
@@ -505,6 +535,7 @@ After reopening writes:
 8. run public smoke and read-only signed acceptance before reopening writes.
 
 Never run an automatic reverse schema migration in production. Prefer forward repair or verified restore-and-switch.
+Do not bypass the independent sign-off gate for rollback. Preselect a compatible approved source and a tested recovery plan, including reconciliation of writes after the cutover. On an existing Neon upgrade, keep the authoritative database and restore strategy from that change plan; the legacy-D1 fallback applies only to a first cutover.
 
 ## Required final evidence bundle
 
@@ -513,6 +544,7 @@ Retain for at least 90 days, or longer when contractual requirements apply:
 - release SHA and PR;
 - CI and Release readiness records;
 - staging and production Controlled deploy records;
+- original independently signed production dossier, all eleven reports, detached signatures and verification receipt;
 - preflight reports;
 - public smoke JSON and Markdown;
 - signed acceptance JSON and Markdown;
@@ -525,3 +557,5 @@ Retain for at least 90 days, or longer when contractual requirements apply:
 - Dodo, Slack, email, webhook, and SIEM test evidence;
 - screenshots for account-bound provider actions;
 - go/no-go approval and incident notes.
+
+Workflow deployment artifacts include the run attempt: `dealguard-deployment-<target>-<run-id>-<attempt>`. Keep raw customer evidence in access-controlled storage and retain sanitized references in the release record. Public repository CI can verify code and isolated PostgreSQL behavior; signed-in HubSpot, billing-provider, load, production recovery and pilot evidence still require their authorized environments.

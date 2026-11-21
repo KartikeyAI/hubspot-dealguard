@@ -13,4 +13,4 @@ export const PLAN_LIMITS: Record<PlanId,PlanLimits> = {
 // Keep the required installation grant limited to the CRM and schema access DealGuard actually uses.
 export const REQUIRED_HUBSPOT_SCOPES = ['crm.objects.deals.read','crm.objects.deals.write','crm.objects.contacts.read','crm.objects.companies.read','crm.schemas.deals.read','crm.schemas.deals.write'] as const;
 export const OPTIONAL_COMMERCIAL_HUBSPOT_SCOPES = ['crm.objects.line_items.read','crm.objects.quotes.read'] as const;
-export const APP_VERSION = '2.1.0-rc.1';
+export { DEALGUARD_VERSION as APP_VERSION } from './version.js';

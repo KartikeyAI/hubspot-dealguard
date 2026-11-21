@@ -1,5 +1,6 @@
 import { sha256Hex } from './crypto.js';
 import { AppError } from './errors.js';
+import { entitlementPlan, subscriptionEntitled } from './billing-entitlements.js';
 import type { CommercialTier, SubscriptionStatus, UsageMode, BillingInterval } from './billing.js';
 import type { Env, PlanId } from './types.js';
 
@@ -149,12 +150,6 @@ export function subscriptionGraceDeadline(status: SubscriptionStatus, previous: 
   return new Date(Date.parse(eventAt) + 7 * 86_400_000).toISOString();
 }
 
-function entitled(status: SubscriptionStatus, graceEndsAt: string | null): boolean {
-  if (status === 'active' || status === 'trialing' || status === 'manual') return true;
-  return (status === 'on_hold' || status === 'past_due')
-    && Boolean(graceEndsAt && Date.parse(graceEndsAt) > Date.now());
-}
-
 async function markEvent(
   env: Env,
   webhookId: string,
@@ -230,9 +225,7 @@ async function applyProviderState(
   payloadHash: string,
 ): Promise<boolean> {
   const now = new Date().toISOString();
-  const plan: PlanId = entitled(input.status, input.graceEndsAt)
-    ? input.tier === 'enterprise' ? 'beta_growth' : input.tier === 'growth' ? 'growth' : 'free'
-    : 'free';
+  const plan: PlanId = entitlementPlan(input.tier, subscriptionEntitled(input));
   const results = await env.DB.batch([
     // Serialize duplicate deliveries before any subscription, plan or audit mutation.
     env.DB.prepare(`SELECT status FROM billing_events WHERE provider = 'dodo' AND provider_event_id = ? FOR UPDATE`).bind(input.eventId),

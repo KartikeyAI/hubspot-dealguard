@@ -1,5 +1,7 @@
 import { AwsClient } from 'aws4fetch';
+import { createHash } from 'node:crypto';
 import { AppError } from './errors.js';
+import { readBoundedText } from './request-body.js';
 import type { Env } from './types.js';
 
 const DEFAULT_ENDPOINT = 'https://t3.storage.dev';
@@ -102,11 +104,21 @@ export async function createSignedObjectUpload(
   input: { key: string; contentType: string; contentLength: number; sha256: string; expiresSeconds?: number },
 ): Promise<string> {
   const config = configuration(env);
-  return presignUrl(config, input.key, 'PUT', Math.min(MAX_SIGNED_URL_SECONDS, Math.max(60, input.expiresSeconds ?? 600)), {
+  await requireTenantObjectWrite(env, input.key);
+  const url = await presignUrl(config, input.key, 'PUT', Math.min(MAX_SIGNED_URL_SECONDS, Math.max(60, input.expiresSeconds ?? 600)), {
     'Content-Type': input.contentType,
     'Content-Length': String(input.contentLength),
     'x-amz-meta-sha256': input.sha256,
   });
+  await requireTenantObjectWrite(env, input.key);
+  return url;
+}
+
+async function requireTenantObjectWrite(env: Env, key: string): Promise<void> {
+  const portalId = /^portals\/([0-9]+)\//.exec(key)?.[1];
+  if (!portalId) return;
+  const tenant = await env.DB.prepare('SELECT status FROM tenants WHERE portal_id=?').bind(portalId).first<{status: string}>();
+  if (tenant?.status !== 'active') throw new AppError(409, 'installation_inactive', 'This installation is not accepting stored files.');
 }
 
 export async function headObject(env: Env, key: string): Promise<{ contentLength: number; contentType: string | null; etag: string | null; sha256: string | null }> {
@@ -137,7 +149,8 @@ export async function putObject(
     'content-length': String(bytes.byteLength),
     'x-amz-meta-sha256': input.sha256,
   });
-  const response = await fetch(url, { method: 'PUT', headers, body: bytes });
+  await requireTenantObjectWrite(env, input.key);
+  const response = await fetch(url, { method: 'PUT', headers, body: bytes, redirect: 'error', signal: AbortSignal.timeout(10_000) });
   if (!response.ok) throw new AppError(502, 'object_storage_request_failed', `Tigris PUT request failed with status ${response.status}.`);
   return { etag: response.headers.get('etag')?.replaceAll('"', '') ?? null, sizeBytes: bytes.byteLength };
 }
@@ -149,39 +162,89 @@ export async function createSignedObjectDownload(env: Env, key: string, filename
   return presignUrl(config, key, 'GET', Math.min(MAX_SIGNED_URL_SECONDS, Math.max(60, expiresSeconds)), queryParams);
 }
 
-export async function deleteTenantObjects(env: Env, portalId: string): Promise<number> {
+function invalidDeletionResponse(): never {
+  throw new AppError(502, 'object_storage_deletion_response_invalid', 'Object storage returned an invalid deletion response.');
+}
+
+function xmlText(value: string): string {
+  if (/&(?!amp;|lt;|gt;|apos;|quot;|#\d+;|#x[0-9a-fA-F]+;)/.test(value)) return invalidDeletionResponse();
+  return value.replace(/&(amp|lt|gt|apos|quot|#\d+|#x[0-9a-fA-F]+);/g, (_all, entity: string) => {
+    const known: Record<string,string> = {amp:'&',lt:'<',gt:'>',apos:"'",quot:'"'};
+    if (known[entity] !== undefined) return known[entity]!;
+    const point = entity.startsWith('#x') ? Number.parseInt(entity.slice(2),16) : Number.parseInt(entity.slice(1),10);
+    if (!Number.isSafeInteger(point) || point <= 0 || point > 0x10ffff || point >= 0xd800 && point <= 0xdfff) return invalidDeletionResponse();
+    return String.fromCodePoint(point);
+  });
+}
+
+function xmlElement(xml: string, name: string): string | null {
+  const values = [...xml.matchAll(new RegExp(`<${name}>([^<]*)</${name}>`, 'g'))];
+  if (values.length > 1) return invalidDeletionResponse();
+  return values[0]?.[1] ?? null;
+}
+
+function xmlDocument(xml: string, root: string): boolean {
+  if (/<!DOCTYPE|<!ENTITY|<Error\b/i.test(xml)) return false;
+  const body = xml.replace(/^\s*<\?xml[^?]*\?>\s*/, '').trim();
+  return new RegExp(`^<${root}(?:\\s[^>]*)?>[\\s\\S]*</${root}>$`).test(body)
+    || new RegExp(`^<${root}(?:\\s[^>]*)?\\s*/>$`).test(body);
+}
+
+/** Delete bounded first-page batches. Relisting avoids a cursor into a changing
+ * prefix; a separate empty listing is required before reporting completion. */
+export async function deleteTenantObjects(env: Env, portalId: string, options: {
+  beforeRequest(): Promise<void>; maxPasses?: number;
+}): Promise<{ deleted: number; complete: boolean }> {
+  if (!/^[0-9]{1,32}$/.test(portalId)) throw new AppError(400, 'portal_id_invalid', 'Portal identifier is invalid.');
   const config = configuration(env);
   const prefix = `portals/${portalId}/`;
-  let continuationToken: string | undefined;
   let deleted = 0;
-
-  do {
+  const deadlineAt = Date.now()+45_000;
+  const maxPasses = Number.isSafeInteger(options.maxPasses) ? Math.max(1,Math.min(3,options.maxPasses!)) : 3;
+  const request = async(url: URL, method: 'GET' | 'POST', body?: string, extraHeaders: Record<string,string> = {}): Promise<string> => {
+    const headers = await signRequest(config, method, url, body, extraHeaders);
+    await options.beforeRequest();
+    const remaining = Math.min(10_000,deadlineAt-Date.now());
+    if (remaining <= 0) throw new AppError(502, 'object_storage_request_failed', 'Object deletion will resume on its next attempt.');
+    const signal = AbortSignal.timeout(remaining);
+    const response = await fetch(url,{method,headers,...(body ? {body} : {}),redirect:'error',signal});
+    if (!response.ok) throw new AppError(502, 'object_storage_request_failed', 'Object storage could not complete the deletion attempt.');
+    try { return await readBoundedText({headers:response.headers,body:response.body,signal},1_048_576,remaining); }
+    catch { return invalidDeletionResponse(); }
+  };
+  for (let pass=0;pass<maxPasses;pass++) {
     const listUrl = objectUrl(config, '');
-    const listParams = new URLSearchParams({ 'list-type': '2', prefix });
-    if (continuationToken) listParams.set('continuation-token', continuationToken);
-    listUrl.search = listParams.toString();
-    const listHeaders = await signRequest(config, 'GET', listUrl, undefined, { accept: '*/*' });
-    const listResponse = await fetch(listUrl, { method: 'GET', headers: listHeaders });
-    if (!listResponse.ok) throw new AppError(502, 'object_storage_request_failed', `Tigris LIST request failed with status ${listResponse.status}.`);
-
-    const xml = await listResponse.text();
-    const keys = Array.from(xml.matchAll(/<Key>([^<]+)<\/Key>/g)).map((match) => match[1]);
-    if (keys.length) {
-      const deleteBody = `<?xml version="1.0" encoding="UTF-8"?><Delete><Quiet>true</Quiet>${keys.map((key) => `<Object><Key>${key}</Key></Object>`).join('')}</Delete>`;
-      const deleteUrl = objectUrl(config, '');
-      deleteUrl.search = '?delete';
-      const deleteHeaders = await signRequest(config, 'POST', deleteUrl, deleteBody, {
-        'content-type': 'application/xml',
-        'content-length': String(deleteBody.length),
-      });
-      const deleteResponse = await fetch(deleteUrl, { method: 'POST', headers: deleteHeaders, body: deleteBody });
-      if (!deleteResponse.ok) throw new AppError(502, 'object_storage_request_failed', `Tigris DELETE request failed with status ${deleteResponse.status}.`);
-      deleted += keys.length;
+    listUrl.search = new URLSearchParams({'list-type':'2',prefix,'max-keys':'200','encoding-type':'url'}).toString();
+    const xml = await request(listUrl,'GET',undefined,{accept:'application/xml'});
+    if (!xmlDocument(xml,'ListBucketResult') || /<CommonPrefixes\b/.test(xml)) return invalidDeletionResponse();
+    const truncated = xmlElement(xml,'IsTruncated');
+    if (truncated !== 'true' && truncated !== 'false') return invalidDeletionResponse();
+    const contents = [...xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)];
+    if ((xml.match(/<Contents\b/g)??[]).length !== contents.length || (xml.match(/<Key>/g)??[]).length !== contents.length || contents.length>200) return invalidDeletionResponse();
+    const encoding = xmlElement(xml,'EncodingType');
+    if (encoding !== null && encoding !== 'url') return invalidDeletionResponse();
+    const keys = contents.map(content => {
+      const value = xmlElement(content[1]!,'Key');
+      if (value === null) return invalidDeletionResponse();
+      let key: string;
+      try { key = encoding === 'url' ? decodeURIComponent(xmlText(value)) : xmlText(value); } catch { return invalidDeletionResponse(); }
+      if (!key.startsWith(prefix) || new TextEncoder().encode(key).byteLength>1024 || /[\u0000-\u001f\u007f]/.test(key)) return invalidDeletionResponse();
+      return key;
+    });
+    const count = xmlElement(xml,'KeyCount');
+    if (count === null || !/^\d+$/.test(count) || Number(count)!==keys.length) return invalidDeletionResponse();
+    if (keys.length===0) {
+      if (truncated==='true') return invalidDeletionResponse();
+      return {deleted,complete:true};
     }
-
-    const nextToken = new RegExp('<NextContinuationToken>([^<]+)</NextContinuationToken>').exec(xml)?.[1];
-    continuationToken = nextToken || undefined;
-  } while (continuationToken);
-
-  return deleted;
+    const escape = (key: string) => key.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&apos;');
+    const deleteBody = `<?xml version="1.0" encoding="UTF-8"?><Delete><Quiet>true</Quiet>${keys.map(key=>`<Object><Key>${escape(key)}</Key></Object>`).join('')}</Delete>`;
+    const deleteUrl = objectUrl(config,''); deleteUrl.search='?delete';
+    const result = await request(deleteUrl,'POST',deleteBody,{'content-type':'application/xml',
+      'content-length':String(new TextEncoder().encode(deleteBody).byteLength),'content-md5':createHash('md5').update(deleteBody).digest('base64')});
+    // S3 can return HTTP 200 with per-key errors, including in quiet mode.
+    if (!xmlDocument(result,'DeleteResult')) return invalidDeletionResponse();
+    deleted+=keys.length;
+  }
+  return {deleted,complete:false};
 }

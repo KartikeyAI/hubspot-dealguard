@@ -1,4 +1,5 @@
 import { authorizeRecordedDeal, authorizeFreshDeal, assertRecordScope, type RecordResource } from './record-access.js';
+import { buildSourceEvidence, type SourceEvidence } from './source-evidence.js';
 import { AppError } from './errors.js';
 import { assertRecordAvailable } from './record-lifecycle.js';
 import { assessmentFreshness } from './evidence-freshness.js';
@@ -38,7 +39,7 @@ type CompleteIntelligence = DealIntelligence
   & Partial<DealMomentumIntelligence>
   & Partial<BuyerCommitteeIntelligence>
   & Partial<EngagementMetadataIntelligence>
-  & DealBriefIntelligence;
+  & DealBriefIntelligence & { sourceEvidence: SourceEvidence };
 
 function cacheKey(portalId: string, dealId: string): string {
   return `${portalId}:${dealId}`;
@@ -177,10 +178,18 @@ function completeIntelligence(
   relationship: BuyerCommitteeIntelligence | null,
   engagement: EngagementMetadataIntelligence | null,
 ): CompleteIntelligence {
+  const sourceEvidence = buildSourceEvidence({
+    readiness: assessment.assessedAt, history: momentum?.momentum.fetchedAt,
+    relationships: relationship?.relationshipCoverage.fetchedAt, engagement: engagement?.engagement.fetchedAt,
+  });
+  if (!sourceEvidence.sources.history.usable) momentum = null;
+  if (!sourceEvidence.sources.relationships.usable) relationship = null;
+  if (!sourceEvidence.sources.engagement.usable) engagement = null;
   const decisionActions = combineDecisionActions(momentum, relationship, engagement);
   const baseBrief = buildDealBrief({ assessment, readiness, momentum, relationship, decisionActions });
   return {
     ...readiness,
+    sourceEvidence,
     ...(momentum ?? {}),
     ...(relationship ?? {}),
     ...(engagement ?? {}),
@@ -280,7 +289,7 @@ export async function assessDealForPortal(
 ) {
   if (trigger === 'record') {
     if (!identity || identity.portalId !== portalId) throw new AppError(403, 'record_user_required', 'An identified HubSpot user is required.');
-    await authorizeRecordedDeal(env,identity,dealId);
+    await authorizeRecordedDeal(env,identity,dealId,'deal.review');
   }
   const startedAt = Date.now();
   const repository = new Repository(env);
@@ -288,7 +297,7 @@ export async function assessDealForPortal(
   const client = await HubSpotClient.forPortal(env, portalId);
   const dimensionProperties = await policyDimensionPropertyNames(env, portalId);
   const deal = await client.getDeal(dealId, undefined, dimensionProperties);
-  const resource = identity ? await authorizeFreshDeal(env,identity,deal) : null;
+  const resource = identity ? await authorizeFreshDeal(env,identity,deal,'deal.review') : null;
   const policy = await resolveSegmentedRulesForDeal(env, portalId, client.settings.rules, deal);
   const assessment = assessDeal(deal, policy.rules);
   if (!await repository.saveAssessment(portalId, assessment)) {
@@ -315,6 +324,16 @@ export async function assessDealForPortal(
   }
   const intelligence = completeIntelligence(assessment, readiness, momentum, relationship, engagement);
 
+  if (identity) {
+    const current = await authorizeRecordedDeal(env,identity,dealId,'deal.review');
+    if (current.assessmentAt !== assessment.assessedAt) {
+      throw new AppError(409,'assessment_changed','A newer assessment was recorded. Reload the deal.');
+    }
+  }
+
+  // An explicit record refresh computes evidence. Configured workflow/webhook
+  // automation owns notifications, CRM write-back and automatic task creation.
+  if (trigger !== 'record') {
   try {
     await notifyAssessmentTransition(env, portalId, previous, assessment, client.settings, client.plan, trigger, forceSlack);
   } catch (error) {
@@ -330,6 +349,7 @@ export async function assessDealForPortal(
     await syncAssessmentRemediations(env, portalId, assessment);
   } catch (error) {
     console.error(JSON.stringify({ level: 'error', task: 'remediation_assessment_sync', portalId, dealId, trigger, error: error instanceof Error ? error.message : String(error) }));
+  }
   }
   try {
     await recordUsageAtomic(env, portalId, 'event_overage', 1, `assessment:${trigger}:${dealId}:${assessment.assessedAt}`, {

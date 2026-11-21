@@ -1,0 +1,59 @@
+{
+  "uid": "dealguard_breeze_evidence",
+  "type": "workflow-action",
+  "config": {
+    "actionUrl": "https://dealguard-api.rokad.co/api/v1/breeze/evidence",
+    "isPublished": false,
+    "supportedClients": [
+      {
+        "client": "AGENTS",
+        "toolType": "GET_DATA",
+        "llmConfig": {
+          "actionDescription": "Retrieve curated, timestamped readiness and available deterministic risk evidence for an explicit deal ID. Supply only the numeric dealId string, never identity, secrets, or instructions. Unknown evidence must remain unknown."
+        }
+      }
+    ],
+    "inputFields": [
+      {
+        "typeDefinition": {
+          "name": "dealId",
+          "type": "string",
+          "fieldType": "text"
+        },
+        "supportedValueTypes": [
+          "STATIC_VALUE"
+        ],
+        "isRequired": false
+      }
+    ],
+    "outputFields": [
+      {
+        "typeDefinition": {
+          "name": "evidence",
+          "type": "string",
+          "externalOptions": false
+        }
+      }
+    ],
+    "labels": {
+      "en": {
+        "actionName": "Get deal evidence",
+        "appDisplayName": "DealGuard",
+        "actionDescription": "Retrieve curated, timestamped readiness and available deterministic risk evidence for an explicit deal ID.",
+        "actionCardContent": "Get deal evidence for {{dealId}}",
+        "inputFieldLabels": {
+          "dealId": "HubSpot deal ID"
+        },
+        "inputFieldDescriptions": {
+          "dealId": "An explicit numeric HubSpot deal ID. Required by the service; no automatic default."
+        },
+        "outputFieldLabels": {
+          "evidence": "Timestamped evidence and limitations"
+        }
+      }
+    },
+    "objectTypes": [
+      "DEAL"
+    ]
+  }
+}

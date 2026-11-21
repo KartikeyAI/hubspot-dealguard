@@ -1,7 +1,7 @@
 import { AppError } from './errors.js';
-import { Repository } from './repository.js';
+import { entitlementPlan, rowEntitled } from './billing-entitlements.js';
 import type { CommercialTier, SubscriptionStatus, UsageMode, BillingInterval } from './billing.js';
-import type { Env, PlanId, RequestIdentity } from './types.js';
+import type { Env, RequestIdentity } from './types.js';
 
 interface ScheduledSubscriptionRow {
   portal_id: string;
@@ -24,19 +24,7 @@ interface ScheduledSubscriptionRow {
   purchase_order_reference: string | null;
   scheduled_tier: CommercialTier | null;
   scheduled_change_at: string | null;
-}
-
-function entitled(status: SubscriptionStatus, graceEndsAt: string | null): boolean {
-  if (status === 'active' || status === 'trialing' || status === 'manual') return true;
-  return (status === 'on_hold' || status === 'past_due')
-    && Boolean(graceEndsAt && Date.parse(graceEndsAt) > Date.now());
-}
-
-function planFor(tier: CommercialTier, status: SubscriptionStatus, graceEndsAt: string | null): PlanId {
-  if (!entitled(status, graceEndsAt)) return 'free';
-  if (tier === 'enterprise') return 'beta_growth';
-  if (tier === 'growth') return 'growth';
-  return 'free';
+  state_hash: string;
 }
 
 export async function scheduleManualPlanChange(
@@ -60,38 +48,46 @@ export async function scheduleManualPlanChange(
     throw new AppError(409, 'provider_schedule_required', 'Dodo subscriptions must be changed through the Dodo plan-change API so provider billing remains authoritative.');
   }
   const date = new Date(parsed).toISOString();
-  await env.DB.prepare(
-    `UPDATE subscriptions_v2 SET scheduled_tier = ?, scheduled_change_at = ?,
-     scheduled_change_provider_state = 'manual_scheduled', updated_at = ? WHERE portal_id = ?`,
-  ).bind(tier, date, new Date().toISOString(), identity.portalId).run();
-  await new Repository(env).audit(identity.portalId, identity.userId, identity.userEmail, 'billing.manual_plan_change_scheduled', {
-    tier,
-    effectiveAt: date,
-  });
+  const now = new Date().toISOString();
+  const result = await env.DB.prepare(
+    `WITH changed AS (
+      UPDATE subscriptions_v2 SET scheduled_tier = ?, scheduled_change_at = ?,
+        scheduled_change_provider_state = 'manual_scheduled', updated_at = ?
+      WHERE portal_id = ? AND provider = 'manual' RETURNING portal_id
+    ) INSERT INTO audit_events (id, portal_id, user_id, user_email, action, metadata_json, created_at)
+      SELECT ?, portal_id, ?, ?, 'billing.manual_plan_change_scheduled', ?, ? FROM changed`,
+  ).bind(tier, date, now, identity.portalId, crypto.randomUUID(), identity.userId, identity.userEmail,
+    JSON.stringify({ tier, effectiveAt: date }), now).run();
+  if (Number(result.meta?.changes ?? 0) !== 1) throw new AppError(409, 'subscription_changed', 'The subscription changed. Reload billing before scheduling a change.');
 }
 
 export async function applyManualScheduledPlanChanges(env: Env): Promise<void> {
   const now = new Date().toISOString();
   const rows = await env.DB.prepare(
-    `SELECT * FROM subscriptions_v2
+    `SELECT s.*, md5(row_to_json(s)::text) AS state_hash FROM subscriptions_v2 s
      WHERE provider = 'manual' AND scheduled_tier IS NOT NULL
        AND scheduled_change_at IS NOT NULL AND scheduled_change_at <= ?
      ORDER BY scheduled_change_at ASC LIMIT 100`,
   ).bind(now).all<ScheduledSubscriptionRow>();
   for (const row of rows.results ?? []) {
     const tier = row.scheduled_tier ?? 'free';
-    const updated = await env.DB.prepare(
-      `UPDATE subscriptions_v2 SET tier = ?, scheduled_tier = NULL, scheduled_interval = NULL,
-       scheduled_product_id = NULL, scheduled_change_at = NULL,
-       scheduled_change_provider_state = 'applied', updated_at = ?
-       WHERE portal_id = ? AND provider = 'manual' AND scheduled_tier = ?
-         AND scheduled_change_at IS NOT NULL AND scheduled_change_at <= ?`,
-    ).bind(tier, now, row.portal_id, tier, now).run();
-    if (Number(updated.meta?.changes ?? 0) !== 1) continue;
-    const plan = planFor(tier, row.status, row.grace_ends_at);
+    const plan = entitlementPlan(tier, rowEntitled(row, Date.parse(now)));
+    // The exact inspected contract, tenant plan and audit move together. A provider
+    // conversion or contract revision while this job is running makes it a no-op.
     await env.DB.prepare(
-      `UPDATE tenants SET commercial_tier = ?, plan = ?, updated_at = ? WHERE portal_id = ?`,
-    ).bind(tier, plan, now, row.portal_id).run();
-    await new Repository(env).audit(row.portal_id, null, null, 'billing.manual_plan_change_applied', { tier });
+      `WITH changed AS (
+        UPDATE subscriptions_v2 AS s SET tier = ?, scheduled_tier = NULL, scheduled_interval = NULL,
+          scheduled_product_id = NULL, scheduled_change_at = NULL,
+          scheduled_change_provider_state = 'applied', updated_at = ?
+        WHERE portal_id = ? AND provider = 'manual' AND scheduled_tier = ?
+          AND scheduled_change_at IS NOT NULL AND scheduled_change_at <= ?
+          AND md5(row_to_json(s)::text) = ? RETURNING portal_id
+      ), updated_tenant AS (
+        UPDATE tenants AS t SET commercial_tier = ?, plan = ?, updated_at = ?
+        FROM changed WHERE t.portal_id = changed.portal_id RETURNING t.portal_id
+      ) INSERT INTO audit_events (id, portal_id, action, metadata_json, created_at)
+        SELECT ?, portal_id, 'billing.manual_plan_change_applied', ?, ? FROM updated_tenant`,
+    ).bind(tier, now, row.portal_id, tier, now, row.state_hash, tier, plan, now,
+      crypto.randomUUID(), JSON.stringify({ tier }), now).run();
   }
 }

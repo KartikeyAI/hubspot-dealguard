@@ -1,4 +1,5 @@
 import { sha256Hex } from './crypto.js';
+import { entitlementPlan, rowEntitled, subscriptionEntitled } from './billing-entitlements.js';
 import { AppError } from './errors.js';
 import { Repository } from './repository.js';
 import type { Env, PlanId, RequestIdentity } from './types.js';
@@ -231,11 +232,6 @@ export async function createCustomerPortalSession(env: Env, identity: RequestIde
   return { url: result.link };
 }
 
-function entitledStatus(status: SubscriptionStatus, graceEndsAt: string | null): boolean {
-  if (['trialing', 'active', 'manual'].includes(status)) return true;
-  return (status === 'on_hold' || status === 'past_due') && Boolean(graceEndsAt && Date.parse(graceEndsAt) > Date.now());
-}
-
 function periodStart(row: SubscriptionRow | null): string {
   if (row?.current_period_start) return row.current_period_start;
   const date = new Date();
@@ -244,7 +240,7 @@ function periodStart(row: SubscriptionRow | null): string {
   return date.toISOString();
 }
 
-async function allowanceViews(env: Env, portalId: string, tier: CommercialTier, row: SubscriptionRow | null): Promise<BillingAllowance[]> {
+async function allowanceViews(env: Env, portalId: string, tier: CommercialTier, row: SubscriptionRow | null, entitled = true): Promise<BillingAllowance[]> {
   const explicit = await env.DB.prepare(`SELECT metric, included_quantity, hard_limit, overage_enabled FROM billing_allowances WHERE portal_id = ?`)
     .bind(portalId).all<{ metric: BillableMetric; included_quantity: number; hard_limit: number | null; overage_enabled: number }>();
   const overrides = new Map((explicit.results ?? []).map((item) => [item.metric, item]));
@@ -257,7 +253,7 @@ async function allowanceViews(env: Env, portalId: string, tier: CommercialTier, 
   const consumed = new Map((usage.results ?? []).map((item) => [item.event_name, Number(item.quantity)]));
   return (Object.keys(DEFAULT_ALLOWANCES[tier]) as BillableMetric[]).map((metric) => {
     const defaults = DEFAULT_ALLOWANCES[tier][metric];
-    const override = overrides.get(metric);
+    const override = entitled ? overrides.get(metric) : undefined;
     const includedQuantity = Number(override?.included_quantity ?? defaults.included);
     const hardLimit = override?.hard_limit === null || override?.hard_limit === undefined ? defaults.hard : Number(override.hard_limit);
     const consumedQuantity = consumed.get(metric) ?? 0;
@@ -267,7 +263,7 @@ async function allowanceViews(env: Env, portalId: string, tier: CommercialTier, 
       consumedQuantity,
       remainingQuantity: hardLimit === null ? null : Math.max(0, hardLimit - consumedQuantity),
       hardLimit,
-      overageEnabled: Boolean(override?.overage_enabled ?? (row?.overage_enabled ?? (defaults.overage ? 1 : 0))),
+      overageEnabled: entitled && Boolean(override?.overage_enabled ?? (row?.overage_enabled ?? (defaults.overage ? 1 : 0))),
     };
   });
 }
@@ -279,6 +275,7 @@ export async function getBillingStatus(env: Env, portalId: string): Promise<Bill
     const tenant = await env.DB.prepare(`SELECT commercial_tier, trial_ends_at FROM tenants WHERE portal_id = ?`)
       .bind(portalId).first<{ commercial_tier?: CommercialTier; trial_ends_at?: string | null }>();
     const tier = tenant?.commercial_tier ?? 'free';
+    const entitled = tier !== 'free' && subscriptionEntitled({ status: 'trialing', trialEndsAt: tenant?.trial_ends_at ?? null });
     return {
       tier,
       status: 'none',
@@ -299,12 +296,13 @@ export async function getBillingStatus(env: Env, portalId: string): Promise<Bill
       purchaseOrderReference: null,
       scheduledTier: null,
       scheduledChangeAt: null,
-      entitled: tier !== 'free' && Boolean(tenant?.trial_ends_at && Date.parse(tenant.trial_ends_at) > Date.now()),
+      entitled,
       checkoutConfigured: Boolean(cfg.DODO_API_KEY),
       portalConfigured: false,
-      allowances: await allowanceViews(env, portalId, tier, null),
+      allowances: await allowanceViews(env, portalId, entitled ? tier : 'free', null, entitled),
     };
   }
+  const entitled = rowEntitled(row);
   return {
     tier: row.tier,
     status: row.status,
@@ -325,10 +323,10 @@ export async function getBillingStatus(env: Env, portalId: string): Promise<Bill
     purchaseOrderReference: row.purchase_order_reference,
     scheduledTier: row.scheduled_tier,
     scheduledChangeAt: row.scheduled_change_at,
-    entitled: entitledStatus(row.status, row.grace_ends_at),
+    entitled,
     checkoutConfigured: Boolean(cfg.DODO_API_KEY),
     portalConfigured: Boolean(row.provider === 'dodo' && row.provider_customer_id && cfg.DODO_API_KEY),
-    allowances: await allowanceViews(env, portalId, row.tier, row),
+    allowances: await allowanceViews(env, portalId, entitled ? row.tier : 'free', row, entitled),
   };
 }
 
@@ -367,10 +365,7 @@ async function applySubscription(
   },
 ): Promise<void> {
   const now = new Date().toISOString();
-  const entitled = entitledStatus(input.status, input.graceEndsAt);
-  const internalPlan: PlanId = entitled
-    ? input.tier === 'enterprise' ? 'beta_growth' : input.tier === 'growth' ? 'growth' : 'free'
-    : 'free';
+  const internalPlan: PlanId = entitlementPlan(input.tier, subscriptionEntitled(input));
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO subscriptions_v2 (

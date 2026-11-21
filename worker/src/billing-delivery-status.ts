@@ -1,4 +1,4 @@
-import { enterpriseAccessContext, permissionMatches, requireEnterprisePermission } from './enterprise-access.js';
+import { enterpriseAccessContext, requireEnterprisePermission } from './enterprise-access.js';
 import { AppError } from './errors.js';
 import type { Env, RequestIdentity } from './types.js';
 
@@ -23,10 +23,11 @@ export async function requireBillingManagement(env: Env, identity: RequestIdenti
 /** Preserve assigned scopes and billing roles when Enterprise features are unavailable. */
 export async function billingAccessFallback(env: Env, identity: RequestIdentity) {
   if (!identity.userId && !identity.userEmail) throw new AppError(403, 'billing_user_required', 'An identified HubSpot user is required.');
+  const tenant = await env.DB.prepare('SELECT status FROM tenants WHERE portal_id = ?')
+    .bind(identity.portalId).first<{status:string}>();
+  if (tenant?.status !== 'active') throw new AppError(403, 'installation_inactive', 'This DealGuard installation is not active.');
   const context = await enterpriseAccessContext(env, identity);
-  return { role: context.role, permissions: ['billing.view',
-    ...(permissionMatches(context.permissions, 'billing.manage') ? ['billing.manage'] : [])],
-    scope: context.scope, bootstrap: context.bootstrap, entitled: false, redacted: true,
+  return { ...context, entitled: false, redacted: true,
     reason: 'enterprise_subscription_required' };
 }
 

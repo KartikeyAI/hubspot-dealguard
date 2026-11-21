@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, LoadingSpinner, hubspot } from '@hubspot/ui-extensions';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, Button, Flex, LoadingSpinner, hubspot } from '@hubspot/ui-extensions';
 
 export const API_BASE = 'https://dealguard-api.rokad.co/api/v1';
 export type Severity = 'info' | 'warning' | 'critical';
@@ -69,7 +69,7 @@ export type DealBrief = {
 export type Intelligence = {
   risk: { lostPoints: number; potentialScore: number; afterCriticalFixes: number; contributors: Array<Issue & { impact: number }> };
   nextBestActions: Array<{ code: string; label: string; action: string; impact: number; severity: Severity; property?: string }>;
-  stageReadiness: { stageId: string | null; stageLabel: string; satisfied: number; total: number; percent: number; blockers: Array<{ code: string; label: string; severity: Severity; impact: number }>; requirements: Requirement[] };
+  stageReadiness?: { stageId: string | null; stageLabel: string; satisfied: number; total: number; percent: number; blockers: Array<{ code: string; label: string; severity: Severity; impact: number }>; requirements: Requirement[] };
   change: { previousAssessedAt: string | null; scoreDelta: number | null; gradeChanged: boolean; statusChanged: boolean; newIssueCodes: string[]; resolvedIssueCodes: string[]; amountDelta: number | null; stageAgeDeltaDays: number | null; stageChanged: boolean };
   decisionActions?: DecisionAction[];
   momentum?: Momentum;
@@ -84,7 +84,7 @@ export type Intelligence = {
 };
 export type Assessment = {
   dealId: string; score: number; grade: string; status: 'ready' | 'at_risk' | 'critical'; issues: Issue[]; readinessSummary: string;
-  isWon: boolean; assessedAt: string; reviewedAt: string | null; handoffStatus: string | null; recordCapabilities?: {canReview: boolean; canConfirmHandoff: boolean}; intelligence?: Intelligence;
+  isWon: boolean; assessedAt: string; reviewedAt: string | null; handoffStatus: string | null; recordCapabilities?: {canRefresh: boolean; canReview: boolean; canConfirmHandoff: boolean}; evidence?: {status:'fresh'|'aging'|'stale'|'unavailable';ageHours:number|null}; intelligence?: Intelligence;
 };
 
 export function statusVariant(status: Assessment['status']): 'success' | 'warning' | 'danger' {
@@ -169,35 +169,78 @@ export function useDealAssessment(dealId: string) {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [canRefresh, setCanRefresh] = useState(false);
+  const epoch = useRef(0), currentDeal = useRef(dealId), loadedDeal = useRef<string|null>(null);
+  const refreshAllowed = useRef(false), inFlight = useRef(false);
+  currentDeal.current = dealId;
 
   const load = useCallback(async (refresh = false) => {
-    setError(null); setNotice(null); if (refresh) setWorking(true); else setLoading(true);
+    if (refresh && (!refreshAllowed.current || inFlight.current || currentDeal.current !== dealId)) return;
+    const version = ++epoch.current;
+    inFlight.current = true;
+    setError(null); setNotice(null); setAssessment(null);
+    if (refresh) setWorking(true); else setLoading(true);
+    const current = () => version === epoch.current && currentDeal.current === dealId;
     try {
-      const response = await hubspot.fetch(`${API_BASE}/deals/${dealId}/assessment`, { method: refresh ? 'POST' : 'GET', timeout: 15000 });
+      const response = await hubspot.fetch(`${API_BASE}/deals/${encodeURIComponent(dealId)}/assessment`, { method: refresh ? 'POST' : 'GET', timeout: 15000 });
       const data = await response.json();
-      if (!response.ok) throw new Error(data?.error?.message ?? 'DealGuard could not assess this deal.');
+      if (!current()) return;
+      if (!response.ok) {
+        refreshAllowed.current = response.status === 404 && data?.error?.code === 'assessment_unavailable' && data?.error?.details?.canRefresh === true;
+        setCanRefresh(refreshAllowed.current);
+        throw new Error(data?.error?.message ?? 'DealGuard could not load this deal.');
+      }
+      if (!data || String(data.dealId) !== dealId || !Array.isArray(data.issues)) throw new Error('Recorded deal evidence could not be verified. Reload the card.');
       setAssessment(data as Assessment);
+      refreshAllowed.current = data.recordCapabilities?.canRefresh === true;
+      setCanRefresh(refreshAllowed.current);
       if (refresh) setNotice('Deal intelligence refreshed.');
-    } catch (caught) { setError(caught instanceof Error ? caught.message : 'DealGuard could not assess this deal.'); }
-    finally { setLoading(false); setWorking(false); }
+    } catch (caught) {
+      if (current()) setError(caught instanceof Error ? caught.message : 'DealGuard could not load this deal.');
+    } finally {
+      if (current()) { loadedDeal.current = dealId; inFlight.current = false; setLoading(false); setWorking(false); }
+    }
   }, [dealId]);
 
-  useEffect(() => { void load(false); }, [load]);
+  useEffect(() => {
+    refreshAllowed.current = false; setCanRefresh(false); setAssessment(null);
+    void load(false);
+    return () => { epoch.current++; inFlight.current = false; refreshAllowed.current = false; };
+  }, [load]);
 
   const postAction = useCallback(async (action: 'review' | 'handoff') => {
-    setWorking(true); setError(null); setNotice(null);
+    if (inFlight.current || currentDeal.current !== dealId || assessment?.dealId !== dealId
+      || (action === 'review' ? !assessment.recordCapabilities?.canReview : !assessment.recordCapabilities?.canConfirmHandoff)) return;
+    const version = ++epoch.current;
+    inFlight.current = true; setWorking(true); setError(null); setNotice(null);
+    const current = () => version === epoch.current && currentDeal.current === dealId;
     try {
-      const response = await hubspot.fetch(`${API_BASE}/deals/${dealId}/${action}`, { method: 'POST', timeout: 15000, body: {} });
+      const response = await hubspot.fetch(`${API_BASE}/deals/${encodeURIComponent(dealId)}/${action}`, { method: 'POST', timeout: 15000, body: {} });
       const data = await response.json();
+      if (!current()) return;
       if (!response.ok) throw new Error(data?.error?.message ?? 'The action could not be completed.');
-      setNotice(action === 'review' ? 'Deal marked as reviewed.' : 'Closed-won handoff confirmed.');
+      inFlight.current = false;
       await load(false);
-    } catch (caught) { setError(caught instanceof Error ? caught.message : 'The action could not be completed.'); }
-    finally { setWorking(false); }
-  }, [dealId, load]);
+      if (epoch.current === version + 1 && currentDeal.current === dealId) setNotice(action === 'review' ? 'Deal marked as reviewed.' : 'Closed-won handoff confirmed.');
+    } catch (caught) { if (current()) setError(caught instanceof Error ? caught.message : 'The action could not be completed.'); }
+    finally { if (current()) { inFlight.current = false; setWorking(false); } }
+  }, [dealId, assessment, load]);
 
-  return { assessment, loading, working, error, notice, load, postAction };
+  const matches = loadedDeal.current === dealId;
+  return { assessment: assessment?.dealId === dealId ? assessment : null,
+    loading: loading || !matches, working, error: matches ? error : null, notice: matches ? notice : null,
+    canRefresh: matches && canRefresh, load, postAction };
 }
 
 export function CardLoading({ label }: { label: string }) { return <LoadingSpinner label={label} />; }
-export function CardUnavailable({ error }: { error: string | null }) { return <Alert title="DealGuard unavailable" variant="danger">{error ?? 'No assessment is available.'}</Alert>; }
+export function CardUnavailable({ error, canRefresh = false, onRefresh, working = false }:
+  { error: string | null; canRefresh?: boolean; onRefresh?: () => void; working?: boolean }) {
+  return <Flex direction="column" gap="small"><Alert title="Recorded assessment unavailable" variant="warning">{error ?? 'No recorded assessment is available. Ask an authorized reviewer to refresh this deal.'}</Alert>
+    {canRefresh && onRefresh ? <Button disabled={working} onClick={onRefresh}>Refresh this deal</Button> : null}</Flex>;
+}
+export function AssessmentEvidenceNotice({assessment}:{assessment:Assessment}) {
+  const status=assessment.evidence?.status;
+  return status === 'stale' || status === 'unavailable' ? <Alert title="Recorded evidence needs refresh" variant="warning">
+    This assessment is {status === 'stale' ? 'older than the freshness window' : 'missing a reliable observation time'}. Opening the card does not refresh HubSpot evidence. Ask an authorized reviewer to refresh it before acting.
+  </Alert> : null;
+}

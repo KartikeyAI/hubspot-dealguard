@@ -1,5 +1,9 @@
 import { BillingDeliveryPanel } from './BillingDeliveryPanel';
-import React, { useCallback, useEffect, useState } from 'react';
+import { OnboardingChecklistPanel } from './OnboardingChecklistPanel';
+import { EnterpriseRoleManagementPanel } from './EnterpriseRoleManagementPanel';
+import { RoleChangeApprovalsPanel } from './RoleChangeApprovalsPanel';
+import { InitialAdministratorSetupPanel } from './InitialAdministratorSetupPanel';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Button,
@@ -15,7 +19,8 @@ import {
   hubspot,
 } from '@hubspot/ui-extensions';
 import { ManagerDecisionQueuePanel } from './ManagerDecisionQueuePanel';
-import { billingManagementAvailable, PLAN_COMPARISON, productPlanLabel, safeProductError, subscriptionLabel } from './product-ui';
+import { billingManagementAvailable, productPermissionAvailable, PLAN_COMPARISON, productPlanLabel, safeProductError, subscriptionLabel } from './product-ui';
+import { loadHomeData } from './home-data';
 
 const API_BASE = 'https://dealguard-api.rokad.co/api/v1';
 type Json = Record<string, any>;
@@ -29,13 +34,14 @@ type Billing = {
   entitled: boolean;
 };
 
-type Access = { role: string; entitled: boolean };
+type Access = { role: string; entitled: boolean; permissions: string[]; scope: Record<string,string[]> };
 type Dashboard = {
   totalDeals?: number;
   readyDeals?: number;
   atRiskDeals?: number;
   criticalDeals?: number;
-  averageScore?: number;
+  averageScore?: number | null;
+  evidence?: {fresh:number; aging:number; stale:number; unavailable:number};
   incompleteHandoffs?: number;
   lastScanAt?: string | null;
   nextScanAt?: string | null;
@@ -144,7 +150,7 @@ type Analytics = {
 
 type RequestOptions = { method?: 'GET' | 'POST'; body?: Record<string, unknown> };
 
-hubspot.extend<'home'>(() => <DealGuardHome />);
+hubspot.extend<'home'>(({context}) => <DealGuardHome key={`${context.portal.id}:${context.user.id}`} currentUser={{id:String(context.user.id),email:context.user.email}} />);
 
 function finite(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
@@ -210,7 +216,7 @@ function signed(value: number): string {
   return `${value > 0 ? '+' : ''}${value}`;
 }
 
-const DealGuardHome = () => {
+const DealGuardHome = ({currentUser}:{currentUser:{id:string;email:string}}) => {
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [checkoutInterval, setCheckoutInterval] = useState<'month' | 'year'>('year');
@@ -223,6 +229,10 @@ const DealGuardHome = () => {
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [portalUrl, setPortalUrl] = useState<string | null>(null);
+  const [dashboardAvailable, setDashboardAvailable] = useState(false);
+  const [partial, setPartial] = useState(false);
+  const [roleApprovalReload,setRoleApprovalReload] = useState(0);
+  const generation = useRef(0);
 
   const request = async (path: string, options?: RequestOptions) => {
     const response = await hubspot.fetch(`${API_BASE}${path}`, {
@@ -236,32 +246,29 @@ const DealGuardHome = () => {
   };
 
   const load = useCallback(async () => {
+    const currentGeneration = ++generation.current;
     setLoading(true);
     setError(null);
+    setDashboard({}); setDashboardAvailable(false); setOverview({}); setAnalytics(null);
+    setAccess(null); setBilling(null); setCheckoutUrl(null); setPortalUrl(null); setPartial(false);
     try {
-      const [dashboardData, billingData, accessData, overviewData, analyticsData] = await Promise.all([
-        request('/dashboard'),
-        request('/billing'),
-        request('/enterprise/access'),
-        request('/enterprise/overview'),
-        request('/enterprise/analytics?days=90').catch(() => null),
-      ]);
-      setDashboard(dashboardData);
-      setBilling(billingData);
-      setAccess(accessData);
-      setOverview(overviewData);
-      setAnalytics(analyticsData);
+      const result = await loadHomeData(request);
+      if (currentGeneration !== generation.current) return;
+      setDashboard(result.dashboard ?? {}); setDashboardAvailable(Boolean(result.dashboard));
+      setBilling(result.billing as Billing); setAccess(result.access as Access);
+      setOverview(result.overview ?? {}); setAnalytics(result.analytics as Analytics | null);
+      setPartial(result.partial);
     } catch (caught) {
-      setError(safeProductError(
+      if (currentGeneration === generation.current) setError(safeProductError(
         caught instanceof Error ? caught.message : null,
         'DealGuard Home could not be loaded. Please try again.',
       ));
     } finally {
-      setLoading(false);
+      if (currentGeneration === generation.current) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); return () => { generation.current++; }; }, [load]);
 
   const action = async (task: () => Promise<void>, success: string) => {
     setWorking(true);
@@ -279,12 +286,17 @@ const DealGuardHome = () => {
 
   if (loading) return <LoadingSpinner label="Loading DealGuard" />;
   if (!billing || !access) {
-    return <Alert title="DealGuard unavailable" variant="danger">{error ?? 'Your DealGuard workspace is temporarily unavailable. Please try again.'}</Alert>;
+    return <Flex direction="column" gap="small"><Alert title="DealGuard unavailable" variant="danger">{error ?? 'Your DealGuard workspace is temporarily unavailable. Please try again.'}</Alert>
+      <Button onClick={() => void load()}>Retry loading workspace</Button></Flex>;
   }
 
   const plan = productPlanLabel(billing.tier);
   const canManageBilling = billingManagementAvailable(access);
-  const healthy = ['healthy', 'ok'].includes(String(overview?.health?.status ?? 'healthy'));
+  const healthState = String(overview?.health?.status ?? 'unavailable');
+  const healthy = ['healthy', 'ok'].includes(healthState);
+  const setupAdministrator = access.role === 'administrator' && productPermissionAvailable(access, 'role.manage', true);
+  const canScan = productPermissionAvailable(access, 'scan.run', true);
+  const hasRecordedDeals = Number(dashboard.totalDeals ?? 0) > 0;
   const readyPercent = dashboard.totalDeals
     ? Math.round((dashboard.readyDeals ?? 0) / dashboard.totalDeals * 100)
     : 0;
@@ -299,9 +311,8 @@ const DealGuardHome = () => {
   const trend = analytics?.trend ?? [];
   const first = trend[0];
   const last = trend[trend.length - 1];
-  const scoreDelta = first && last
-    ? Number(last.averageScore ?? 0) - Number(first.averageScore ?? 0)
-    : 0;
+  const firstScore = finite(first?.averageScore), lastScore = finite(last?.averageScore);
+  const scoreDelta = trend.length > 1 && firstScore !== null && lastScore !== null ? lastScore - firstScore : null;
   const firstGapAmount = finite(first?.amountWithReadinessGaps);
   const lastGapAmount = finite(last?.amountWithReadinessGaps);
   const gapAmountDelta = firstGapAmount !== null && lastGapAmount !== null
@@ -309,7 +320,7 @@ const DealGuardHome = () => {
     : null;
   const policyCompliance = dashboard.totalDeals
     ? Math.round((dashboard.readyDeals ?? 0) / dashboard.totalDeals * 100)
-    : 100;
+    : null;
   const remediationOpen = (dashboard.criticalDeals ?? 0) + (dashboard.atRiskDeals ?? 0);
   const pipelineAmount = monetary?.canAggregate ? monetary.pipelineAmount : null;
   const amountWithReadinessGaps = monetary?.canAggregate ? monetary.amountWithReadinessGaps : null;
@@ -323,8 +334,10 @@ const DealGuardHome = () => {
   const currencyCodeCoverage = percentage(coverage.currencyCodePercent ?? monetary?.sourceCurrencyCoveragePercent);
   const stageAgeCoverage = percentage(coverage.stageAgePercent);
   const ownerCoverage = percentage(coverage.ownerPercent);
-  const newestAssessmentAge = ageInHours(current.latestAssessmentAt ?? dashboard.lastScanAt);
-  const staleCurrentState = newestAssessmentAge === null || newestAssessmentAge > 48;
+  const newestAssessmentAge = ageInHours(current.latestAssessmentAt);
+  const oldestAssessmentAge = ageInHours(current.oldestAssessmentAt);
+  const staleCurrentState = Boolean(dashboard.evidence?.stale || dashboard.evidence?.unavailable)
+    || analyticsAvailable && (oldestAssessmentAge === null || oldestAssessmentAge > 72);
   const benchmarks = analytics?.benchmarking;
   const owners = benchmarks?.owners ?? [];
   const leadingOwner = owners.length > 0
@@ -357,6 +370,7 @@ const DealGuardHome = () => {
   return <Flex direction="column" gap="large">
     {error && <Alert title="We couldn't complete that action" variant="danger">{error}</Alert>}
     {notice && <Alert title="Update complete" variant="success">{notice}</Alert>}
+    {partial && <Alert title="Some recorded data is unavailable" variant="warning">Refresh to retry the affected data panels. Verified account and billing controls remain available.</Alert>}
 
     <Flex direction="row" justify="between" align="center" gap="medium">
       <Flex direction="column" gap="extra-small">
@@ -364,36 +378,45 @@ const DealGuardHome = () => {
         <Text>See what needs attention across your pipeline, then act on the highest-impact readiness gaps.</Text>
       </Flex>
       <Flex direction="row" gap="small">
-        <StatusTag variant={healthy ? 'success' : 'warning'}>{healthy ? 'Workspace healthy' : 'Needs attention'}</StatusTag>
-        <StatusTag variant={billing.tier === 'free' ? 'default' : 'success'}>{plan} plan</StatusTag>
+        <StatusTag variant={healthy ? 'success' : 'warning'}>{healthy ? 'Workspace healthy' : ['restricted','unavailable'].includes(healthState) ? 'Health unverified' : 'Needs attention'}</StatusTag>
+        <StatusTag variant={billing.entitled ? 'success' : 'default'}>{plan} plan{!billing.entitled && billing.tier !== 'free' ? ' · inactive' : ''}</StatusTag>
       </Flex>
     </Flex>
 
-    {needsAttention > 0
+    <OnboardingChecklistPanel enabled={setupAdministrator} />
+    <InitialAdministratorSetupPanel access={access} entitled={access.entitled} currentUser={currentUser}
+      onAccessChanged={async()=>{await load();setNotice('Both initial administrator assignments were accepted and applied. Workspace access was rechecked.');}}/>
+    <EnterpriseRoleManagementPanel access={access} entitled={access.entitled} currentUser={currentUser}
+      onApprovalRequested={()=>setRoleApprovalReload(value=>value+1)} onAccessChanged={async()=>{await load();setNotice('Role assignment updated. Use the refreshed workspace to verify access.');}} />
+    <RoleChangeApprovalsPanel access={access} entitled={access.entitled} currentUser={currentUser} reloadToken={roleApprovalReload}
+      onAccessChanged={async()=>{await load();setNotice('The approved role change was applied. Workspace access was rechecked.');}} />
+
+    {!dashboardAvailable ? <Alert title="Pipeline data unavailable" variant="info">Your current access or the recorded-data service does not provide this view. Account controls remain available below.</Alert> : needsAttention > 0
       ? <Alert title={`${needsAttention} items need attention`} variant={(dashboard.criticalDeals ?? 0) > 0 ? 'danger' : 'warning'}>
           {(dashboard.criticalDeals ?? 0) > 0
             ? `${dashboard.criticalDeals} critical deals should be reviewed first.`
             : 'Review at-risk deals and incomplete handoffs.'}
         </Alert>
-      : <Alert title="Pipeline is in good shape" variant="success">No critical, at-risk or incomplete handoff items are currently reported.</Alert>}
+      : <Alert title={hasRecordedDeals ? "No recorded readiness issues" : "No recorded open-deal evidence"} variant={hasRecordedDeals ? "info" : "warning"}>{hasRecordedDeals ? "No critical, at-risk or incomplete handoff items are reported in your permitted recorded scope. Confirm evidence freshness before relying on it." : "Run an initial scan or review an eligible deal. Missing evidence does not mean the pipeline is healthy."}</Alert>}
 
-    {analyticsAvailable && staleCurrentState && <Alert title="Current-state assessments may be stale" variant="warning">
-      The newest assessment is {ageLabel(newestAssessmentAge)}. Refresh the portal scan before using this view for a forecast or management decision.
+    {staleCurrentState && <Alert title="Some current-state evidence needs refresh" variant="warning">
+      {dashboard.evidence ? `${dashboard.evidence.stale} stale and ${dashboard.evidence.unavailable} unavailable open-deal observations are recorded. ` : ''}
+      {analyticsAvailable ? `Oldest assessment: ${ageLabel(oldestAssessmentAge)}. ` : ''}A recent assessment on one deal does not refresh the rest of your pipeline.
     </Alert>}
 
     {analyticsAvailable && monetary && !monetary.canAggregate && <Alert title="Currency-safe totals are not available" variant="warning">
       {monetary.reason ?? 'DealGuard cannot safely aggregate the current amount data.'} Native deal amounts remain available per currency; they are never summed across currencies.
     </Alert>}
 
-    <Flex direction="row" gap="medium" wrap="wrap">
+    {dashboardAvailable && <Flex direction="row" gap="medium" wrap="wrap">
       <Card>
         <Text variant="microcopy">READINESS SCORE</Text>
-        <Heading>{dashboard.averageScore ?? 0}/100</Heading>
+        <Heading>{typeof dashboard.averageScore === 'number' ? `${dashboard.averageScore}/100` : 'Unavailable'}</Heading>
         <Text>{dashboard.totalDeals ?? 0} deals assessed</Text>
       </Card>
       <Card>
         <Text variant="microcopy">READY PIPELINE</Text>
-        <Heading>{readyPercent}%</Heading>
+        <Heading>{hasRecordedDeals ? `${readyPercent}%` : 'Unavailable'}</Heading>
         <Text>{dashboard.readyDeals ?? 0} deals ready</Text>
       </Card>
       <Card>
@@ -406,9 +429,9 @@ const DealGuardHome = () => {
         <Heading>{dashboard.criticalDeals ?? 0}</Heading>
         <StatusTag variant={(dashboard.criticalDeals ?? 0) > 0 ? 'danger' : 'success'}>{(dashboard.criticalDeals ?? 0) > 0 ? 'Action required' : 'Clear'}</StatusTag>
       </Card>
-    </Flex>
+    </Flex>}
 
-    <ManagerDecisionQueuePanel enabled={access.entitled} />
+    <ManagerDecisionQueuePanel enabled={access.entitled} administrationEnabled={setupAdministrator} access={access} />
 
     <Flex direction="column" gap="small">
       <Heading>Pipeline intelligence</Heading>
@@ -416,23 +439,23 @@ const DealGuardHome = () => {
       <Flex direction="row" gap="medium" wrap="wrap">
         <Card>
           <Text variant="microcopy">READINESS TREND</Text>
-          <Heading>{signed(scoreDelta)} pts</Heading>
-          <StatusTag variant={scoreDelta > 0 ? 'success' : scoreDelta < 0 ? 'warning' : 'default'}>{scoreDelta > 0 ? 'Improving' : scoreDelta < 0 ? 'Declining' : 'Stable'}</StatusTag>
+          <Heading>{scoreDelta === null ? 'Unavailable' : `${signed(scoreDelta)} pts`}</Heading>
+          <StatusTag variant={scoreDelta !== null && scoreDelta > 0 ? 'success' : scoreDelta !== null && scoreDelta < 0 ? 'warning' : 'default'}>{scoreDelta === null ? 'No comparable trend' : scoreDelta > 0 ? 'Improving' : scoreDelta < 0 ? 'Declining' : 'Stable'}</StatusTag>
         </Card>
         <Card>
           <Text variant="microcopy">AMOUNT COVERAGE</Text>
-          <Heading>{amountCoverage}%</Heading>
-          <StatusTag variant={coverageVariant(amountCoverage)}>{amountCoverage >= 95 ? 'Strong' : amountCoverage >= 75 ? 'Review' : 'Incomplete'}</StatusTag>
+          <Heading>{analyticsAvailable ? `${amountCoverage}%` : 'Unavailable'}</Heading>
+          <StatusTag variant={analyticsAvailable ? coverageVariant(amountCoverage) : 'default'}>{!analyticsAvailable ? 'No coverage evidence' : amountCoverage >= 95 ? 'Strong' : amountCoverage >= 75 ? 'Review' : 'Incomplete'}</StatusTag>
         </Card>
         <Card>
           <Text variant="microcopy">READINESS COMPLIANCE</Text>
-          <Heading>{policyCompliance}%</Heading>
-          <Text>{dashboard.readyDeals ?? 0} of {dashboard.totalDeals ?? 0} ready</Text>
+          <Heading>{policyCompliance === null || !dashboardAvailable ? 'Unavailable' : `${policyCompliance}%`}</Heading>
+          <Text>{dashboardAvailable ? `${dashboard.readyDeals ?? 0} of ${dashboard.totalDeals ?? 0} ready` : 'No permitted readiness evidence'}</Text>
         </Card>
         <Card>
           <Text variant="microcopy">REMEDIATION</Text>
-          <Heading>{remediationOpen}</Heading>
-          <Text>{dashboard.criticalDeals ?? 0} critical · {dashboard.atRiskDeals ?? 0} at risk</Text>
+          <Heading>{dashboardAvailable ? remediationOpen : 'Unavailable'}</Heading>
+          <Text>Deals with readiness gaps; open remediation cases are shown in the work queue.</Text>
         </Card>
         <Card>
           <Text variant="microcopy">AMOUNT WITH READINESS GAPS</Text>
@@ -462,7 +485,7 @@ const DealGuardHome = () => {
       <Flex direction="row" gap="medium" wrap="wrap">
         <Card>
           <Text variant="microcopy">BENCHMARKING</Text>
-          <Heading>{benchmarks?.workspaceAverageScore ?? 0}/100</Heading>
+          <Heading>{finite(benchmarks?.workspaceAverageScore) === null ? 'Unavailable' : `${benchmarks!.workspaceAverageScore}/100`}</Heading>
           <Text>Workspace readiness baseline</Text>
           {leadingOwner && <Text variant="microcopy">Leading owner: {leadingOwner.label} · {signed(Number(leadingOwner.scoreDelta))} pts</Text>}
         </Card>
@@ -533,7 +556,8 @@ const DealGuardHome = () => {
         <Text>Newest current assessment · {formatDate(current.latestAssessmentAt)}</Text>
         <Text>Oldest current assessment · {formatDate(current.oldestAssessmentAt)}</Text>
         <Text>Analytics generated · {formatDate(analytics?.generatedAt)}</Text>
-        <Text>Current-state freshness · {ageLabel(newestAssessmentAge)}</Text>
+        <Text>Newest observation age · {ageLabel(newestAssessmentAge)}</Text>
+        <Text>Oldest observation age · {ageLabel(oldestAssessmentAge)}</Text>
         <Text>Currency basis · {currencyBasis}</Text>
         <Text>Source currency-code coverage · {currencyCodeCoverage}%</Text>
         <Text>Observed source currencies · {sourceCurrencyText}</Text>
@@ -548,11 +572,15 @@ const DealGuardHome = () => {
         <Text>Your access · {role}</Text>
         <Divider />
         <Text variant="microcopy">Last portal scan: {formatDate(dashboard.lastScanAt)}</Text>
+        {canScan && <Button disabled={working} onClick={() => void action(async () => {
+          await request('/scans', {method:'POST',body:{}});
+          await load();
+        }, 'Pipeline assessment queued. Refresh to inspect its progress.')}>Run pipeline assessment</Button>}
         <Button variant="secondary" disabled={working} onClick={() => void load()}>Refresh data</Button>
       </Card>
       <Card>
         <Heading>Plan & subscription</Heading>
-        <StatusTag variant={billing.status === 'active' ? 'success' : 'warning'}>{subscriptionLabel(billing.status)}</StatusTag>
+        <StatusTag variant={billing.entitled ? 'success' : 'warning'}>{!billing.entitled && billing.tier !== 'free' ? 'Paid access inactive' : subscriptionLabel(billing.status)}</StatusTag>
         <Text>{plan} plan</Text>
         {canManageBilling && billing.tier !== 'enterprise' ? <Select name="checkout-interval" label="Billing interval" value={checkoutInterval}
           options={[{ label: 'Monthly', value: 'month' }, { label: 'Annually', value: 'year' }]}

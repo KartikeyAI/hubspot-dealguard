@@ -17,7 +17,7 @@ export function buildDealMomentum(
   const closeDateCredibility = evaluateCloseDateCredibility(evidence);
   return {
     decisionActions: buildDecisionActions(evidence, momentum, closeDateCredibility, now),
-    momentum,
+    momentum: { ...momentum, fetchedAt: history.fetchedAt },
     closeDateCredibility,
   };
 }

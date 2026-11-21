@@ -6,7 +6,21 @@ Baseline: main `6a6a748196ee2ee3f8813d66723e02237a79f14f`, source tree
 The previously agreed three-phase scope remains authoritative. Useful deterministic
 behavior without AI and optional professional services remain product requirements.
 
-## First stable-release work package
+## November 21, 2026 engineering update
+
+The integrated engineering candidate is now `3.0.0-rc.1`. It includes the formerly
+separate intelligence implementation, qualified forecast lifecycle, current
+closed-won AI handover, recorded-only reads, installation/role/billing lifecycle
+hardening, active setup surfaces and reproducible validation. See
+`DEALGUARD_3_CURRENT.md` and `CODEX_V3_VALIDATION.md` for the current scope and commands.
+
+The baseline and first-work-package narrative below are retained as historical
+context. The current release candidate, like the earlier alpha, must fail a stable
+production version check. No signer, live account acceptance, pilot, provider
+restore or production result is created by the implementation update. The eleven
+evidence categories and independent signature requirements remain in force.
+
+## First stable-release work package (historical)
 
 This package adds an independently signed preproduction approval check, integrates it
 before database/Worker mutations in Controlled deploy, includes its receipt in the
@@ -15,7 +29,7 @@ It does not change the product version, apply customer migrations, deploy a Work
 perform account acceptance, sign on anyone's behalf, or activate optional features.
 
 `npm run release:signoff -- --input .release/signoff-evidence` verifies an exact stable
-v3 candidate. The current alpha must fail this command. The resulting receipt has
+v3 candidate. A prerelease must fail this command. The resulting receipt has
 `approvalAccepted: true` but **`productionReady: false`**: actual deployment, canary
 observation, post-deployment acceptance, monitoring, and final owner sign-off remain
 separate. A version bump or a green unit-test suite is insufficient.

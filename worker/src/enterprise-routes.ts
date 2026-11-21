@@ -110,7 +110,7 @@ export async function routeEnterpriseApi(
   if (path === '/api/v1/enterprise/access') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
     await requireEnterprise(env, identity);
-    return json(await enterpriseAccessContext(env, identity));
+    return json({ ...await enterpriseAccessContext(env, identity), entitled: true });
   }
   if (path === '/api/v1/enterprise/roles') {
     await requireEnterprise(env, identity);

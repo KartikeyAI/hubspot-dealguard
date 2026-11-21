@@ -1,3 +1,4 @@
+import { readSourceEvidence, sourceBoundSnapshotFreshness } from './source-evidence.js';
 import { evidenceInstant, snapshotFreshness, freshnessConfidence } from './evidence-freshness.js';
 import {
   closeRecommendationsForDeal,
@@ -164,7 +165,9 @@ export function extractDecisionSnapshot(
     return null;
   }
 
+  const sourceEvidence = readSourceEvidence(intelligence.sourceEvidence, now);
   const dimensions: Record<string, unknown> = {
+    ...(sourceEvidence ? { sourceEvidence } : {}),
     readiness: {
       score: Math.round(readinessScore),
       status: text(assessment.status, 80) ?? 'unknown',
@@ -298,7 +301,10 @@ export async function persistDecisionSnapshot(
   ).first<{ deal_id: string }>();
   if (!written) return false;
   // Retain stale snapshots for disclosure, never present new work from stale evidence.
-  if (snapshot.freshnessStatus === 'stale') return true;
+  const sources = sourceBoundSnapshotFreshness(snapshotFreshness({ assessmentAt: snapshot.assessmentAt,
+    snapshotAssessmentAt: snapshot.assessmentAt, generatedAt: snapshot.generatedAt,
+    recordedStatus: snapshot.freshnessStatus }, Date.now()), snapshot.dimensions, Date.now());
+  if (!sources.usable) return true;
   await observeRecommendationSnapshot(env, snapshot, payload).catch((error) => {
     logRecommendationObservation('recommendation_snapshot_observation', portalId, dealId, error);
   });

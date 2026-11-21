@@ -1,10 +1,13 @@
 import {
+  applyApprovedEnterpriseRoleChange,
   beginApprovedChange,
   completeApprovedChange,
   failApprovedChange,
   withoutApprovalFields,
 } from './change-control.js';
-import { readJson } from './http.js';
+import { json, readJson } from './http.js';
+import { requireCommercialTier } from './billing.js';
+import { verifiedPortalDeletionReceipt } from './data-deletion.js';
 import { route as routeV5 } from './routes-v5.js';
 import { validateHubSpotRequest } from './signature.js';
 import type { Env, RequestIdentity } from './types.js';
@@ -80,6 +83,11 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   const change = await sensitiveChange(request, identity);
   if (!change) return routeV5(request, env, ctx);
 
+  if (change.changeType === 'role.assign' || change.changeType === 'role.remove') {
+    await requireCommercialTier(env, identity.portalId, 'enterprise');
+    return json(await applyApprovedEnterpriseRoleChange(env, identity, change.approvalId, change));
+  }
+
   const execution = await beginApprovedChange(env, identity, change.approvalId, {
     changeType: change.changeType,
     resourceType: change.resourceType,
@@ -89,13 +97,17 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   try {
     const response = await routeV5(request, env, ctx);
     if (!response.ok) {
-      await failApprovedChange(env, identity, execution.approvalId, `Downstream action returned HTTP ${response.status}.`);
+      await failApprovedChange(env, identity, execution.approvalId, execution.leaseToken, `Downstream action returned HTTP ${response.status}.`);
       return response;
     }
-    await completeApprovedChange(env, identity, execution.approvalId);
+    // Completed erasure cascades approval rows. Only a verified deletion receipt
+    // can replace execution finalization. Accepted (202) intents retain their rows.
+    if (change.changeType === 'data.delete' && response.status === 200
+      && await verifiedPortalDeletionReceipt(env, identity.portalId, execution.startedAt)) return response;
+    await completeApprovedChange(env, identity, execution.approvalId, execution.leaseToken);
     return response;
   } catch (error) {
-    await failApprovedChange(env, identity, execution.approvalId, error);
+    await failApprovedChange(env, identity, execution.approvalId, execution.leaseToken, error);
     throw error;
   }
 }

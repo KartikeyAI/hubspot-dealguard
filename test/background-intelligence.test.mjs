@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { backgroundSettings, backgroundReadAllowed, backgroundBudgetQuery, backgroundRequestPolicy } from '../dist/background-intelligence.js';
 import { HubSpotClient } from '../dist/hubspot.js';
+import { encryptSecret } from '../dist/crypto.js';
 
 const settings={portal_id:'100',version:1,enabled:1,refresh_hours:24,daily_request_limit:100};
 const db=()=>({DB:{prepare(){return {bind(){return {async first(){return {request_count:1};}};}};}}});
@@ -51,7 +52,12 @@ test('real HubSpot client invokes request policy and uses abort/redirect boundar
   const original=globalThis.fetch; t.after(()=>{globalThis.fetch=original;});
   let admissions=0,calls=0;
   const policy={deadlineAt:Date.now()+10000,disableAuthRetry:true,async beforeRequest(){admissions++;}};
-  const client=new HubSpotClient({}, {tenant:{portal_id:'100',token_expires_at:new Date(Date.now()+3600000).toISOString()},accessToken:'fixture-only'},policy);
+  const key=Buffer.alloc(32,12).toString('base64'),encrypted=await encryptSecret('fixture-only',key);
+  const tenant={portal_id:'100',status:'active',plan:'free',token_expires_at:new Date(Date.now()+3600000).toISOString(),
+    access_token_cipher:encrypted.cipher,access_token_iv:encrypted.iv,refresh_token_cipher:encrypted.cipher,refresh_token_iv:encrypted.iv,
+    settings_json:'{}',scopes_json:'[]'};
+  const env={TOKEN_ENCRYPTION_KEY:key,DB:{prepare(sql){return{bind(){return{async first(){return sql.includes('FROM tenants')?tenant:null;}};}};}}};
+  const client=new HubSpotClient(env,{tenant,accessToken:'fixture-only'},policy);
   globalThis.fetch=async(url,init)=>{calls++;assert.ok(init.signal);assert.equal(init.redirect,'error');return new Response('{"results":[]}',{status:200});};
   assert.deepEqual(await client.getPipelines(),[]);assert.equal(admissions,1);assert.equal(calls,1);
   policy.beforeRequest=async()=>{throw new Error('blocked');};

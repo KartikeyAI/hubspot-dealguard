@@ -3,7 +3,8 @@ import { Alert, Button, Card, Checkbox, Divider, Flex, Heading, Input, LoadingSp
 import { safeProductError } from './product-ui';
 const ROOT='https://dealguard-api.rokad.co/api/v1';
 type Case={id:string;dealId:string;title:string;description:string;status:string;priority:string;ownerId:string|null;dueAt:string|null;
- evidenceRequired:boolean;acknowledgementRequired:boolean;evidenceStatus:string};
+ evidenceRequired:boolean;acknowledgementRequired:boolean;evidenceStatus:string;
+ hubSpotTaskDelivery?:{status:'not_requested'|'pending'|'sending'|'created'|'held';reason:string|null}};
 type Detail={case:Case;comments:Array<{id:string;body:string}>;evidence:Array<{id:string;label:string;value:string}>;
  linkedRecommendations:Array<{recommendation_id:string}>;truncated:boolean};
 type Summary={open:number;overdue:number;critical:number;dueSoon:number;averageResolutionHours:number|null;resolutionObservations:number};
@@ -58,6 +59,8 @@ export function RemediationWorkPanel({enabled}:{enabled:boolean}) {
   {item?<>
    <Divider/><Heading>{item.title}</Heading><Text>Case {item.id} · Deal {item.dealId} · {item.status} · {item.priority}</Text><Text>{item.description}</Text>
    <Text>Owner ID: {item.ownerId??'Unassigned'} · Due: {item.dueAt??'Not assigned'} · Evidence: {item.evidenceStatus}</Text>
+   {item.hubSpotTaskDelivery?<Text>HubSpot task delivery: {item.hubSpotTaskDelivery.status.replaceAll('_',' ')}{item.hubSpotTaskDelivery.reason?` · ${item.hubSpotTaskDelivery.reason.replaceAll('_',' ')}`:''}.</Text>:null}
+   {item.hubSpotTaskDelivery?.status==='held'?<Alert title="Task delivery needs reconciliation" variant="warning">A previous task creation result is uncertain. Check the linked deal in HubSpot and reconcile the retained delivery evidence before creating any replacement task. DealGuard will not automatically retry this held creation.</Alert>:null}
    <Text>{detail!.linkedRecommendations.length} linked recommendation(s). Case resolution is separate from recommendation completion.</Text>
    {can('remediation.manage')?<>
     <TextArea name="case-note" label="Comment, resolution or waiver note" value={note} onChange={setNote}/>

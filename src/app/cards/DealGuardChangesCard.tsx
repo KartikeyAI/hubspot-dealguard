@@ -1,24 +1,25 @@
 import React from 'react';
 import { Alert, Button, Divider, Flex, Heading, Text, hubspot } from '@hubspot/ui-extensions';
-import { CardLoading, CardUnavailable, delta, formatDate, issueName, useDealAssessment } from './deal-intelligence-shared';
+import { CardLoading, AssessmentEvidenceNotice, CardUnavailable, delta, formatDate, issueName, useDealAssessment } from './deal-intelligence-shared';
 
 hubspot.extend<'crm.record.tab'>(({ context }) => <DealGuardChangesCard dealId={String(context.crm.objectId)} />);
 
 const DealGuardChangesCard = ({ dealId }: { dealId: string }) => {
-  const { assessment, loading, working, error, notice, load } = useDealAssessment(dealId);
+  const { assessment, loading, working, error, notice, canRefresh, load } = useDealAssessment(dealId);
   if (loading) return <CardLoading label="Loading DealGuard changes" />;
-  if (!assessment) return <CardUnavailable error={error} />;
+  if (!assessment) return <CardUnavailable error={error} canRefresh={canRefresh} working={working} onRefresh={() => void load(true)} />;
   const intelligence = assessment.intelligence;
   const change = intelligence?.change;
-  const stageLabel = intelligence?.stageReadiness.stageLabel;
+  const stageLabel = intelligence?.stageReadiness?.stageLabel;
   const momentum = intelligence?.momentum;
   const closeDate = intelligence?.closeDateCredibility;
 
   return <Flex direction="column" gap="medium">
+    <AssessmentEvidenceNotice assessment={assessment} />
     {error && <Alert title="Action failed" variant="danger">{error}</Alert>}
     {notice && <Alert title="Done" variant="success">{notice}</Alert>}
     <Heading>What changed</Heading>
-    {!change?.previousAssessedAt ? <Text>DealGuard needs at least two stored assessments before it can explain readiness changes.</Text> : <>
+    {!change?.previousAssessedAt ? <Text>Change comparison details are not loaded. An authorized refresh can compare retained assessments when available.</Text> : <>
       <Text>Compared with {new Date(change.previousAssessedAt).toLocaleString()}.</Text>
       <Flex direction="column" gap="extra-small">
         {change.scoreDelta !== null && <Text><Text format={{ fontWeight: 'bold' }}>Readiness:</Text> {delta(change.scoreDelta)} points{change.statusChanged ? ' · status changed' : ''}{change.gradeChanged ? ' · grade changed' : ''}.</Text>}
@@ -47,7 +48,7 @@ const DealGuardChangesCard = ({ dealId }: { dealId: string }) => {
       <Text variant="microcopy">Last close-date change: {formatDate(closeDate.lastCloseDateChangeAt)} · last push: {formatDate(closeDate.lastPushAt)}.</Text>
     </>}
 
-    <Button variant="secondary" onClick={() => void load(true)} disabled={working}>Refresh changes</Button>
+    <Button variant="secondary" onClick={() => void load(true)} disabled={working || !canRefresh}>Refresh changes</Button>
     <Text variant="microcopy">Latest assessment {new Date(assessment.assessedAt).toLocaleString()}.</Text>
   </Flex>;
 };

@@ -37,9 +37,14 @@ export const PLAN_COMPARISON = [
 
 /** Hide portal-wide billing controls for unknown permissions or any restricted record scope. */
 export function billingManagementAvailable(access: unknown): boolean {
+  return productPermissionAvailable(access, 'billing.manage', true);
+}
+
+export function productPermissionAvailable(access: unknown, permission: string, portalWide = false): boolean {
   if (!access || typeof access !== 'object') return false;
   const value = access as { permissions?: unknown; scope?: Record<string, unknown> };
-  return Array.isArray(value.permissions) && value.permissions.some(p => ['*', 'billing.*', 'billing.manage'].includes(p))
+  return Array.isArray(value.permissions) && value.permissions.some(p => typeof p === 'string'
+    && (p === '*' || p === permission || p.endsWith('.*') && permission.startsWith(p.slice(0, -1))))
     && Boolean(value.scope) && ['pipelineIds', 'ownerIds', 'teamIds', 'regionCodes'].every(key =>
-      Array.isArray(value.scope?.[key]) && (value.scope![key] as unknown[]).length === 0);
+      Array.isArray(value.scope?.[key]) && (!portalWide || (value.scope![key] as unknown[]).length === 0));
 }

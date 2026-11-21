@@ -58,6 +58,15 @@ export interface ScheduledEvent {
 }
 
 export interface Env {
+  DEALGUARD_FORECAST_ENABLED?: string;
+  DEALGUARD_AI_ENABLED?: string;
+  DEALGUARD_AI_MODEL?: string;
+  DEALGUARD_AI_API_KEY?: string;
+  DEALGUARD_AI_PRICING_VERIFIED_AT?: string;
+  DEALGUARD_AI_INPUT_USD_PER_MILLION?: string;
+  DEALGUARD_AI_OUTPUT_USD_PER_MILLION?: string;
+  DEALGUARD_BREEZE_ENABLED?: string;
+  DEALGUARD_BREEZE_ACTION_IDS?: string;
   DB: Database;
   APP_BASE_URL: string;
   HUBSPOT_APP_ID: string;

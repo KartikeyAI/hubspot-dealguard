@@ -30,5 +30,20 @@ test('URL-bound identity and fresh/cached record scope are wired into canonical 
  assert.match(source('routes-v2.ts'),/action === 'review' \? 'deal.review'/);
  assert.match(source('assessment-service.ts'),/assertRecordScope\(current.context,result.resource\)/);
  assert.match(source('commercial-assessment.ts'),/sha256Hex\(JSON.stringify\(baseAssessment\)\)/);
- assert.match(source('enterprise-access.ts'),/user_id IS NULL OR user_id = \?/);
+});
+
+test('an ambiguous or reassigned email cannot fall through to installer authority',async()=>{
+ for(const assignment of [role({user_id:'8',matching_emails:1}),role({user_id:null,matching_emails:2})]){
+  let queries=0;
+  const database={DB:{prepare(sql){
+   return {bind(){return {async first(){
+    queries++;
+    if(sql.includes('user_id = ? LIMIT 1'))return null;
+    if(sql.includes('matching_emails'))return assignment;
+    throw new Error('A conflicting email must not reach a legacy or installer lookup');
+   }};}};
+  }}};
+  const access=await enterpriseAccessContext(database,id);
+  assert.equal(access.role,'viewer');assert.equal(access.bootstrap,false);assert.equal(access.explicitAssignment,false);assert.equal(queries,2);
+ }
 });

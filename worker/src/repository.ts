@@ -1,4 +1,6 @@
 import { authorizeRecordedDeal } from './record-access.js';
+import { requireOperationalPermission } from './authorization.js';
+import { entitlementPlan, rowEntitled, subscriptionEntitled, type EntitlementRow } from './billing-entitlements.js';
 import { evidenceInstant } from './evidence-freshness.js';
 import { appendAuditChainEvent } from './audit-chain.js';
 import { DEFAULT_SETTINGS, PLAN_LIMITS } from './config.js';
@@ -26,6 +28,15 @@ export interface TenantCredentials {
   settings: TenantSettings;
 }
 
+function validateOAuthTokens(tokens: HubSpotTokenResponse): void {
+  if (!tokens || typeof tokens.access_token !== 'string' || !tokens.access_token
+    || typeof tokens.refresh_token !== 'string' || !tokens.refresh_token
+    || tokens.access_token.length > 16_384 || tokens.refresh_token.length > 16_384
+    || !Number.isSafeInteger(tokens.expires_in) || tokens.expires_in <= 0 || tokens.expires_in > 31_536_000) {
+    throw new AppError(502, 'oauth_refresh_invalid', 'HubSpot returned an invalid credential response.');
+  }
+}
+
 export class Repository {
   constructor(private readonly env: Env) {}
 
@@ -38,31 +49,44 @@ export class Repository {
     ).bind(stateHash, returnTo, expires.toISOString(), now.toISOString()).run();
   }
 
-  async consumeOAuthState(stateHash: string): Promise<{ returnTo: string | null }> {
+  async consumeOAuthState(stateHash: string): Promise<{ returnTo: string | null; issuedAt: string }> {
     const row = await this.env.DB.prepare(
-      `SELECT return_to, expires_at FROM oauth_states WHERE state_hash = ?`
-    ).bind(stateHash).first<{ return_to: string | null; expires_at: string }>();
+      `DELETE FROM oauth_states WHERE state_hash = ? RETURNING return_to, expires_at, created_at`
+    ).bind(stateHash).first<{ return_to: string | null; expires_at: string; created_at: string }>();
     if (!row) throw new AppError(400, 'invalid_oauth_state', 'OAuth state is invalid or already used.');
-    await this.env.DB.prepare(`DELETE FROM oauth_states WHERE state_hash = ?`).bind(stateHash).run();
-    if (Date.parse(row.expires_at) < Date.now()) {
+    const expiry = evidenceInstant(row.expires_at);
+    const issuedAt = evidenceInstant(row.created_at);
+    if (!expiry || !issuedAt || Date.parse(expiry) <= Date.now() || Date.parse(issuedAt)>Date.now()
+      || Date.parse(expiry)<=Date.parse(issuedAt)) {
       throw new AppError(400, 'expired_oauth_state', 'OAuth state has expired. Start the installation again.');
     }
-    return { returnTo: row.return_to };
+    return { returnTo: row.return_to, issuedAt };
   }
 
-  async upsertTenant(tokens: HubSpotTokenResponse, info: HubSpotTokenInfo): Promise<void> {
+  async upsertTenant(tokens: HubSpotTokenResponse, info: HubSpotTokenInfo, authorizationIssuedAt: string): Promise<void> {
+    validateOAuthTokens(tokens);
+    const issuedAt=evidenceInstant(authorizationIssuedAt);
+    if (!issuedAt || Date.parse(issuedAt)>Date.now() || Date.parse(issuedAt)<Date.now()-10*60_000) {
+      throw new AppError(400,'expired_oauth_state','OAuth state has expired. Start the installation again.');
+    }
+    if (!info || !Number.isSafeInteger(info.hub_id) || info.hub_id<=0 || !Number.isSafeInteger(info.app_id) || info.app_id<=0
+      || !Array.isArray(info.scopes) || info.scopes.length>500 || info.scopes.some(scope=>typeof scope!=='string'||scope.length>200)) {
+      throw new AppError(502,'oauth_response_invalid','HubSpot returned invalid installation metadata.');
+    }
     const access = await encryptSecret(tokens.access_token, this.env.TOKEN_ENCRYPTION_KEY);
     const refresh = await encryptSecret(tokens.refresh_token, this.env.TOKEN_ENCRYPTION_KEY);
     const now = new Date();
     const expiresAt = new Date(now.getTime() + Math.max(60, tokens.expires_in - 30) * 1000);
     const nextScanAt = now;
-    await this.env.DB.prepare(
-      `INSERT INTO tenants (
+    const installed = await this.env.DB.prepare(
+      `WITH install_gate AS MATERIALIZED (SELECT dealguard.lock_oauth_install_authorization(?,?::timestamptz) AS allowed),
+      installed AS (INSERT INTO tenants (
         portal_id, app_id, account_name, hub_domain, installer_email,
         access_token_cipher, access_token_iv, refresh_token_cipher, refresh_token_iv,
         token_expires_at, scopes_json, settings_json, plan, status,
-        installed_at, updated_at, next_scan_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'free', 'active', ?, ?, ?)
+        installed_at, updated_at, next_scan_at, authorization_epoch_at
+      ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'free', 'active', ?, ?, ?, ?::timestamptz
+      FROM install_gate WHERE allowed
       ON CONFLICT(portal_id) DO UPDATE SET
         app_id = excluded.app_id,
         hub_domain = excluded.hub_domain,
@@ -75,8 +99,15 @@ export class Repository {
         scopes_json = excluded.scopes_json,
         status = 'active',
         updated_at = excluded.updated_at,
-        next_scan_at = excluded.next_scan_at`
+        next_scan_at = excluded.next_scan_at,
+        authorization_epoch_at = excluded.authorization_epoch_at
+      WHERE tenants.status<>'deleted' AND tenants.authorization_epoch_at <= excluded.authorization_epoch_at
+      RETURNING portal_id,scopes_json)
+      INSERT INTO audit_events(id,portal_id,action,metadata_json,created_at)
+      SELECT ?,portal_id,'app.installed',jsonb_build_object('scopes',scopes_json::jsonb)::text,? FROM installed RETURNING portal_id`
     ).bind(
+      String(info.hub_id),
+      issuedAt,
       String(info.hub_id),
       String(info.app_id),
       null,
@@ -92,8 +123,11 @@ export class Repository {
       now.toISOString(),
       now.toISOString(),
       nextScanAt.toISOString(),
-    ).run();
-    await this.audit(String(info.hub_id), null, info.user || null, 'app.installed', { scopes: info.scopes ?? [] });
+      issuedAt,
+      crypto.randomUUID(),
+      now.toISOString(),
+    ).first();
+    if (!installed) throw new AppError(409,'oauth_authorization_superseded','The installation changed after authorization began. Start a new installation flow.');
   }
 
   async getTenant(portalId: string): Promise<TenantRow> {
@@ -101,11 +135,19 @@ export class Repository {
       .bind(portalId)
       .first<TenantRow>();
     if (!tenant) throw new AppError(404, 'installation_not_found', 'DealGuard is not connected to this HubSpot account.');
+    const subscription = await this.env.DB.prepare(`SELECT tier, status, current_period_end, trial_ends_at,
+      grace_ends_at, cancel_at_period_end FROM subscriptions_v2 WHERE portal_id = ?`)
+      .bind(portalId).first<EntitlementRow>();
+    if (subscription) return { ...tenant, plan: entitlementPlan(subscription.tier, rowEntitled(subscription)) };
+    const legacy = tenant as TenantRow & { commercial_tier?: 'free' | 'growth' | 'enterprise'; trial_ends_at?: string | null };
+    if (legacy.trial_ends_at != null) return { ...tenant, plan: entitlementPlan(legacy.commercial_tier ?? 'free',
+      subscriptionEntitled({ status: 'trialing', trialEndsAt: legacy.trial_ends_at })) };
     return tenant;
   }
 
   async getCredentials(portalId: string): Promise<TenantCredentials> {
     const tenant = await this.getTenant(portalId);
+    if (tenant.status !== 'active') throw new AppError(403, 'installation_inactive', 'This DealGuard installation is not active.');
     return {
       tenant,
       accessToken: await decryptSecret(tenant.access_token_cipher, tenant.access_token_iv, this.env.TOKEN_ENCRYPTION_KEY),
@@ -114,22 +156,37 @@ export class Repository {
     };
   }
 
-  async updateTokens(portalId: string, tokens: HubSpotTokenResponse): Promise<void> {
+  async updateTokens(portalId: string, tokens: HubSpotTokenResponse, expected: TenantRow): Promise<boolean> {
+    if (expected.portal_id !== portalId || expected.status !== 'active') return false;
+    validateOAuthTokens(tokens);
     const access = await encryptSecret(tokens.access_token, this.env.TOKEN_ENCRYPTION_KEY);
     const refresh = await encryptSecret(tokens.refresh_token, this.env.TOKEN_ENCRYPTION_KEY);
     const now = new Date();
     const expiresAt = new Date(now.getTime() + Math.max(60, tokens.expires_in - 30) * 1000);
-    await this.env.DB.prepare(
+    const changed = await this.env.DB.prepare(
       `UPDATE tenants SET access_token_cipher = ?, access_token_iv = ?, refresh_token_cipher = ?, refresh_token_iv = ?,
-       token_expires_at = ?, updated_at = ?, status = 'active' WHERE portal_id = ?`
-    ).bind(access.cipher, access.iv, refresh.cipher, refresh.iv, expiresAt.toISOString(), now.toISOString(), portalId).run();
+       token_expires_at = ?, updated_at = ? WHERE portal_id = ? AND status = 'active'
+       AND access_token_cipher = ? AND access_token_iv = ? AND refresh_token_cipher = ? AND refresh_token_iv = ?
+       RETURNING portal_id`
+    ).bind(access.cipher, access.iv, refresh.cipher, refresh.iv, expiresAt.toISOString(), now.toISOString(), portalId,
+      expected.access_token_cipher, expected.access_token_iv, expected.refresh_token_cipher, expected.refresh_token_iv).first();
+    return changed !== null;
   }
 
-  async markDisconnected(portalId: string, reason: string): Promise<void> {
-    await this.env.DB.prepare(`UPDATE tenants SET status = 'disconnected', updated_at = ? WHERE portal_id = ?`)
-      .bind(new Date().toISOString(), portalId)
-      .run();
-    await this.audit(portalId, null, null, 'app.disconnected', { reason });
+  async markDisconnected(portalId: string, reason: string, expected: TenantRow): Promise<boolean> {
+    if (expected.portal_id !== portalId || expected.status !== 'active') return false;
+    const now = new Date().toISOString();
+    // A delayed failure must not revoke a replacement grant. The status change,
+    // optional-consent revocation triggers and audit either all commit or all roll back.
+    const changed = await this.env.DB.prepare(`WITH changed AS (
+      UPDATE tenants SET status = 'disconnected', updated_at = ? WHERE portal_id = ? AND status = 'active'
+        AND access_token_cipher = ? AND access_token_iv = ? AND refresh_token_cipher = ? AND refresh_token_iv = ?
+      RETURNING portal_id)
+      INSERT INTO audit_events(id,portal_id,action,metadata_json,created_at)
+      SELECT ?,portal_id,'app.disconnected',?,? FROM changed RETURNING portal_id`)
+      .bind(now, portalId, expected.access_token_cipher, expected.access_token_iv,
+        expected.refresh_token_cipher, expected.refresh_token_iv, crypto.randomUUID(), JSON.stringify({ reason }), now).first();
+    return changed !== null;
   }
 
   async saveSettings(identity: RequestIdentity, value: unknown): Promise<TenantSettings> {
@@ -415,18 +472,12 @@ export class Repository {
   }
 
   async softDeletePortal(identity: RequestIdentity): Promise<void> {
-    await this.audit(identity.portalId, identity.userId, identity.userEmail, 'data.deleted', {});
-    await this.env.DB.batch([
-      this.env.DB.prepare(`DELETE FROM background_intelligence_settings WHERE portal_id = ?`).bind(identity.portalId),
-      this.env.DB.prepare(`DELETE FROM background_intelligence_usage WHERE portal_id = ?`).bind(identity.portalId),
-      this.env.DB.prepare(`DELETE FROM portfolio_snapshot_runs WHERE portal_id = ?`).bind(identity.portalId),
-      this.env.DB.prepare(`DELETE FROM portfolio_snapshot_schedule WHERE portal_id = ?`).bind(identity.portalId),
-      this.env.DB.prepare(`DELETE FROM deal_assessments WHERE portal_id = ?`).bind(identity.portalId),
-      this.env.DB.prepare(`DELETE FROM deal_reviews WHERE portal_id = ?`).bind(identity.portalId),
-      this.env.DB.prepare(`DELETE FROM handoffs WHERE portal_id = ?`).bind(identity.portalId),
-      this.env.DB.prepare(`DELETE FROM scan_runs WHERE portal_id = ?`).bind(identity.portalId),
-      this.env.DB.prepare(`UPDATE tenants SET status = 'deleted', access_token_cipher = '', access_token_iv = '', refresh_token_cipher = '', refresh_token_iv = '', updated_at = ? WHERE portal_id = ?`)
-        .bind(new Date().toISOString(), identity.portalId),
-    ]);
+    await requireOperationalPermission(this.env, identity, 'data.delete');
+    const result = await this.env.DB.prepare('SELECT dealguard.request_portal_deletion(?,?,?) AS intent')
+      .bind(identity.portalId, identity.userId, identity.userEmail).first<{intent: {error?: string}}>();
+    if (result?.intent.error === 'deletion_legal_hold') throw new AppError(409, 'deletion_legal_hold',
+      'A configured or active legal hold prevents data deletion. Release the hold through its authorized process first.');
+    if (!result?.intent || result.intent.error) throw new AppError(409, 'deletion_state_changed',
+      'The installation changed before the deletion request could be recorded.');
   }
 }

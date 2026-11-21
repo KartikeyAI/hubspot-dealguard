@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { SIGNOFF_GATES } from './production-signoff.mjs';
 
 export const INTELLIGENCE_TEST_IDS = Object.freeze(
   Array.from({ length: 12 }, (_, index) => `DG-INT-${String(index + 1).padStart(3, '0')}`),
@@ -200,6 +201,30 @@ export function deploymentEvidenceFailures(record, now = Date.now()) {
     || smoke?.summary?.passed !== 7 || smoke?.summary?.failed !== 0) failures.push('public deployment smoke did not pass');
   if (smoke?.expectedVersion !== record.version || smoke?.commit !== record.commit || smoke?.target !== record.target
     || !origin(smoke?.baseUrl) || origin(smoke.baseUrl) !== origin(context.baseUrl)) failures.push('public smoke release context mismatch');
+  // This records the workflow-verified approval. It does not itself authenticate a receipt.
+  // The independent signature gate is mandatory before production mutations.
+  if (record.target === 'production' && /^3\.\d+\.\d+$/.test(record.version ?? '')) {
+    const approval = record.productionApproval;
+    const source = approval?.candidate;
+    const approvers = Array.isArray(approval?.approvers) ? approval.approvers : [];
+    const reports = Array.isArray(approval?.reports) ? approval.reports : [];
+    if (approval?.schemaVersion !== 1 || approval.kind !== 'verified-production-approval'
+      || approval.approvalAccepted !== true || approval.productionReady !== false
+      || source?.repository !== record.repository || source?.commit !== record.commit || source?.version !== record.version
+      || !/^[a-f0-9]{40}$/.test(source?.tree ?? '') || source?.tree !== record.baseline?.source?.tree
+      || !/^[a-f0-9]{64}$/.test(approval?.dossierSha256 ?? '')
+      || !/^[1-9]\d*$/.test(record.signoffArtifactRunId ?? '')
+      || !/^[1-9]\d*$/.test(record.stagingRunId ?? '') || approval?.stagingRunId !== record.stagingRunId
+      || !Number.isFinite(Date.parse(approval?.verifiedAt)) || Date.parse(approval.verifiedAt) > now
+      || now - Date.parse(approval.verifiedAt) > 24 * 60 * 60 * 1000
+      || !Number.isFinite(Date.parse(approval?.expiresAt)) || Date.parse(approval.expiresAt) <= now
+      || approvers.length !== 2 || new Set(approvers.map(a => a?.principal)).size !== 2
+      || !['release_owner', 'security_reviewer'].every(role => approvers.some(a => a?.role === role))
+      || reports.length !== Object.keys(SIGNOFF_GATES).length
+      || !Object.keys(SIGNOFF_GATES).every(gate => reports.filter(r => r?.gate === gate && /^[a-f0-9]{64}$/.test(r?.sha256 ?? '')).length === 1)) {
+      failures.push('stable v3 deployment requires matching independent production approval evidence');
+    }
+  }
   failures.push(...liveEvidenceFailures(record.acceptance, context, full));
   if (full) {
     failures.push(...intelligenceEvidenceFailures(record.intelligence, context, now));

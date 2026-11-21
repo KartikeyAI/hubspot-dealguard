@@ -30,6 +30,7 @@ export interface CloseDateReason {
 export interface DealMomentumIntelligence {
   decisionActions: DecisionAction[];
   momentum: {
+    fetchedAt?: string;
     methodology: 'crm_property_history_signal';
     windowDays: number;
     score: number | null;

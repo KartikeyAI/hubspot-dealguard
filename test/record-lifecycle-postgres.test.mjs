@@ -7,6 +7,7 @@ import { Repository } from '../dist/repository.js';
 import { persistDecisionSnapshot } from '../dist/decision-snapshot.js';
 import { HubSpotClient } from '../dist/hubspot.js';
 import { DEFAULT_SETTINGS } from '../dist/config.js';
+import { encryptSecret } from '../dist/crypto.js';
 
 test('verified archive/restore state preserves history and fences active evidence',{skip:!databaseUrl},async t=>{
   const {first,second,portal,other,at,env,envFor}=await fixture(t,'archive'),repo=new Repository(env);
@@ -73,6 +74,10 @@ test('verified archive/restore state preserves history and fences active evidenc
   });
   await t.test('real HubSpot client requires affirmative flags, and 404 is not deletion evidence',async()=>{
     const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
+    env.TOKEN_ENCRYPTION_KEY=Buffer.alloc(32,13).toString('base64');
+    const encrypted=await encryptSecret('fixture-only',env.TOKEN_ENCRYPTION_KEY);
+    await first.query(`UPDATE tenants SET access_token_cipher=$2,access_token_iv=$3,refresh_token_cipher=$2,
+      refresh_token_iv=$3,token_expires_at=$4 WHERE portal_id=$1`,[portal,encrypted.cipher,encrypted.iv,new Date(Date.now()+86400000).toISOString()]);
     const c=new HubSpotClient(env,{tenant:{portal_id:portal,token_expires_at:new Date(Date.now()+86400000).toISOString()},accessToken:'test-only',settings:DEFAULT_SETTINGS});
     globalThis.fetch=async input=>new Response(JSON.stringify({id:'2',archived:true,properties:{}}),{status:200});
     assert.equal(await c.reconcileDealLifecycle('2'),'archived');

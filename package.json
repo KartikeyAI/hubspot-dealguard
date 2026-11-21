@@ -1,6 +1,6 @@
 {
   "name": "@rokadhq/hubspot-dealguard",
-  "version": "3.0.0-alpha.1",
+  "version": "3.0.0-rc.1",
   "private": true,
   "type": "module",
   "description": "DealGuard by Rokad — enterprise HubSpot revenue governance on Neon PostgreSQL, Tigris object storage, Cloudflare Queues, and Dodo Payments.",
@@ -17,6 +17,8 @@
     "release:preflight": "node scripts/release-preflight.mjs",
     "release:bundle": "node scripts/release-bundle.mjs",
     "release:record": "node scripts/deployment-record.mjs",
+    "release:evidence": "node scripts/prepare-signoff.mjs",
+    "release:signoff": "node scripts/production-signoff.mjs",
     "release:verify-staging": "node scripts/verify-staging-promotion.mjs",
     "dev:worker": "wrangler dev",
     "deploy:worker": "wrangler deploy",
@@ -27,7 +29,7 @@
     "db:migrate": "node --env-file=.env scripts/postgres-migrate.mjs",
     "db:migrate:check": "node --env-file=.env scripts/postgres-migrate.mjs --check",
     "db:migrate:dry-run": "node scripts/postgres-migrate.mjs --dry-run",
-    "db:validate": "node scripts/postgres-validate.mjs && node scripts/postgres-validate-recommendation-operations.mjs && node scripts/postgres-validate-delivery-analytics.mjs && node scripts/postgres-validate-delivery-slos.mjs",
+    "db:validate": "node scripts/postgres-validate.mjs && node scripts/postgres-validate-recommendation-operations.mjs && node scripts/postgres-validate-delivery-analytics.mjs && node scripts/postgres-validate-delivery-slos.mjs && node scripts/postgres-validate-v3.mjs",
     "db:validate:recommendation-operations": "node scripts/postgres-validate-recommendation-operations.mjs",
     "db:validate:delivery-analytics": "node scripts/postgres-validate-delivery-analytics.mjs",
     "db:validate:delivery-slos": "node scripts/postgres-validate-delivery-slos.mjs",
@@ -40,13 +42,19 @@
     "storage:backup:head": "node scripts/tigris-backup.mjs head",
     "storage:backup:download": "node scripts/tigris-backup.mjs download",
     "storage:smoke": "node scripts/object-storage-smoke.mjs",
-    "hubspot:render-target": "node scripts/render-hubspot-target.mjs"
+    "hubspot:render-target": "node scripts/render-hubspot-target.mjs",
+    "test:recovery:local": "node scripts/local-recovery-rehearsal.mjs",
+    "test:local": "node scripts/test-local.mjs",
+    "db:validate:v3": "node scripts/postgres-validate-v3.mjs",
+    "test:scale:local": "node scripts/local-scale-rehearsal.mjs"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20260713.1",
+    "@cloudflare/workers-types": "5.20261119.1",
     "typescript": "5.9.3",
-    "wrangler": "4.110.0"
+    "wrangler": "4.166.0"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",

@@ -1,7 +1,5 @@
-import { enrichStoredAssessmentForPortal } from './assessment-service.js';
-import { operationalPermissionsForRole } from './authorization.js';
+import { billingAccessFallback } from './billing-delivery-status.js';
 import { AppError } from './errors.js';
-import { governanceContext } from './governance.js';
 import { json } from './http.js';
 import { route as routeV9 } from './routes-v9.js';
 import { validateHubSpotRequest } from './signature.js';
@@ -27,34 +25,11 @@ function redactedPayload(pathname: string): Record<string, unknown> | null {
 
 async function commercialAccessFallback(request: Request, env: Env): Promise<Record<string, unknown>> {
   const identity = await validateHubSpotRequest(request, env);
-  const governance = await governanceContext(env, identity);
-  const operational = operationalPermissionsForRole(governance.role);
-  return {
-    role: governance.role,
-    permissions: ['billing.view', ...(operational.includes('billing.manage') ? ['billing.manage'] : [])],
-    scope: { pipelineIds: [], teamIds: [], ownerIds: [], regionCodes: [] },
-    bootstrap: governance.installerBootstrap,
-    entitled: false,
-    redacted: true,
-    reason: 'enterprise_subscription_required',
-  };
-}
-
-async function enrichedCachedAssessment(request: Request, env: Env, dealId: string): Promise<Response | null> {
-  const identity = await validateHubSpotRequest(request, env);
-  const enriched = await enrichStoredAssessmentForPortal(env, identity.portalId, dealId, identity);
-  return enriched ? json(enriched) : null;
+  return billingAccessFallback(env, identity);
 }
 
 export async function route(request: Request, env: Env, ctx: { waitUntil(promise: Promise<unknown>): void }): Promise<Response> {
   const pathname = new URL(request.url).pathname;
-  if (request.method === 'GET') {
-    const assessmentMatch = pathname.match(/^\/api\/v1\/deals\/(\d+)\/assessment$/);
-    if (assessmentMatch) {
-      const enriched = await enrichedCachedAssessment(request, env, assessmentMatch[1]!);
-      if (enriched) return enriched;
-    }
-  }
   if (request.method !== 'GET') return routeV9(request, env, ctx);
   const fallback = redactedPayload(pathname);
   const isAccessRequest = pathname === '/api/v1/enterprise/access';

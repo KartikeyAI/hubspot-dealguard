@@ -17,14 +17,14 @@ async function fixture(t, target = 'staging', releaseVersion = version) {
   await put('preflight.json',{summary:record.preflight}); await put('health.json',record.health);
   await put('smoke.json',record.smoke); await put('baseline.json',record.baseline);
   await put('acceptance/result.json',record.acceptance); await put('intelligence/result.json',record.intelligence);
-  await put('staging-run.json',workflowMetadata());
+  await put('staging-run.json',workflowMetadata()); await put('signoff.json',record.productionApproval);
   const env = { ...process.env, RELEASE_TARGET:target, RELEASE_SHA:record.commit, BACKUP_REFERENCE:record.backupReference,
     BACKUP_SHA256:record.backupSha256, GITHUB_REPOSITORY:record.repository, GITHUB_WORKFLOW:record.workflow,
-    GITHUB_RUN_ID:record.runId, GITHUB_RUN_ATTEMPT:record.runAttempt, STAGING_RUN_ID:record.runId,
+    GITHUB_RUN_ID:record.runId, GITHUB_RUN_ATTEMPT:record.runAttempt, STAGING_RUN_ID:record.runId, SIGNOFF_RUN_ID:'789',
     ACCEPTANCE_BASE_URL:record.acceptanceContext.baseUrl, ACCEPTANCE_PORTAL_ID:'123', ACCEPTANCE_TEST_DEAL_ID:'987' };
   const run = (overrides = {}) => spawnSync(process.execPath, [resolve('scripts/deployment-record.mjs'),
     '--output',join(root,'deployment-record.json'),'--preflight',join(root,'preflight.json'),
-    '--health',join(root,'health.json'),'--smoke',join(root,'smoke.json'),'--baseline',join(root,'baseline.json'),
+    '--health',join(root,'health.json'),'--signoff',join(root,'signoff.json'),'--smoke',join(root,'smoke.json'),'--baseline',join(root,'baseline.json'),
     '--acceptance-dir',join(root,'acceptance'),'--intelligence-dir',join(root,'intelligence')],
   { cwd:root,encoding:'utf8',env:{...env,...overrides},timeout:10_000 });
   const promote = (overrides = {}) => spawnSync(process.execPath, [resolve('scripts/verify-staging-promotion.mjs'),
@@ -141,4 +141,26 @@ test('deployment input shell rejects full runs without a test deal and does not 
       ACCEPTANCE_PROFILE:'full',ACCEPTANCE_PORTAL_ID:'123',ACCEPTANCE_TEST_DEAL_ID:testDealId}});
     assert.notEqual(result.status,0); await assert.rejects(readFile(marker),{code:'ENOENT'});
   }
+});
+
+test('stable production record fails without source-matching sign-off evidence', async t => {
+  const f=await fixture(t,'production','3.0.0');
+  for (const evidence of [null, {...f.record.productionApproval, approvalAccepted:false},
+    {...f.record.productionApproval, candidate: {...f.record.productionApproval.candidate, tree:'e'.repeat(40)}},
+    {...f.record.productionApproval, expiresAt:'2000-01-01T00:00:00.000Z'},
+    {...f.record.productionApproval, reports: []}]) {
+    await f.put('signoff.json',evidence); assert.notEqual(f.run().status,0);
+  }
+});
+
+test('controlled deploy verifies signed approvals before database or Worker mutations', async () => {
+  const source=await readFile('.github/workflows/controlled-deploy.yml','utf8');
+  const gate=source.indexOf('run: npm run release:signoff -- --input .release/signoff-evidence');
+  assert.ok(gate>source.indexOf('Verify matching staging deployment before production'));
+  assert.ok(gate<source.indexOf('run: npm run db:migrate'));
+  assert.ok(gate<source.indexOf('run: npx wrangler deploy'));
+  assert.match(source,/signoff_run_id is required for production/);
+  assert.match(source,/PRODUCTION_SIGNOFF_TRUST_JSON: \$\{\{ vars.PRODUCTION_SIGNOFF_TRUST_JSON \}\}/);
+  assert.match(source,/name: dealguard-production-signoff-\$\{\{ inputs.release_sha \}\}/);
+  assert.match(source,/\.release\/production-signoff-receipt.json/);
 });

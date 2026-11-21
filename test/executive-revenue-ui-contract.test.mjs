@@ -46,8 +46,8 @@ test('manager workspace composes the existing queue and executive panel', () => 
   const core = read('src/app/pages/ManagerDecisionQueueCore.tsx');
   assert.match(wrapper, /ManagerDecisionQueueCore/);
   assert.match(wrapper, /ExecutiveRevenuePanel/);
-  assert.match(wrapper, /<ManagerDecisionQueueCore enabled=\{enabled\} \/>/);
-  assert.match(wrapper, /<ExecutiveRevenuePanel enabled=\{enabled\} \/>/);
+  assert.match(wrapper, /analytics && <ManagerDecisionQueueCore enabled=\{analytics\} \/>/);
+  assert.match(wrapper, /analytics && <ExecutiveRevenuePanel enabled=\{analytics\} \/>/);
   assert.match(core, /export function ManagerDecisionQueuePanel/);
 });
 

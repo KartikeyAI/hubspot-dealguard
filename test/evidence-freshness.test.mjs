@@ -1,3 +1,4 @@
+import { buildSourceEvidence } from '../dist/source-evidence.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -21,7 +22,7 @@ const row = (extra = {}) => ({ deal_id: '1', score: 80, status: 'ready', issue_c
   assessed_at: at(2), snapshot_assessment_at: at(2), snapshot_generated_at: at(1),
   snapshot_freshness_status: 'fresh', snapshot_confidence: 'high', snapshot_coverage_percent: 100,
   snapshot_attention_score: 95, brief_status: 'intervention_required',
-  dimensions_json: '{"closeDate":{"score":90,"status":"credible"}}',
+  dimensions_json: JSON.stringify({closeDate:{score:90,status:'credible'},sourceEvidence:buildSourceEvidence({readiness:extra.assessed_at??at(2),history:extra.assessed_at??at(2)},NOW)}),
   risk_summary_json: '[{"code":"stale_only_risk","label":"Stored risk","severity":"warning"}]',
   next_action_code: 'snapshot_action', next_action_label: 'Stored next action', next_action_text: 'Verify source',
   next_action_priority: 'high', next_action_owner: 'manager', next_action_due_at: at(-24), ...extra });

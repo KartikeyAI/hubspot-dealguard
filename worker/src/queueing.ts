@@ -1,3 +1,9 @@
+import { cleanupBreezeMetadata } from './breeze-tools.js';
+import { resumePendingPortalDeletions } from './data-deletion.js';
+import { processOutcomeEvaluationJobs } from './outcome-evaluation-service.js';
+import { refreshForecastMonitoring, observeForecastOutcomes, cleanupForecastEvidence } from './forecast-monitoring.js';
+import { cleanupAiEvidence } from './ai-assistance.js';
+import { cleanupOutcomeEvidence } from './intelligence-consent.js';
 import { runHubSpotWebhookInbox } from './hubspot-events.js';
 import { runBackgroundIntelligence } from './background-intelligence.js';
 import { captureDuePortfolioSnapshots } from './portfolio-snapshots.js';
@@ -62,10 +68,16 @@ async function processMessage(env: Env, message: DealGuardQueueMessage): Promise
   else if (message.task === 'synthetics') await runDueSyntheticChecks(env);
   else if (message.task === 'billing_schedule') await applyManualScheduledPlanChanges(env);
   else if (message.task === 'policy_exceptions') await expirePolicyExceptions(env);
-  else if (message.task === 'retention') await applyComplianceRetention(env);
+  else if (message.task === 'retention') { await applyComplianceRetention(env); await cleanupOutcomeEvidence(env); await cleanupAiEvidence(env); await cleanupBreezeMetadata(env); await cleanupForecastEvidence(env); }
   else if (message.task === 'audit_promotion') await promoteLegacyAuditEvents(env);
   else if (message.task === 'secure_download_cleanup') await deleteExpiredSecureDownloads(env);
-  else if (message.task === 'maintenance') await runMaintenance(env);
+  else if (message.task === 'maintenance') {
+    await resumePendingPortalDeletions(env, 1);
+    await runMaintenance(env);
+    await processOutcomeEvaluationJobs(env, 1);
+    await refreshForecastMonitoring(env, 1);
+    await observeForecastOutcomes(env, 1);
+  }
 }
 
 export async function processQueueBatch(env: Env, batch: QueueBatch<DealGuardQueueMessage>): Promise<void> {

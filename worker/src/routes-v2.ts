@@ -1,9 +1,12 @@
-import { assessmentFreshness } from './evidence-freshness.js';
+import { requireBillingManagement } from './billing-delivery-status.js';
 import { authorizeRecordedDeal, authorizeFreshDeal } from './record-access.js';
 import { saveAssessmentContext } from './assessment-context.js';
 import { assessDealForPortal } from './assessment-service.js';
+import { recordedAssessment } from './recorded-assessment.js';
 import { exportAuditCsv, searchAuditEvents } from './audit.js';
-import { requireOperationalPermission } from './authorization.js';
+import { requireActiveIdentity, requireOperationalPermission } from './authorization.js';
+import { requireEnterprisePermission } from './enterprise-access.js';
+import { dashboardForIdentity } from './dashboard-access.js';
 import {
   createCheckoutSession,
   createCustomerPortalSession,
@@ -26,7 +29,6 @@ import { resolveSegmentedRules } from './enterprise-policy.js';
 import { recordAssessmentHistory } from './enterprise-analytics-v2.js';
 import { AppError } from './errors.js';
 import {
-  assignRole,
   createPolicyDraft,
   createPolicySimulation,
   decidePolicy,
@@ -142,13 +144,13 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     const code = url.searchParams.get('code');
     const state = url.searchParams.get('state');
     if (!code || !state) throw new AppError(400, 'oauth_callback_invalid', 'OAuth callback is missing required parameters.');
-    await repository.consumeOAuthState(await sha256Hex(state));
+    const authorization = await repository.consumeOAuthState(await sha256Hex(state));
     const tokens = await HubSpotClient.exchangeCode(env, code);
     const info = await HubSpotClient.tokenInfo(tokens.access_token);
     if (env.HUBSPOT_APP_ID && env.HUBSPOT_APP_ID !== 'REPLACE_WITH_HUBSPOT_APP_ID' && String(info.app_id) !== env.HUBSPOT_APP_ID) {
       throw new AppError(401, 'oauth_app_mismatch', 'OAuth token belongs to a different HubSpot app.');
     }
-    await repository.upsertTenant(tokens, info);
+    await repository.upsertTenant(tokens, info, authorization.issuedAt);
     const installPortalId = String(info.hub_id);
     const installScanId = await repository.startScan(installPortalId, 'install');
     ctx.waitUntil(enqueueScan(env, { portalId: installPortalId, trigger: 'install', scanId: installScanId }).catch(async (error) => {
@@ -232,6 +234,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
 
   if (!url.pathname.startsWith('/api/v1/')) throw new AppError(404, 'not_found', 'Endpoint not found.');
   const identity = await validateHubSpotRequest(request, env);
+  await requireActiveIdentity(env, identity);
 
   const enterpriseResponse = await routeEnterpriseApi(request, env, identity, ctx);
   if (enterpriseResponse) return enterpriseResponse;
@@ -242,7 +245,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   }
   if (url.pathname === '/api/v1/billing/checkout') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
-    await requireOperationalPermission(env, identity, 'billing.manage');
+    await requireBillingManagement(env, identity);
     const body = await readJson<{ tier?: CommercialTier; interval?: 'month' | 'year'; usageMode?: UsageMode; overageEnabled?: boolean }>(request);
     return json(await createCheckoutSession(
       env,
@@ -257,12 +260,13 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   }
   if (url.pathname === '/api/v1/billing/portal') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
-    await requireOperationalPermission(env, identity, 'billing.manage');
+    await requireBillingManagement(env, identity);
     return json(await createCustomerPortalSession(env, identity));
   }
 
   if (url.pathname === '/api/v1/enterprise/overview') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    await requireEnterprisePermission(env, identity, 'analytics.view');
     return json(await enterpriseOverview(env, identity));
   }
 
@@ -276,7 +280,10 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     return json(await enableGovernance(env, identity));
   }
   if (url.pathname === '/api/v1/governance/policies') {
-    if (request.method === 'GET') return json({ policies: await listPolicies(env, identity.portalId) });
+    if (request.method === 'GET') {
+      await requireEnterprisePermission(env, identity, 'policy.view');
+      return json({ policies: await listPolicies(env, identity.portalId) });
+    }
     if (request.method === 'POST') {
       await requireCommercialTier(env, identity.portalId, 'enterprise');
       return json(await createPolicyDraft(env, identity, await readJson<unknown>(request)), 201);
@@ -288,6 +295,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   if (policyRoute) {
     if (!policyRoute.action) {
       if (request.method === 'GET') {
+        await requireEnterprisePermission(env, identity, 'policy.view');
         const policy = await getPolicy(env, identity.portalId, policyRoute.id);
         if (!policy) throw new AppError(404, 'policy_not_found', 'The requested policy does not exist.');
         return json(policy);
@@ -317,9 +325,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   if (url.pathname === '/api/v1/governance/roles') {
     if (request.method === 'GET') return json({ roles: await listRoles(env, identity) });
     if (request.method === 'PUT') {
-      await requireCommercialTier(env, identity.portalId, 'enterprise');
-      await assignRole(env, identity, await readJson<unknown>(request));
-      return json({ ok: true });
+      throw new AppError(410, 'legacy_role_write_retired', 'Use Enterprise App Home administrator setup or reviewed enterprise role changes.');
     }
     return methodNotAllowed(['GET', 'PUT']);
   }
@@ -336,7 +342,6 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     if (request.method === 'GET') return json({ cases: await listRemediationCases(env, identity, url) });
     if (request.method === 'POST') {
       await requireCommercialTier(env, identity.portalId, 'enterprise');
-      await requireOperationalPermission(env, identity, 'remediation.manage');
       return json(await createRemediationCase(env, identity, await readJson<unknown>(request)), 201);
     }
     return methodNotAllowed(['GET', 'POST']);
@@ -354,10 +359,14 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
 
   if (url.pathname === '/api/v1/operations/health') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    await requireEnterprisePermission(env, identity, 'reliability.view');
     return json(await serviceHealth(env, identity.portalId));
   }
   if (url.pathname === '/api/v1/operations/destinations') {
-    if (request.method === 'GET') return json({ destinations: await listDestinations(env, identity.portalId) });
+    if (request.method === 'GET') {
+      await requireOperationalPermission(env, identity, 'delivery.manage');
+      return json({ destinations: await listDestinations(env, identity.portalId) });
+    }
     if (request.method === 'POST') {
       await requireCommercialTier(env, identity.portalId, 'enterprise');
       await requireOperationalPermission(env, identity, 'delivery.manage');
@@ -378,6 +387,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   }
   if (url.pathname === '/api/v1/operations/outbox') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    await requireEnterprisePermission(env, identity, 'reliability.view');
     return json({ events: await listOutbox(env, identity.portalId, url.searchParams.get('status'), Number(url.searchParams.get('limit') ?? 100)) });
   }
   const outboxReplay = replayId(url.pathname);
@@ -390,7 +400,10 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   }
 
   if (url.pathname === '/api/v1/integrations/slack') {
-    if (request.method === 'GET') return json(await getSlackStatus(env, identity.portalId));
+    if (request.method === 'GET') {
+      await requireOperationalPermission(env, identity, 'integration.manage');
+      return json(await getSlackStatus(env, identity.portalId));
+    }
     if (request.method === 'DELETE') {
       await requireOperationalPermission(env, identity, 'integration.manage');
       await disconnectSlack(env, identity);
@@ -412,6 +425,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
 
   if (url.pathname === '/api/v1/native-sync') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    await requireOperationalPermission(env, identity, 'native_sync.manage');
     return json(await getNativeSyncStatus(env, identity.portalId));
   }
   if (url.pathname === '/api/v1/native-sync/provision') {
@@ -432,6 +446,7 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
 
   if (url.pathname === '/api/v1/metadata') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    await requireOperationalPermission(env, identity, 'settings.manage');
     const client = await HubSpotClient.forPortal(env, identity.portalId);
     const [pipelines, properties] = await Promise.all([client.getPipelines(), client.getDealProperties()]);
     return json({
@@ -441,10 +456,11 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
   }
   if (url.pathname === '/api/v1/dashboard') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
-    return json(await dashboardForPortal(env, identity.portalId));
+    return json(await dashboardForIdentity(env, identity, url));
   }
   if (url.pathname === '/api/v1/settings') {
     if (request.method === 'GET') {
+      await requireOperationalPermission(env, identity, 'settings.manage');
       const credentials = await repository.getCredentials(identity.portalId);
       return json({ plan: credentials.tenant.plan, settings: credentials.settings });
     }
@@ -497,8 +513,8 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     const body = await readJson<{ confirmation?: string }>(request);
     if (body.confirmation !== 'DELETE DEALGUARD DATA') throw new AppError(400, 'confirmation_required', 'Enter the exact deletion confirmation phrase.');
     await repository.softDeletePortal(identity);
-    await finalizePortalDeletion(env, identity);
-    return json({ ok: true });
+    const deletion = await finalizePortalDeletion(env, identity);
+    return json({ ok: true, deletion }, deletion.status === 'completed' ? 200 : 202);
   }
 
   const dealId = dealIdFromPath(url.pathname);
@@ -508,9 +524,9 @@ export async function route(request: Request, env: Env, ctx: { waitUntil(promise
     if (action === 'assessment') {
       if (!['GET', 'POST'].includes(request.method)) return methodNotAllowed(['GET', 'POST']);
       if (request.method === 'GET') {
-        const cached = await repository.getAssessment(identity.portalId, dealId);
-        if (cached && assessmentFreshness(cached.assessedAt, Date.now()).status === 'fresh' && Date.now() - Date.parse(cached.assessedAt) < 15 * 60_000) return json(cached);
+        return json(await recordedAssessment(env, identity, dealId));
       }
+      await authorizeRecordedDeal(env, identity, dealId, 'deal.review');
       return json(await assessDealForPortal(env, identity.portalId, dealId, 'record', false, identity));
     }
     if (action === 'review') {

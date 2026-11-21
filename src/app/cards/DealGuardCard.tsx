@@ -2,6 +2,7 @@ import React from 'react';
 import { Alert, Button, Divider, Flex, Heading, StatusTag, Text, hubspot } from '@hubspot/ui-extensions';
 import {
   CardLoading,
+  AssessmentEvidenceNotice,
   CardUnavailable,
   attentionVariant,
   briefVariant,
@@ -20,9 +21,9 @@ import {
 hubspot.extend<'crm.record.tab'>(({ context }) => <DealGuardBriefCard dealId={String(context.crm.objectId)} />);
 
 const DealGuardBriefCard = ({ dealId }: { dealId: string }) => {
-  const { assessment, loading, working, error, notice, load, postAction } = useDealAssessment(dealId);
+  const { assessment, loading, working, error, notice, canRefresh, load, postAction } = useDealAssessment(dealId);
   if (loading) return <CardLoading label="Loading DealGuard deal brief" />;
-  if (!assessment) return <CardUnavailable error={error} />;
+  if (!assessment) return <CardUnavailable error={error} canRefresh={canRefresh} working={working} onRefresh={() => void load(true)} />;
 
   const intelligence = assessment.intelligence;
   const brief = intelligence?.dealBrief;
@@ -34,6 +35,7 @@ const DealGuardBriefCard = ({ dealId }: { dealId: string }) => {
   const nextAction = brief?.nextAction;
 
   return <Flex direction="column" gap="medium">
+    <AssessmentEvidenceNotice assessment={assessment} />
     {error && <Alert title="Action failed" variant="danger">{error}</Alert>}
     {notice && <Alert title="Done" variant="success">{notice}</Alert>}
 
@@ -79,13 +81,13 @@ const DealGuardBriefCard = ({ dealId }: { dealId: string }) => {
         <Flex direction="column" gap="extra-small">
           <Text format={{ fontWeight: 'bold' }}>Top risks</Text>
           {brief.risks.length === 0
-            ? <Text>No material deterministic risk is currently detected.</Text>
+            ? <Text>No risk details are included in this recorded view.</Text>
             : brief.risks.slice(0, 3).map((item) => <Text key={item.code}>• {item.label}: {item.detail}</Text>)}
         </Flex>
         <Flex direction="column" gap="extra-small">
           <Text format={{ fontWeight: 'bold' }}>Positive signals</Text>
           {brief.positiveSignals.length === 0
-            ? <Text>No positive evidence is currently strong enough to highlight.</Text>
+            ? <Text>No positive signal details are included in this recorded view.</Text>
             : brief.positiveSignals.slice(0, 3).map((item) => <Text key={item.code}>• {item.label}: {item.detail}</Text>)}
         </Flex>
       </Flex>
@@ -128,8 +130,8 @@ const DealGuardBriefCard = ({ dealId }: { dealId: string }) => {
         </Flex>
         <Flex direction="column" gap="extra-small">
           <Text variant="microcopy">STAGE READINESS</Text>
-          <Heading>{intelligence?.stageReadiness.percent ?? assessment.score}%</Heading>
-          <Text>{intelligence?.stageReadiness.satisfied ?? 0} of {intelligence?.stageReadiness.total ?? 0} configured requirements</Text>
+          <Heading>{intelligence?.stageReadiness ? `${intelligence.stageReadiness.percent}%` : 'Unavailable'}</Heading>
+          <Text>{intelligence?.stageReadiness ? `${intelligence.stageReadiness.satisfied} of ${intelligence.stageReadiness.total} configured requirements` : 'Stage requirement details need an authorized refresh.'}</Text>
         </Flex>
       </Flex>
 
@@ -139,16 +141,16 @@ const DealGuardBriefCard = ({ dealId }: { dealId: string }) => {
       <Alert title="How to read this brief" variant="info">
         The Deal Brief synthesises deterministic readiness, CRM movement, close-date, structured relationship, metadata-only engagement, and optional commercial-object evidence. Attention priority is not buyer intent, sentiment, a forecast category, a win probability, or an expected-loss estimate.
       </Alert>
-    </> : <Alert title="Refresh to build the full Deal Brief" variant="info">
-      The stored readiness assessment is available, but the unified evidence synthesis has not yet been generated for this record.
-    </Alert>}
+    </> : <><Heading>Recorded readiness: {assessment.score}/100</Heading>
+      {assessment.issues.map(issue=><Text key={issue.code}>{issue.label}: {issue.description}</Text>)}
+      <Alert title="Full Deal Brief unavailable" variant="info">The stored readiness assessment is available. An authorized refresh can load current supporting evidence and rebuild the Deal Brief.</Alert></>}
 
     {assessment.isWon && <Alert title="Sales-to-delivery handoff" variant={assessment.handoffStatus === 'confirmed' ? 'success' : 'warning'}>
       {assessment.handoffStatus === 'confirmed' ? 'The handoff has been confirmed.' : 'Resolve critical gaps, then confirm that delivery has enough information to begin.'}
     </Alert>}
 
     <Flex direction="row" gap="small" wrap="wrap">
-      <Button onClick={() => void load(true)} disabled={working}>Refresh Deal Brief</Button>
+      <Button onClick={() => void load(true)} disabled={working || !canRefresh}>Refresh Deal Brief</Button>
       {assessment.recordCapabilities?.canReview === true && <Button variant="secondary" onClick={() => void postAction('review')} disabled={working}>Mark reviewed</Button>}
       {assessment.recordCapabilities?.canConfirmHandoff === true && assessment.isWon && assessment.handoffStatus !== 'confirmed' && <Button variant="primary" onClick={() => void postAction('handoff')} disabled={working || assessment.status === 'critical'}>Confirm handoff</Button>}
     </Flex>

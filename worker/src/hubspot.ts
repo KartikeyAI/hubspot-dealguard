@@ -2,6 +2,7 @@ import { assertRecordAvailable, verifyRecordState } from './record-lifecycle.js'
 import { CORE_DEAL_PROPERTIES, DEALGUARD_NATIVE_PROPERTY_NAMES } from './config.js';
 import { AppError } from './errors.js';
 import { Repository, type TenantCredentials } from './repository.js';
+import { readBoundedText } from './request-body.js';
 import type {
   Env,
   HubSpotDealUpdate,
@@ -19,6 +20,14 @@ import type {
 const API_BASE = 'https://api.hubapi.com';
 const ALLOWED_NATIVE_PROPERTY_NAMES = new Set<string>(DEALGUARD_NATIVE_PROPERTY_NAMES);
 const PROPERTY_PATTERN = /^[a-zA-Z][a-zA-Z0-9_]{0,127}$/;
+
+async function readOAuthResponse<T>(response: Response, signal: AbortSignal): Promise<T> {
+  try {
+    return JSON.parse(await readBoundedText({headers: response.headers, body: response.body, signal}, 65_536)) as T;
+  } catch {
+    throw new AppError(502, 'oauth_response_invalid', 'HubSpot returned an invalid authorization response.');
+  }
+}
 
 interface AssociationBatchResponse {
   results?: Array<{ from: { id: string }; to: Array<{ toObjectId: number }> }>;
@@ -64,19 +73,23 @@ export class HubSpotClient {
       redirect_uri: `${env.APP_BASE_URL}/oauth/callback`,
       code,
     });
+    const signal = AbortSignal.timeout(15_000);
     const response = await fetch(`${API_BASE}/oauth/v1/token`, {
+      signal, redirect: 'error',
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded;charset=utf-8' },
       body,
     });
     if (!response.ok) throw new AppError(502, 'oauth_exchange_failed', 'HubSpot rejected the OAuth authorization code.');
-    return (await response.json()) as HubSpotTokenResponse;
+    return readOAuthResponse<HubSpotTokenResponse>(response, signal);
   }
 
   static async tokenInfo(accessToken: string): Promise<HubSpotTokenInfo> {
-    const response = await fetch(`${API_BASE}/oauth/v1/access-tokens/${encodeURIComponent(accessToken)}`);
+    if (!accessToken || accessToken.length > 16_384) throw new AppError(502, 'oauth_response_invalid', 'HubSpot returned an invalid authorization response.');
+    const signal = AbortSignal.timeout(15_000);
+    const response = await fetch(`${API_BASE}/oauth/v1/access-tokens/${encodeURIComponent(accessToken)}`, {signal, redirect: 'error'});
     if (!response.ok) throw new AppError(502, 'token_info_failed', 'HubSpot token metadata could not be retrieved.');
-    return (await response.json()) as HubSpotTokenInfo;
+    return readOAuthResponse<HubSpotTokenInfo>(response, signal);
   }
 
   get portalId(): string {
@@ -99,8 +112,12 @@ export class HubSpotClient {
     return AbortSignal.timeout(Math.min(15000, Math.floor(remaining)));
   }
 
-  private async refreshIfNeeded(): Promise<void> {
-    if (Date.parse(this.credentials.tenant.token_expires_at) > Date.now() + 60_000) return;
+  private async refreshIfNeeded(force = false): Promise<void> {
+    // Clients can outlive a request. Re-read the active grant before every provider
+    // operation so cached credentials cannot reactivate an uninstalled project.
+    this.credentials = await this.repository.getCredentials(this.portalId);
+    if (!force && Date.parse(this.credentials.tenant.token_expires_at) > Date.now() + 60_000) return;
+    const expected = this.credentials.tenant;
     const body = new URLSearchParams({
       grant_type: 'refresh_token',
       client_id: this.env.HUBSPOT_CLIENT_ID,
@@ -115,15 +132,24 @@ export class HubSpotClient {
       body,
     });
     this.requestPolicy?.afterResponse?.(response.status);
-    if (this.requestPolicy && (response.status === 429 || response.status >= 500)) {
+    if (response.status === 429 || response.status >= 500) {
       throw new AppError(response.status === 429 ? 429 : 503, 'hubspot_rate_limited', 'HubSpot token service is temporarily unavailable.');
     }
     if (!response.ok) {
-      await this.repository.markDisconnected(this.portalId, `refresh_failed_${response.status}`);
-      throw new AppError(401, 'hubspot_reauthorization_required', 'HubSpot authorization has expired. Reconnect DealGuard.');
+      // An HTTP failure alone is not evidence that this grant was revoked. A
+      // malformed response or app-configuration error must not revoke consent.
+      const failure = await readOAuthResponse<Record<string, unknown>>(response, signal).catch(() => null);
+      const terminal = (response.status === 400 || response.status === 401)
+        && (failure?.error === 'invalid_grant' || failure?.status === 'BAD_REFRESH_TOKEN');
+      if (!terminal) throw new AppError(502, 'oauth_refresh_failed', 'HubSpot credentials could not be refreshed. Retry later.');
+      if (await this.repository.markDisconnected(this.portalId, 'refresh_grant_rejected', expected)) {
+        throw new AppError(401, 'hubspot_reauthorization_required', 'HubSpot authorization has expired. Reconnect DealGuard.');
+      }
+      this.credentials = await this.repository.getCredentials(this.portalId);
+      return;
     }
-    const tokens = (await response.json()) as HubSpotTokenResponse;
-    await this.repository.updateTokens(this.portalId, tokens);
+    const tokens = await readOAuthResponse<HubSpotTokenResponse>(response, signal);
+    await this.repository.updateTokens(this.portalId, tokens, expected);
     this.credentials = await this.repository.getCredentials(this.portalId);
   }
 
@@ -142,8 +168,7 @@ export class HubSpotClient {
     });
     this.requestPolicy?.afterResponse?.(response.status);
     if (response.status === 401 && retry && !this.requestPolicy?.disableAuthRetry) {
-      this.credentials.tenant.token_expires_at = new Date(0).toISOString();
-      await this.refreshIfNeeded();
+      await this.refreshIfNeeded(true);
       return this.request<T>(path, init, false);
     }
     if (response.status === 429) throw new AppError(429, 'hubspot_rate_limited', 'HubSpot rate limited the request. Retry later.');

@@ -1,0 +1,59 @@
+{
+  "uid": "dealguard_breeze_next_action",
+  "type": "workflow-action",
+  "config": {
+    "actionUrl": "https://dealguard-api.rokad.co/api/v1/breeze/next-action",
+    "isPublished": false,
+    "supportedClients": [
+      {
+        "client": "AGENTS",
+        "toolType": "GET_DATA",
+        "llmConfig": {
+          "actionDescription": "Retrieve the current recorded next action code for an explicit deal ID; missing action evidence means unknown. Supply only the numeric dealId string, never identity, secrets, or instructions. Unknown evidence must remain unknown."
+        }
+      }
+    ],
+    "inputFields": [
+      {
+        "typeDefinition": {
+          "name": "dealId",
+          "type": "string",
+          "fieldType": "text"
+        },
+        "supportedValueTypes": [
+          "STATIC_VALUE"
+        ],
+        "isRequired": false
+      }
+    ],
+    "outputFields": [
+      {
+        "typeDefinition": {
+          "name": "evidence",
+          "type": "string",
+          "externalOptions": false
+        }
+      }
+    ],
+    "labels": {
+      "en": {
+        "actionName": "Get recorded next action",
+        "appDisplayName": "DealGuard",
+        "actionDescription": "Retrieve the current recorded next action code for an explicit deal ID; missing action evidence means unknown.",
+        "actionCardContent": "Get recorded next action for {{dealId}}",
+        "inputFieldLabels": {
+          "dealId": "HubSpot deal ID"
+        },
+        "inputFieldDescriptions": {
+          "dealId": "An explicit numeric HubSpot deal ID. Required by the service; no automatic default."
+        },
+        "outputFieldLabels": {
+          "evidence": "Timestamped evidence and limitations"
+        }
+      }
+    },
+    "objectTypes": [
+      "DEAL"
+    ]
+  }
+}

@@ -1,4 +1,5 @@
 import { permissionMatches } from './enterprise-access.js';
+import { AppError } from './errors.js';
 import { authorizeRecordedDeal } from './record-access.js';
 import { requireOperationalPermission } from './authorization.js';
 import { requireCommercialTier } from './billing.js';
@@ -76,8 +77,11 @@ export async function route(
   const dealId = assessmentDealId(url.pathname);
   if (!dealId || !['GET', 'POST'].includes(request.method)) return routeV10(request, env, ctx);
 
+  // GET is a recorded read: no commercial fetch, snapshot write or recommendation observation.
+  if (request.method === 'GET') return routeV10(request, env, ctx);
+
   const recordIdentity = await validateHubSpotRequest(request,env);
-  await authorizeRecordedDeal(env,recordIdentity,dealId);
+  await authorizeRecordedDeal(env,recordIdentity,dealId,'deal.review');
   const baseResponse = await routeV10(request, env, ctx);
   if (!baseResponse.ok) return baseResponse;
   const contentType = baseResponse.headers.get('content-type') ?? '';
@@ -92,7 +96,10 @@ export async function route(
     payload,
     request.method === 'POST',
   );
-  const recordAccess = await authorizeRecordedDeal(env,identity,dealId);
+  const recordAccess = await authorizeRecordedDeal(env,identity,dealId,'deal.review');
+  if (recordAccess.assessmentAt !== enriched.assessedAt) {
+    throw new AppError(409,'assessment_changed','A newer assessment was recorded. Reload the deal.');
+  }
   await persistDecisionSnapshot(env, identity.portalId, dealId, enriched).catch((error) => {
     console.error(JSON.stringify({
       level: 'warn',
@@ -103,6 +110,7 @@ export async function route(
     }));
   });
   return json({...enriched, recordCapabilities: {
+    canRefresh: permissionMatches(recordAccess.context.permissions,'deal.review'),
     canReview: permissionMatches(recordAccess.context.permissions,'deal.review'),
     canConfirmHandoff: permissionMatches(recordAccess.context.permissions,'handoff.confirm'),
   }}, baseResponse.status);

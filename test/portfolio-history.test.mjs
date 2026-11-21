@@ -80,7 +80,7 @@ test('route and App Home integrate an on-demand, signed, Enterprise-scoped read'
   assert.match(endpoint, /validateHubSpotRequest\(request, env\)/);
   assert.match(endpoint, /requireCommercialTier\(env, identity.portalId, 'enterprise'\)/);
   assert.match(endpoint, /portfolioHistory\(env, identity, url\)/);
-  assert.match(composition, /<PortfolioHistoryPanel enabled=\{enabled\}/);
+  assert.match(composition, /analytics && <PortfolioHistoryPanel enabled=\{analytics\}/);
   assert.match(panel, /if \(!enabled \|\| busy\) return/);
   assert.match(panel, /id === requestId.current/);
   assert.doesNotMatch(panel, /method: 'POST'|setInterval/);

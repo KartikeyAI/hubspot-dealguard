@@ -1,3 +1,6 @@
+import { billingDeliveryStatus } from './billing-delivery-status.js';
+import { routeIntelligence } from './routes-intelligence.js';
+import { routeEnterpriseRoleBootstrap } from './enterprise-role-bootstrap.js';
 import { webhookInboxStatus, retryWebhookInbox } from './hubspot-events.js';
 import { backgroundIntelligenceStatus, saveBackgroundIntelligenceSettings, retryBackgroundIntelligence } from './background-intelligence.js';
 import { recordedPortfolioHistory } from './portfolio-snapshots.js';
@@ -27,7 +30,15 @@ export async function route(
   env: Env,
   ctx: { waitUntil(promise: Promise<unknown>): void },
 ): Promise<Response> {
+  const bootstrapResponse = await routeEnterpriseRoleBootstrap(request, env);
+  if (bootstrapResponse) return bootstrapResponse;
+  const intelligenceResponse = await routeIntelligence(request, env, ctx);
+  if (intelligenceResponse) return intelligenceResponse;
   const url = new URL(request.url);
+  if (url.pathname === '/api/v1/billing/delivery') {
+    if (request.method !== 'GET') return methodNotAllowed(['GET']);
+    return json(await billingDeliveryStatus(env, await validateHubSpotRequest(request, env)));
+  }
   if (url.pathname === '/api/v1/enterprise/webhook-inbox') {
     if (request.method !== 'GET') return methodNotAllowed(['GET']);
     return json({ statuses: await webhookInboxStatus(env, await validateHubSpotRequest(request, env)) });

@@ -5,6 +5,7 @@ import { backgroundBudgetQuery, runBackgroundIntelligence, saveBackgroundIntelli
 import { HubSpotClient } from '../dist/hubspot.js';
 import { Repository } from '../dist/repository.js';
 import { DEFAULT_SETTINGS } from '../dist/config.js';
+import { encryptSecret } from '../dist/crypto.js';
 const url=process.env.DEALGUARD_ANALYTICS_TEST_DATABASE_URL;
 if(process.env.GITHUB_WORKFLOW==='CI'&&!url) throw new Error('Canonical CI requires isolated PostgreSQL.');
 
@@ -58,6 +59,10 @@ test('background budgets, cancellation, concurrency and actual worker compositio
     await assert.rejects(backgroundIntelligenceStatus(env,{...actor,userId:'scoped'}),{status:403});
   });
   const repository=new Repository(env);
+  env.TOKEN_ENCRYPTION_KEY=Buffer.alloc(32,11).toString('base64');
+  const encrypted=await encryptSecret('fixture-only',env.TOKEN_ENCRYPTION_KEY);
+  await first.query(`UPDATE tenants SET access_token_cipher=$2,access_token_iv=$3,refresh_token_cipher=$2,
+    refresh_token_iv=$3,token_expires_at=$4 WHERE portal_id=$1`,[portal,encrypted.cipher,encrypted.iv,future]);
   await repository.saveAssessment(portal,{dealId:'1',dealName:'Fixture deal',pipelineLabel:'Sales',stageLabel:'Open',pipelineId:'p',stageId:'s',
     score:80,grade:'B',status:'ready',issues:[],readinessSummary:'Fixture',isClosed:false,isWon:false,handoffEligible:false,assessedAt:at});
   let calls=0;

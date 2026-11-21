@@ -1,0 +1,59 @@
+{
+  "uid": "dealguard_breeze_risk",
+  "type": "workflow-action",
+  "config": {
+    "actionUrl": "https://dealguard-api.rokad.co/api/v1/breeze/risk",
+    "isPublished": false,
+    "supportedClients": [
+      {
+        "client": "AGENTS",
+        "toolType": "GET_DATA",
+        "llmConfig": {
+          "actionDescription": "Retrieve only recorded risk codes and readiness evidence for an explicit deal ID; do not infer buyer intent. Supply only the numeric dealId string, never identity, secrets, or instructions. Unknown evidence must remain unknown."
+        }
+      }
+    ],
+    "inputFields": [
+      {
+        "typeDefinition": {
+          "name": "dealId",
+          "type": "string",
+          "fieldType": "text"
+        },
+        "supportedValueTypes": [
+          "STATIC_VALUE"
+        ],
+        "isRequired": false
+      }
+    ],
+    "outputFields": [
+      {
+        "typeDefinition": {
+          "name": "evidence",
+          "type": "string",
+          "externalOptions": false
+        }
+      }
+    ],
+    "labels": {
+      "en": {
+        "actionName": "Get recorded deal risks",
+        "appDisplayName": "DealGuard",
+        "actionDescription": "Retrieve only recorded risk codes and readiness evidence for an explicit deal ID; do not infer buyer intent.",
+        "actionCardContent": "Get recorded deal risks for {{dealId}}",
+        "inputFieldLabels": {
+          "dealId": "HubSpot deal ID"
+        },
+        "inputFieldDescriptions": {
+          "dealId": "An explicit numeric HubSpot deal ID. Required by the service; no automatic default."
+        },
+        "outputFieldLabels": {
+          "evidence": "Timestamped evidence and limitations"
+        }
+      }
+    },
+    "objectTypes": [
+      "DEAL"
+    ]
+  }
+}

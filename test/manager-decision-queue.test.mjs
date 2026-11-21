@@ -1,3 +1,4 @@
+import { buildSourceEvidence } from '../dist/source-evidence.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { extractDecisionSnapshot } from '../dist/decision-snapshot.js';
@@ -41,7 +42,7 @@ function row(overrides = {}) {
     next_action_rationale: null,
     next_action_evidence_json: '[]',
     risk_summary_json: '[]',
-    dimensions_json: '{"readiness":{"score":82,"status":"ready"}}',
+    dimensions_json: JSON.stringify({readiness:{score:82,status:'ready'},sourceEvidence:buildSourceEvidence({readiness:overrides.assessed_at??'2026-08-30T10:00:00.000Z'},NOW)}),
     open_remediation_count: 0,
     overdue_remediation_count: 0,
     ...overrides,

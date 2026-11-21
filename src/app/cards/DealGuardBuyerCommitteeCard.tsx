@@ -2,6 +2,7 @@ import React from 'react';
 import { Alert, Button, Divider, Flex, Heading, StatusTag, Text, hubspot } from '@hubspot/ui-extensions';
 import {
   CardLoading,
+  AssessmentEvidenceNotice,
   CardUnavailable,
   buyerRoleLabel,
   relationshipVariant,
@@ -18,16 +19,17 @@ const sourceDescription = (source: string): string => {
 };
 
 const DealGuardBuyerCommitteeCard = ({ dealId }: { dealId: string }) => {
-  const { assessment, loading, working, error, notice, load } = useDealAssessment(dealId);
+  const { assessment, loading, working, error, notice, canRefresh, load } = useDealAssessment(dealId);
   if (loading) return <CardLoading label="Loading relationship coverage" />;
-  if (!assessment) return <CardUnavailable error={error} />;
+  if (!assessment) return <CardUnavailable error={error} canRefresh={canRefresh} working={working} onRefresh={() => void load(true)} />;
   const relationship = assessment.intelligence?.relationshipCoverage;
 
   if (!relationship) {
     return <Flex direction="column" gap="medium">
+    <AssessmentEvidenceNotice assessment={assessment} />
       {error && <Alert title="Action failed" variant="danger">{error}</Alert>}
       <Alert title="Relationship evidence is not available" variant="warning">Refresh the deal to retrieve current contact, company, association-label, and buying-role evidence. Readiness remains available even when this optional enrichment cannot be loaded.</Alert>
-      <Button onClick={() => void load(true)} disabled={working}>Refresh relationship evidence</Button>
+      <Button onClick={() => void load(true)} disabled={working || !canRefresh}>Refresh relationship evidence</Button>
     </Flex>;
   }
 
@@ -35,6 +37,7 @@ const DealGuardBuyerCommitteeCard = ({ dealId }: { dealId: string }) => {
   const supportingRoles = relationship.roleCoverage.filter((item) => !item.core && item.status !== 'missing');
 
   return <Flex direction="column" gap="medium">
+    <AssessmentEvidenceNotice assessment={assessment} />
     {error && <Alert title="Action failed" variant="danger">{error}</Alert>}
     {notice && <Alert title="Done" variant="success">{notice}</Alert>}
     <Flex direction="row" justify="between" align="center" gap="medium">
@@ -98,6 +101,6 @@ const DealGuardBuyerCommitteeCard = ({ dealId }: { dealId: string }) => {
     <Alert title="Evidence boundary" variant="info">Association labels are deal-specific. HubSpot buying-role values are contact-level context. Job-title hints are visibly marked as inferred and never confirm authority or buyer intent. DealGuard does not inspect communications content in this view.</Alert>
     <Text variant="microcopy">Evidence fetched {new Date(relationship.fetchedAt).toLocaleString()}.</Text>
     {relationship.limitations.map((item, index) => <Text key={`limitation-${index}`} variant="microcopy">• {item}</Text>)}
-    <Button variant="secondary" onClick={() => void load(true)} disabled={working}>Refresh relationship evidence</Button>
+    <Button variant="secondary" onClick={() => void load(true)} disabled={working || !canRefresh}>Refresh relationship evidence</Button>
   </Flex>;
 };

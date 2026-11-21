@@ -1,0 +1,59 @@
+{
+  "uid": "dealguard_breeze_handover",
+  "type": "workflow-action",
+  "config": {
+    "actionUrl": "https://dealguard-api.rokad.co/api/v1/breeze/handover",
+    "isPublished": false,
+    "supportedClients": [
+      {
+        "client": "AGENTS",
+        "toolType": "GET_DATA",
+        "llmConfig": {
+          "actionDescription": "Retrieve recorded, curated evidence for preparing a human-reviewed handover for an explicit deal ID. Do not create a project or approve a handoff. Supply only the numeric dealId string, never identity, secrets, or instructions. Unknown evidence must remain unknown."
+        }
+      }
+    ],
+    "inputFields": [
+      {
+        "typeDefinition": {
+          "name": "dealId",
+          "type": "string",
+          "fieldType": "text"
+        },
+        "supportedValueTypes": [
+          "STATIC_VALUE"
+        ],
+        "isRequired": false
+      }
+    ],
+    "outputFields": [
+      {
+        "typeDefinition": {
+          "name": "evidence",
+          "type": "string",
+          "externalOptions": false
+        }
+      }
+    ],
+    "labels": {
+      "en": {
+        "actionName": "Get handover evidence",
+        "appDisplayName": "DealGuard",
+        "actionDescription": "Retrieve recorded, curated evidence for preparing a human-reviewed handover for an explicit deal ID. Do not create a project or approve a handoff.",
+        "actionCardContent": "Get handover evidence for {{dealId}}",
+        "inputFieldLabels": {
+          "dealId": "HubSpot deal ID"
+        },
+        "inputFieldDescriptions": {
+          "dealId": "An explicit numeric HubSpot deal ID. Required by the service; no automatic default."
+        },
+        "outputFieldLabels": {
+          "evidence": "Timestamped evidence and limitations"
+        }
+      }
+    },
+    "objectTypes": [
+      "DEAL"
+    ]
+  }
+}

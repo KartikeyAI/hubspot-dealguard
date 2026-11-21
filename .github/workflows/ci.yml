@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -59,10 +60,10 @@ jobs:
           retention-days: 7
       - name: Create non-secret CI environment file
         run: touch .env
-      - run: npm install --ignore-scripts --silent
-      - run: npm install --ignore-scripts --silent --prefix src/app/cards
-      - run: npm install --ignore-scripts --silent --prefix src/app/settings
-      - run: npm install --ignore-scripts --silent --prefix src/app/pages
+      - run: npm ci --ignore-scripts --silent
+      - run: npm ci --ignore-scripts --silent --prefix src/app/cards
+      - run: npm ci --ignore-scripts --silent --prefix src/app/settings
+      - run: npm ci --ignore-scripts --silent --prefix src/app/pages
       - name: Validate converged release contract
         id: release_convergence
         continue-on-error: true

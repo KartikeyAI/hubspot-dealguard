@@ -1,4 +1,5 @@
 import { sha256Hex } from './crypto.js';
+import { entitlementPlan, rowEntitled, subscriptionEntitled } from './billing-entitlements.js';
 import { AppError } from './errors.js';
 import { Repository } from './repository.js';
 import type { Env, PlanId, RequestIdentity } from './types.js';
@@ -231,11 +232,6 @@ export async function createCustomerPortalSession(env: Env, identity: RequestIde
   return { url: result.link };
 }
 
-function entitledStatus(status: SubscriptionStatus, graceEndsAt: string | null): boolean {
-  if (['trialing', 'active', 'manual'].includes(status)) return true;
-  return (status === 'on_hold' || status === 'past_due') && Boolean(graceEndsAt && Date.parse(graceEndsAt) > Date.now());
-}
-
 function periodStart(row: SubscriptionRow | null): string {
   if (row?.current_period_start) return row.current_period_start;
   const date = new Date();
@@ -244,19 +240,20 @@ function periodStart(row: SubscriptionRow | null): string {
   return date.toISOString();
 }
 
-async function allowanceViews(env: Env, portalId: string, tier: CommercialTier, row: SubscriptionRow | null): Promise<BillingAllowance[]> {
+async function allowanceViews(env: Env, portalId: string, tier: CommercialTier, row: SubscriptionRow | null, entitled = true): Promise<BillingAllowance[]> {
   const explicit = await env.DB.prepare(`SELECT metric, included_quantity, hard_limit, overage_enabled FROM billing_allowances WHERE portal_id = ?`)
     .bind(portalId).all<{ metric: BillableMetric; included_quantity: number; hard_limit: number | null; overage_enabled: number }>();
   const overrides = new Map((explicit.results ?? []).map((item) => [item.metric, item]));
   const start = periodStart(row);
+  // Provider delivery status does not undo local resource consumption.
   const usage = await env.DB.prepare(
     `SELECT event_name, COALESCE(SUM(quantity), 0) AS quantity FROM billing_usage_events
-     WHERE portal_id = ? AND occurred_at >= ? AND status IN ('pending', 'reported') GROUP BY event_name`
+     WHERE portal_id = ? AND occurred_at >= ? GROUP BY event_name`
   ).bind(portalId, start).all<{ event_name: BillableMetric; quantity: number }>();
   const consumed = new Map((usage.results ?? []).map((item) => [item.event_name, Number(item.quantity)]));
   return (Object.keys(DEFAULT_ALLOWANCES[tier]) as BillableMetric[]).map((metric) => {
     const defaults = DEFAULT_ALLOWANCES[tier][metric];
-    const override = overrides.get(metric);
+    const override = entitled ? overrides.get(metric) : undefined;
     const includedQuantity = Number(override?.included_quantity ?? defaults.included);
     const hardLimit = override?.hard_limit === null || override?.hard_limit === undefined ? defaults.hard : Number(override.hard_limit);
     const consumedQuantity = consumed.get(metric) ?? 0;
@@ -266,7 +263,7 @@ async function allowanceViews(env: Env, portalId: string, tier: CommercialTier, 
       consumedQuantity,
       remainingQuantity: hardLimit === null ? null : Math.max(0, hardLimit - consumedQuantity),
       hardLimit,
-      overageEnabled: Boolean(override?.overage_enabled ?? (row?.overage_enabled ?? (defaults.overage ? 1 : 0))),
+      overageEnabled: entitled && Boolean(override?.overage_enabled ?? (row?.overage_enabled ?? (defaults.overage ? 1 : 0))),
     };
   });
 }
@@ -278,6 +275,7 @@ export async function getBillingStatus(env: Env, portalId: string): Promise<Bill
     const tenant = await env.DB.prepare(`SELECT commercial_tier, trial_ends_at FROM tenants WHERE portal_id = ?`)
       .bind(portalId).first<{ commercial_tier?: CommercialTier; trial_ends_at?: string | null }>();
     const tier = tenant?.commercial_tier ?? 'free';
+    const entitled = tier !== 'free' && subscriptionEntitled({ status: 'trialing', trialEndsAt: tenant?.trial_ends_at ?? null });
     return {
       tier,
       status: 'none',
@@ -298,12 +296,13 @@ export async function getBillingStatus(env: Env, portalId: string): Promise<Bill
       purchaseOrderReference: null,
       scheduledTier: null,
       scheduledChangeAt: null,
-      entitled: tier !== 'free' && Boolean(tenant?.trial_ends_at && Date.parse(tenant.trial_ends_at) > Date.now()),
+      entitled,
       checkoutConfigured: Boolean(cfg.DODO_API_KEY),
       portalConfigured: false,
-      allowances: await allowanceViews(env, portalId, tier, null),
+      allowances: await allowanceViews(env, portalId, entitled ? tier : 'free', null, entitled),
     };
   }
+  const entitled = rowEntitled(row);
   return {
     tier: row.tier,
     status: row.status,
@@ -324,10 +323,10 @@ export async function getBillingStatus(env: Env, portalId: string): Promise<Bill
     purchaseOrderReference: row.purchase_order_reference,
     scheduledTier: row.scheduled_tier,
     scheduledChangeAt: row.scheduled_change_at,
-    entitled: entitledStatus(row.status, row.grace_ends_at),
+    entitled,
     checkoutConfigured: Boolean(cfg.DODO_API_KEY),
     portalConfigured: Boolean(row.provider === 'dodo' && row.provider_customer_id && cfg.DODO_API_KEY),
-    allowances: await allowanceViews(env, portalId, row.tier, row),
+    allowances: await allowanceViews(env, portalId, entitled ? row.tier : 'free', row, entitled),
   };
 }
 
@@ -366,10 +365,7 @@ async function applySubscription(
   },
 ): Promise<void> {
   const now = new Date().toISOString();
-  const entitled = entitledStatus(input.status, input.graceEndsAt);
-  const internalPlan: PlanId = entitled
-    ? input.tier === 'enterprise' ? 'beta_growth' : input.tier === 'growth' ? 'growth' : 'free'
-    : 'free';
+  const internalPlan: PlanId = entitlementPlan(input.tier, subscriptionEntitled(input));
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO subscriptions_v2 (
@@ -593,81 +589,19 @@ export async function processDodoWebhook(env: Env, rawBody: string, webhookId: s
   }
 }
 
-function eventName(env: Env, metric: BillableMetric): string {
-  const cfg = configured(env);
-  const names: Record<BillableMetric, string | undefined> = {
-    ai_credit: cfg.DODO_AI_CREDIT_EVENT_NAME,
-    active_deal_overage: cfg.DODO_ACTIVE_DEAL_EVENT_NAME,
-    event_overage: cfg.DODO_EVENT_OVERAGE_EVENT_NAME,
-    retention_gb_month: cfg.DODO_RETENTION_EVENT_NAME,
-  };
-  return names[metric] ?? `dealguard_${metric}`;
-}
-
+/** Compatibility entry point: all callers use the same atomic reservation and delivery path. */
 export async function recordUsage(
-  env: Env,
-  portalId: string,
-  metric: BillableMetric,
-  quantity: number,
-  idempotencyKey: string,
+  env: Env, portalId: string, metric: BillableMetric, quantity: number, idempotencyKey: string,
   metadata: Record<string, string | number | boolean | null> = {},
 ): Promise<{ recorded: boolean; reported: boolean }> {
-  if (!Number.isFinite(quantity) || quantity < 0) throw new AppError(400, 'usage_quantity_invalid', 'Usage quantity must be a non-negative number.');
-  const status = await getBillingStatus(env, portalId);
-  const allowance = status.allowances.find((item) => item.metric === metric);
-  if (allowance?.hardLimit !== null && allowance && allowance.consumedQuantity + quantity > allowance.hardLimit && !allowance.overageEnabled) {
-    throw new AppError(402, 'usage_limit_reached', `The ${metric} allowance has been exhausted and overage is disabled.`, { metric, allowance });
-  }
-  const id = crypto.randomUUID();
-  const occurredAt = new Date().toISOString();
-  const result = await env.DB.prepare(
-    `INSERT INTO billing_usage_events (id, portal_id, event_name, quantity, idempotency_key, status, metadata_json, occurred_at, created_at)
-     VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?) ON CONFLICT(portal_id, idempotency_key) DO NOTHING`
-  ).bind(id, portalId, metric, quantity, idempotencyKey.slice(0, 255), JSON.stringify(metadata), occurredAt, occurredAt).run();
-  if (Number(result.meta?.changes ?? 0) === 0) return { recorded: false, reported: false };
-  if (status.provider !== 'dodo' || !status.customerId || status.usageMode !== 'metered' || !status.overageEnabled) {
-    await env.DB.prepare(`UPDATE billing_usage_events SET status = 'ignored', reported_at = ? WHERE id = ?`).bind(new Date().toISOString(), id).run();
-    return { recorded: true, reported: false };
-  }
-  try {
-    const eventId = `${portalId}:${idempotencyKey}`.slice(0, 255);
-    await dodoRequest<{ ingested_count?: number }>(env, '/events/ingest', {
-      method: 'POST',
-      body: JSON.stringify({
-        events: [{
-          event_id: eventId,
-          customer_id: status.customerId,
-          event_name: eventName(env, metric),
-          timestamp: occurredAt,
-          metadata: { portal_id: portalId, quantity, ...metadata },
-        }],
-      }),
-    });
-    await env.DB.prepare(`UPDATE billing_usage_events SET status = 'reported', provider_event_id = ?, reported_at = ? WHERE id = ?`)
-      .bind(eventId, new Date().toISOString(), id).run();
-    return { recorded: true, reported: true };
-  } catch (error) {
-    await env.DB.prepare(`UPDATE billing_usage_events SET status = 'failed', error_message = ? WHERE id = ?`)
-      .bind((error instanceof Error ? error.message : String(error)).slice(0, 1500), id).run();
-    throw error;
-  }
+  const { recordUsageAtomic } = await import('./billing-usage.js');
+  return recordUsageAtomic(env, portalId, metric, quantity, idempotencyKey, metadata);
 }
 
+/** Never delete or recreate usage while retrying: preserve the original observation and identity. */
 export async function retryUsageReports(env: Env, limit = 100): Promise<void> {
-  const rows = await env.DB.prepare(
-    `SELECT id, portal_id, event_name, quantity, idempotency_key, metadata_json, occurred_at
-     FROM billing_usage_events WHERE status = 'failed' ORDER BY occurred_at ASC LIMIT ?`
-  ).bind(Math.min(500, Math.max(1, limit))).all<Record<string, unknown>>();
-  for (const row of rows.results ?? []) {
-    const portalId = String(row.portal_id);
-    const metric = String(row.event_name) as BillableMetric;
-    try {
-      await env.DB.prepare(`DELETE FROM billing_usage_events WHERE id = ?`).bind(String(row.id)).run();
-      await recordUsage(env, portalId, metric, Number(row.quantity), String(row.idempotency_key), JSON.parse(String(row.metadata_json ?? '{}')));
-    } catch (error) {
-      console.error(JSON.stringify({ level: 'error', task: 'retry_usage', portalId, metric, error: error instanceof Error ? error.message : String(error) }));
-    }
-  }
+  const { retryAtomicUsageReports } = await import('./billing-usage.js');
+  return retryAtomicUsageReports(env, limit);
 }
 
 export async function updateBillingAllowance(

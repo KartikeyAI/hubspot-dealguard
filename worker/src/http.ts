@@ -1,3 +1,4 @@
+import { readBoundedText } from './request-body.js';
 import { APP_VERSION } from './config.js';
 import { AppError, asAppError, publicErrorDetails, publicErrorMessage } from './errors.js';
 
@@ -43,12 +44,7 @@ export function redirect(location: string, status = 302, headersInit: HeadersIni
 }
 
 export async function readJson<T>(request: Request, maxBytes = 64_000): Promise<T> {
-  const contentLength = Number(request.headers.get('content-length') ?? '0');
-  if (contentLength > maxBytes) throw new AppError(413, 'payload_too_large', 'Request body exceeds the allowed size.');
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > maxBytes) {
-    throw new AppError(413, 'payload_too_large', 'Request body exceeds the allowed size.');
-  }
+  const text = await readBoundedText(request, maxBytes);
   if (!text) return {} as T;
   try {
     return JSON.parse(text) as T;

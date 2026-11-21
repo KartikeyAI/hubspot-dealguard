@@ -1,3 +1,4 @@
+import { readSourceEvidence, sourceObservation } from './source-evidence.js';
 import { sha256Hex } from './crypto.js';
 import { buildCommercialIntegrity } from './commercial-integrity.js';
 import { loadCommercialIntegrityData } from './commercial-integrity-data.js';
@@ -107,9 +108,14 @@ export async function buildCommercialAssessment(
   try {
     const data = await loadCommercialIntegrityData(client, dealId, grantedScopes);
     const commercial = buildCommercialIntegrity(data);
+    const observed = sourceObservation(data.fetchedAt);
+    if (!observed.usable) return baseAssessment;
     const currentIntelligence = baseAssessment.intelligence && typeof baseAssessment.intelligence === 'object'
       ? baseAssessment.intelligence as Record<string, unknown>
       : {};
+    const sourceEvidence = readSourceEvidence(currentIntelligence.sourceEvidence);
+    if (!sourceEvidence) return baseAssessment;
+    sourceEvidence.sources.commercial = observed;
     const combinedActions = decisionActions(currentIntelligence.decisionActions, commercial);
     const currentBrief = currentIntelligence.dealBrief
       ? { dealBrief: currentIntelligence.dealBrief } as Parameters<typeof augmentDealBriefWithCommercialIntegrity>[0]
@@ -117,11 +123,13 @@ export async function buildCommercialAssessment(
     const brief = currentBrief
       ? augmentDealBriefWithCommercialIntegrity(currentBrief, commercial, combinedActions)
       : null;
+    if (brief) brief.dealBrief.generatedAt = new Date().toISOString();
     const value: Record<string, unknown> = {
       ...baseAssessment,
       intelligence: {
         ...currentIntelligence,
         ...commercial,
+        sourceEvidence,
         decisionActions: combinedActions,
         ...(brief ?? {}),
       },

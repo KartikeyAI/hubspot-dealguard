@@ -1,4 +1,5 @@
 // Test-only evidence. Never used by the Worker, release workflow or acceptance runtime.
+import { SIGNOFF_GATES } from '../scripts/production-signoff.mjs';
 import { intelligenceFingerprint, INTELLIGENCE_TEST_IDS } from '../scripts/intelligence-certification.mjs';
 
 export function context(version = '2.1.0', target = 'staging') {
@@ -27,10 +28,17 @@ export function deploymentRecord(version = '2.1.0', target = 'staging') {
     backupReference: `backups/${target}/test.sql.enc`, backupSha256: 'b'.repeat(64),
     preflight: { total: 48, passed: 48, failed: 0 },
     health: { service: 'dealguard-api', status: 'ok', version },
-    baseline: { target, source: { commit: expected.commit, clean: true }, release: { version }, verification: { repository: 'passed' } },
+    baseline: { target, source: { commit: expected.commit, tree: 'b'.repeat(40), clean: true }, release: { version }, verification: { repository: 'passed' } },
     smoke: { target, commit: expected.commit, baseUrl: expected.baseUrl, expectedVersion: version,
       summary: { total: 7, passed: 7, failed: 0 },
       checks: Array.from({ length: 7 }, (_, index) => ({ id: `DG-PROD-${String(index + 1).padStart(3, '0')}`, result: 'passed' })) },
+    signoffArtifactRunId: '789', stagingRunId: '456',
+    productionApproval: { schemaVersion: 1, kind: 'verified-production-approval', approvalAccepted: true, productionReady: false,
+      candidate: { repository: 'KartikeyAI/hubspot-dealguard', commit: expected.commit, tree: 'b'.repeat(40), version },
+      stagingRunId: '456', verifiedAt: new Date(Date.now() - 1000).toISOString(), expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      dossierSha256: 'c'.repeat(64), approvers: [{ principal: 'github:1', role: 'release_owner', keyId: 'test-one' },
+        { principal: 'github:2', role: 'security_reviewer', keyId: 'test-two' }],
+      reports: Object.keys(SIGNOFF_GATES).map(gate => ({ gate, sha256: 'd'.repeat(64) })) },
     acceptance, intelligence, intelligenceSha256: intelligenceFingerprint(intelligence) };
 }
 export function workflowMetadata() {

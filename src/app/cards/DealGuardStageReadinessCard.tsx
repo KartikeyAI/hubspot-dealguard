@@ -1,16 +1,17 @@
 import React from 'react';
 import { Alert, Button, Flex, Heading, StatusTag, Text, hubspot } from '@hubspot/ui-extensions';
-import { CardLoading, CardUnavailable, useDealAssessment } from './deal-intelligence-shared';
+import { CardLoading, AssessmentEvidenceNotice, CardUnavailable, useDealAssessment } from './deal-intelligence-shared';
 
 hubspot.extend<'crm.record.tab'>(({ context }) => <DealGuardStageReadinessCard dealId={String(context.crm.objectId)} />);
 
 const DealGuardStageReadinessCard = ({ dealId }: { dealId: string }) => {
-  const { assessment, loading, working, error, notice, load } = useDealAssessment(dealId);
+  const { assessment, loading, working, error, notice, canRefresh, load } = useDealAssessment(dealId);
   if (loading) return <CardLoading label="Loading DealGuard stage readiness" />;
-  if (!assessment) return <CardUnavailable error={error} />;
+  if (!assessment) return <CardUnavailable error={error} canRefresh={canRefresh} working={working} onRefresh={() => void load(true)} />;
   const stage = assessment.intelligence?.stageReadiness;
 
   return <Flex direction="column" gap="medium">
+    <AssessmentEvidenceNotice assessment={assessment} />
     {error && <Alert title="Action failed" variant="danger">{error}</Alert>}
     {notice && <Alert title="Done" variant="success">{notice}</Alert>}
     <Flex direction="row" justify="between" align="center" gap="medium">
@@ -24,7 +25,7 @@ const DealGuardStageReadinessCard = ({ dealId }: { dealId: string }) => {
       {stage.requirements.map((item) => <Text key={item.code}>{item.satisfied ? '✓' : '✕'} {item.label}{item.satisfied ? '' : ` · ${item.impact} pts`}</Text>)}
     </Flex>)}
     {stage && stage.blockers.length > 0 && <Alert title="Not ready to progress" variant="warning">Resolve the failed configured requirements before treating this stage as complete.</Alert>}
-    <Button variant="secondary" onClick={() => void load(true)} disabled={working}>Refresh stage readiness</Button>
+    <Button variant="secondary" onClick={() => void load(true)} disabled={working || !canRefresh}>Refresh stage readiness</Button>
     <Text variant="microcopy">Based on assessment from {new Date(assessment.assessedAt).toLocaleString()}.</Text>
   </Flex>;
 };

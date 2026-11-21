@@ -3,6 +3,29 @@
 Updated: 2026-09-18. Programme: the agreed three-phase production roadmap.
 This file records development progress, not a production-release declaration.
 
+## November 21, 2026: integrated v3 release candidate
+
+The current candidate is `3.0.0-rc.1`. Historical sections below retain the state
+and test counts at their original checkpoints. They do not describe the current
+release tree. `DEALGUARD_3_CURRENT.md` and `CODEX_V3_VALIDATION.md` define current
+scope and repeatable validation.
+
+This continuation integrates the archived intelligence work with published PR47,
+completes qualified forecasting and durable evaluation, binds AI to current
+source/policy/handover evidence, makes recorded reads side-effect free, repairs
+request-time billing expiry, and adds atomic task delivery and OAuth lifecycle
+fences. The active Home now exposes governed role administration with a two-person
+initial setup, independent review and exact application. Role changes and their
+audit/approval completion are one transaction. Erasure is a durable, leased,
+hold-aware operation that waits out preissued upload links before final cleanup.
+
+Previously published migrations remain unchanged. The release adds migrations
+0031–0043, four dependency lockfiles, the isolated PostgreSQL validation runner,
+current schema contracts and a Codex review handoff. Concrete local integration,
+scale and encrypted restore receipts must be associated with their tested tree;
+provider acceptance, pilots, independent review, protected governance and the
+signed production dossier remain external release gates.
+
 ## M1.1 slice 1: release baseline and staging controls
 
 Starting source: `eb8f49612fa3d6b85a3b5732af9db9517be1be00` on `main`.
@@ -370,3 +393,40 @@ be recorded on PR #46. No production readiness or completed phase is inferred.
   racing expiry worker from reverting accepted work.
 - These slices do not close M1.6 live/customer acceptance or the overall Phase 1 gate.
   No live deployment, task, notification, grant or billing transaction was performed.
+
+## September 19, 2026 — locally recovered slices 18–24 and release-support work
+
+The previously unpushed implementation did not persist; it was rebuilt from the
+verified remote source `9f34835ec638975c58e78a983ccc2bdbdbf847b5`, not recovered
+byte for byte. All work below is **local and unpublished**. Source writes were
+blocked by tool safety checks before a branch update. No release gate was waived.
+
+- Rebuilt independent source observation receipts and legacy snapshot fallback.
+- Rebuilt transactional automatic resolution with evidence/acknowledgment gates
+  and a same-assessment reopening fence (0031).
+- Rebuilt explicit outcome consent, immutable quarter-boundary datasets and
+  held-out evaluation (0032). No current-deal forecast activation.
+- Rebuilt bounded native AI with scoped curated evidence, encrypted caching,
+  consent/revocation, atomic request and estimated-cost reservations (0033).
+- Rebuilt separately consented read-only Breeze adapters and unpublished optional
+  manifests outside the canonical project (0034).
+- Added installation/deactivation consent reset, single-use OAuth state, bounded
+  request/signature parsing and canonical 32-byte encryption-key validation (0035).
+- Added a scoped Home collection, honest missing-value/health states, an
+  evidence-based administrator setup checklist and expiry-safe consent controls.
+- Added target-specific, non-secret optional-intelligence deployment configuration.
+- Added and executed an encrypted local fixture recovery rehearsal, matching
+  fingerprints for 105 tables and testing restored consent-revocation behavior.
+
+The restored baseline passed 576 local tests. The final implementation run passed
+**670 tests with zero failures or skips**, including real PostgreSQL integration
+tests. All four Worker/HubSpot typechecks, migration/schema validation and release
+convergence are rerun for the final checkpoint. Complete source, a base-relative
+patch and the exact validation receipt are preserved as conversation artifacts;
+never rely solely on this document or an ephemeral workspace to recover source.
+
+No actual customer/provider call, production migration, Worker deployment,
+HubSpot upload, billing transaction, notification or main merge was performed.
+Native AI was tested with simulated provider responses; optional tool acceptance
+and rendered HubSpot UI remain unverified. See `DEALGUARD_3_CURRENT.md` for current
+phase boundaries and `LOCAL_RECOVERY_REHEARSAL.md` for the narrow recovery scope.
